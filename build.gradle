@@ -1,28 +1,40 @@
 plugins {
-	id 'java'
-	id 'org.springframework.boot' version '4.1.1'
-	id 'io.spring.dependency-management' version '1.1.7'
+	id 'org.springframework.boot' version '4.1.2' apply false
+	id 'io.spring.dependency-management' version '1.1.7' apply false
 }
 
-group = 'com.tanh'
-version = '0.0.1-SNAPSHOT'
-
-java {
-	toolchain {
-		languageVersion = JavaLanguageVersion.of(21)
+allprojects {
+	group = 'com.homecare'
+	version = '0.1.0-SNAPSHOT'
+	repositories {
+		mavenCentral()
 	}
 }
 
-repositories {
-	mavenCentral()
-}
+configure(subprojects.findAll { it.path.startsWith(':services:') }) {
+	apply plugin: 'java'
+	apply plugin: 'org.springframework.boot'
+	apply plugin: 'io.spring.dependency-management'
 
-dependencies {
-	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
-	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
-	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-}
+	// Centralize generated output while keeping each service isolated.
+	layout.buildDirectory.set(rootProject.layout.buildDirectory.dir("services/${project.name}"))
 
-tasks.named('test') {
-	useJUnitPlatform()
+	java {
+		toolchain {
+			languageVersion = JavaLanguageVersion.of(21)
+		}
+	}
+
+	tasks.withType(Test).configureEach {
+		useJUnitPlatform()
+	}
+
+	dependencies {
+		implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+		implementation 'org.springframework.boot:spring-boot-starter-validation'
+		implementation 'org.springframework.boot:spring-boot-starter-security'
+		implementation 'org.springframework.boot:spring-boot-starter-actuator'
+		testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+		testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+	}
 }

@@ -1,0 +1,6 @@
+{
+  // The repository root is a Gradle aggregator; Java source folders belong to service subprojects.
+  "java.project.sourcePaths": [],
+  "java.import.gradle.enabled": true,
+  "java.configuration.updateBuildConfiguration": "automatic"
+}
