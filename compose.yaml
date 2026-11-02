@@ -1,0 +1,31 @@
+name: homecare-foundation
+services:
+  postgres:
+    image: postgres:17.11-alpine3.23@sha256:05aa77262db9277fde6374bb2f901c9604b8a9373029e1a7993440c6aae48736
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Generate .env with dev.ps1 init}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  rabbitmq:
+    image: rabbitmq:4.2.9-alpine@sha256:aab85daef4295ab28df229600109434ed6ed7b966dd915baeb0fc396279f0e8e
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:?Generate .env with dev.ps1 init}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Generate .env with dev.ps1 init}
+      RABBITMQ_DEFAULT_VHOST: homecare
+    ports:
+      - "127.0.0.1:${RABBITMQ_PORT:-55672}:5672"
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, ping]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+volumes:
+  postgres-data:

@@ -29,6 +29,53 @@ configure(subprojects.findAll { it.path.startsWith(':services:') }) {
 		useJUnitPlatform()
 	}
 
+	sourceSets {
+		integrationTest {
+			compileClasspath += sourceSets.main.output
+			runtimeClasspath += sourceSets.main.output
+		}
+	}
+	configurations {
+		integrationTestImplementation.extendsFrom testImplementation
+		integrationTestRuntimeOnly.extendsFrom testRuntimeOnly
+		migrationRuntime
+	}
+	tasks.register('integrationTest', Test) {
+		description = 'Requires provisioned PostgreSQL/RabbitMQ; fails when unavailable.'
+		group = 'verification'
+		testClassesDirs = sourceSets.integrationTest.output.classesDirs
+		classpath = sourceSets.integrationTest.runtimeClasspath
+		shouldRunAfter tasks.named('test')
+		outputs.upToDateWhen { false }
+		doFirst {
+			def prefix = System.getenv('TEST_DATABASE_PREFIX')
+			if (!prefix || !(prefix ==~ /hc_test_[a-z0-9]+/)) {
+				throw new GradleException('integrationTest requires TEST_DATABASE_PREFIX=hc_test_<run> and real provisioned infrastructure; not skipped.')
+			}
+			def owner = project.name.replace('-service', '')
+			def password = System.getenv(owner.toUpperCase() + '_DB_PASSWORD')
+			if (!password) throw new GradleException("Missing ${owner.toUpperCase()}_DB_PASSWORD")
+			environment 'DB_URL', "jdbc:postgresql://127.0.0.1:${System.getenv('POSTGRES_PORT') ?: '55432'}/${prefix}_${owner}"
+			environment 'DB_USERNAME', "${prefix}_${owner}_app"
+			environment 'DB_PASSWORD', password
+		}
+	}
+	tasks.register('migrate', JavaExec) {
+		description = 'Run owner Liquibase changelog with separate migrator credentials.'
+		group = 'database'
+		classpath = configurations.migrationRuntime
+		javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+		mainClass = 'liquibase.integration.commandline.LiquibaseCommandLine'
+		args '--changelog-file=src/main/resources/db/changelog/db.changelog-master.xml',
+				'--liquibase-schema-name=migration', '--default-schema-name=public', 'update'
+		workingDir = projectDir
+		doFirst {
+			['LIQUIBASE_COMMAND_URL', 'LIQUIBASE_COMMAND_USERNAME', 'LIQUIBASE_COMMAND_PASSWORD'].each {
+				if (!System.getenv(it)) throw new GradleException("Missing ${it}; use migrator credentials, never runtime credentials.")
+			}
+		}
+	}
+
 	dependencies {
 		implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 		implementation 'org.springframework.boot:spring-boot-starter-validation'
@@ -36,5 +83,8 @@ configure(subprojects.findAll { it.path.startsWith(':services:') }) {
 		implementation 'org.springframework.boot:spring-boot-starter-actuator'
 		testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 		testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+		migrationRuntime 'org.liquibase:liquibase-core'
+		migrationRuntime 'info.picocli:picocli:4.7.7'
+		migrationRuntime 'org.postgresql:postgresql'
 	}
 }

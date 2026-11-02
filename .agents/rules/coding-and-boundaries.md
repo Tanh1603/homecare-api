@@ -8,3 +8,33 @@
 - Avoid speculative abstractions, generic frameworks, and dependencies without a requirement and an approved architecture fit.
 - Match the existing Java/Gradle conventions and current Spring Boot version. Read the module's sources and configuration before introducing a pattern.
 - Do not use project-wide component assumptions as evidence: check whether the class/configuration actually exists in this checkout.
+- Do not hard-code environment-specific values, secrets, credentials, URLs, ports, tokens, API keys, database connection details, or service endpoints in source code. Use application configuration, environment variables, or the project's approved configuration mechanism instead.
+- Do not hard-code business rules, status values, role/permission mappings, limits, timeouts, retry counts, or other changeable behavior when those values are expected to be configurable or defined by the approved contract/domain rules. Prefer enums/constants only when the value is a stable domain concept.
+- Never hard-code secrets, Firebase credentials, JWT keys, database passwords, or third-party API credentials. Keep them outside source control and inject them through the approved environment/configuration mechanism.
+- Do not introduce configuration abstractions solely to avoid literals. Keep configuration simple and follow the existing module's conventions.
+- Do not add a dependency unless it is required by the task and compatible with the approved architecture.
+- Prefer existing project dependencies and utilities before introducing new libraries.
+- Do not replace an existing library or framework without an explicit requirement or approved architectural decision.
+- Verify the existing Gradle dependency and Spring Boot setup before adding or upgrading dependencies.
+- A service must access another service only through approved APIs, gRPC contracts, or asynchronous events.
+- Never access another service's database directly.
+- Never import another service's JPA entities, repositories, or domain objects.
+- Do not create cross-service foreign keys.
+- Keep business ownership inside the service that owns the corresponding domain data.
+- Keep API DTOs, persistence entities, and domain models separate when their responsibilities differ.
+- Do not reuse persistence entities as request DTOs.
+- Do not expose internal domain or persistence fields merely for convenience.
+- Mapping must be explicit and preserve the API contract.
+- Keep transactions within a single service and database boundary.
+- Do not hold a database transaction open while waiting for remote service calls or message consumers.
+- Do not use distributed transactions unless explicitly approved by the architecture.
+- Publish integration events only according to the approved event consistency strategy.
+- Use structured logging where supported by the existing project.
+- Include correlation/trace identifiers for requests and cross-service operations when available.
+- Log meaningful state transitions and failures without exposing sensitive data.
+- Do not log request bodies indiscriminately.
+- Do not use System.out/System.err for application logging when the project uses a logging framework.
+- Do not change an approved API contract implicitly while implementing code.
+- Do not rename, remove, or change the semantics of an existing endpoint, field, status code, or error code without updating the contract through the approved change process.
+- Backward compatibility must be considered for APIs consumed by other services or clients.
+- If implementation requires a contract change, report the mismatch instead of silently modifying the contract.
