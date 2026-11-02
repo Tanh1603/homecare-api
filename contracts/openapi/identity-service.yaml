@@ -1,0 +1,181 @@
+openapi: 3.1.0
+info:
+  title: HomeCare Identity self-profile API
+  version: 0.1.0
+  description: API-USR-001/002/003 approved in Phase 3; public Gateway operations only. FR-AUTH-001/002, UC-AUTH-001/UC-PROFILE-001, AC-AUTH-001/002.
+security:
+  - firebaseBearer: []
+paths:
+  /api/v1/users/me:
+    get:
+      operationId: API-USR-001
+      summary: Read the verified actor's profile
+      description: All active human roles; no query parameters or request body. Missing profile is not bootstrapped implicitly.
+      parameters:
+        - $ref: '#/components/parameters/Correlation'
+      responses:
+        '200': { $ref: '#/components/responses/Profile' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+        '504': { $ref: '#/components/responses/Error' }
+    patch:
+      operationId: API-USR-002
+      summary: Update the verified actor's contact fields
+      description: Omitted fields stay unchanged; null clears. No role/status/UID fields. Strong If-Match required; stale version returns 412, missing returns 428.
+      parameters:
+        - $ref: '#/components/parameters/Correlation'
+        - name: If-Match
+          in: header
+          required: true
+          schema: { type: string, pattern: '^"v(0|[1-9][0-9]*)"$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProfilePatch' }
+      responses:
+        '200': { $ref: '#/components/responses/Profile' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '412': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '428': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+        '504': { $ref: '#/components/responses/Error' }
+  /api/v1/users/me/bootstrap:
+    post:
+      operationId: API-USR-003
+      summary: Explicitly create or link the verified Firebase subject's profile
+      description: Body must be {}. New profile defaults HOUSEHOLD_USER with null contacts. Existing profile is preserved. Scope is project+UID+method+path+key; replay returns original status/body for 24 hours after reauthorization. Disabled profile returns 403. Same-key in-flight returns 409 with Retry-After; different-key race returns the existing profile.
+      parameters:
+        - $ref: '#/components/parameters/Correlation'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+      responses:
+        '200': { $ref: '#/components/responses/BootstrapProfile' }
+        '201': { $ref: '#/components/responses/BootstrapProfile' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/InFlight' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+        '504': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    firebaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: Firebase ID token
+  parameters:
+    Correlation:
+      name: X-Correlation-Id
+      in: header
+      description: A single valid ASCII value is preserved. Invalid/multiple values are replaced with a UUID, never used for authorization.
+      schema: { type: string, pattern: '^[A-Za-z0-9._-]{1,64}$' }
+  headers:
+    Correlation:
+      schema: { type: string }
+    ETag:
+      schema: { type: string, pattern: '^"v(0|[1-9][0-9]*)"$' }
+    Location:
+      schema: { type: string, const: /api/v1/users/me }
+  responses:
+    Profile:
+      description: Current self profile
+      headers:
+        ETag: { $ref: '#/components/headers/ETag' }
+        X-Correlation-Id: { $ref: '#/components/headers/Correlation' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Profile' }
+    BootstrapProfile:
+      description: Created (201), existing (200), or original idempotent replay status
+      headers:
+        ETag: { $ref: '#/components/headers/ETag' }
+        Location: { $ref: '#/components/headers/Location' }
+        X-Correlation-Id: { $ref: '#/components/headers/Correlation' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Profile' }
+    Error:
+      description: Approved error envelope; codes include AUTHENTICATION_REQUIRED/INVALID/UNAVAILABLE, ACCOUNT_DISABLED, PROFILE_NOT_FOUND, REQUEST_VALIDATION_FAILED, RESOURCE_VERSION_MISMATCH, PRECONDITION_REQUIRED, IDENTITY_UNAVAILABLE, DOWNSTREAM_INVALID_RESPONSE, DOWNSTREAM_TIMEOUT. No credential or internal exception details.
+      headers:
+        X-Correlation-Id: { $ref: '#/components/headers/Correlation' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    InFlight:
+      description: IDEMPOTENCY_IN_PROGRESS; retry after the indicated delay
+      headers:
+        X-Correlation-Id: { $ref: '#/components/headers/Correlation' }
+        Retry-After: { schema: { type: string, const: '1' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  schemas:
+    Profile:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, phone, address, role, status, createdAt, updatedAt, version]
+      properties:
+        id: { type: string, format: uuid, description: UUIDv7 }
+        displayName: { type: [string, 'null'], maxLength: 120 }
+        phone: { type: [string, 'null'], maxLength: 32 }
+        address: { type: [string, 'null'], maxLength: 500 }
+        role: { type: string, enum: [HOUSEHOLD_USER, SERVICE_PROVIDER, TECHNICIAN, MERCHANT, SYSTEM_ADMIN] }
+        status: { type: string, enum: [ACTIVE, DISABLED] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        version: { type: integer, format: int64, minimum: 0 }
+    ProfilePatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        displayName: { type: [string, 'null'], maxLength: 120, pattern: '\S', description: Trimmed; nonblank when non-null }
+        phone: { type: [string, 'null'], maxLength: 32, pattern: '^[+0-9 ()-]+$', description: Trimmed contact string, not identity proof }
+        address: { type: [string, 'null'], maxLength: 500, description: Trimmed contact string }
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, fieldErrors, traceId]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            traceId: { type: string }
+            fieldErrors:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [field, code, message]
+                properties:
+                  field: { type: string }
+                  code: { type: string }
+                  message: { type: string }

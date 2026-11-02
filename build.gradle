@@ -48,6 +48,7 @@ configure(subprojects.findAll { it.path.startsWith(':services:') }) {
 		shouldRunAfter tasks.named('test')
 		outputs.upToDateWhen { false }
 		doFirst {
+			if (project.name == 'gateway-service') return
 			def prefix = System.getenv('TEST_DATABASE_PREFIX')
 			if (!prefix || !(prefix ==~ /hc_test_[a-z0-9]+/)) {
 				throw new GradleException('integrationTest requires TEST_DATABASE_PREFIX=hc_test_<run> and real provisioned infrastructure; not skipped.')
@@ -56,11 +57,12 @@ configure(subprojects.findAll { it.path.startsWith(':services:') }) {
 			def password = System.getenv(owner.toUpperCase() + '_DB_PASSWORD')
 			if (!password) throw new GradleException("Missing ${owner.toUpperCase()}_DB_PASSWORD")
 			environment 'DB_URL', "jdbc:postgresql://127.0.0.1:${System.getenv('POSTGRES_PORT') ?: '55432'}/${prefix}_${owner}"
+			environment 'DATABASE_URL', "jdbc:postgresql://127.0.0.1:${System.getenv('POSTGRES_PORT') ?: '55432'}/${prefix}_${owner}"
 			environment 'DB_USERNAME', "${prefix}_${owner}_app"
 			environment 'DB_PASSWORD', password
 		}
 	}
-	tasks.register('migrate', JavaExec) {
+	if (project.name != 'gateway-service') tasks.register('migrate', JavaExec) {
 		description = 'Run owner Liquibase changelog with separate migrator credentials.'
 		group = 'database'
 		classpath = configurations.migrationRuntime
@@ -83,8 +85,10 @@ configure(subprojects.findAll { it.path.startsWith(':services:') }) {
 		implementation 'org.springframework.boot:spring-boot-starter-actuator'
 		testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 		testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-		migrationRuntime 'org.liquibase:liquibase-core'
-		migrationRuntime 'info.picocli:picocli:4.7.7'
-		migrationRuntime 'org.postgresql:postgresql'
+		if (project.name != 'gateway-service') {
+			migrationRuntime 'org.liquibase:liquibase-core'
+			migrationRuntime 'info.picocli:picocli:4.7.7'
+			migrationRuntime 'org.postgresql:postgresql'
+		}
 	}
 }

@@ -4,4 +4,35 @@ dependencies {
 	implementation 'com.google.firebase:firebase-admin:9.11.0'
 	integrationTestImplementation 'org.liquibase:liquibase-core'
 	integrationTestImplementation 'com.rabbitmq:amqp-client'
+	// Test harness launches both real applications; no production service-to-service Java dependency.
+	integrationTestImplementation project(':services:gateway-service')
+	integrationTestImplementation platform('org.springframework.cloud:spring-cloud-dependencies:2025.1.2')
+	integrationTestImplementation 'org.yaml:snakeyaml'
+}
+
+// Explicit opt-in operator suite. Never wired into check/test/integrationTest.
+sourceSets {
+    liveFirebaseTest {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+configurations {
+    liveFirebaseTestImplementation.extendsFrom testImplementation
+    liveFirebaseTestRuntimeOnly.extendsFrom testRuntimeOnly
+}
+tasks.register('liveFirebaseTest', Test) {
+    group = 'verification'
+    description = 'Google-issued token acceptance; missing operator env reports SKIP/BLOCKED.'
+    testClassesDirs = sourceSets.liveFirebaseTest.output.classesDirs
+    classpath = sourceSets.liveFirebaseTest.runtimeClasspath
+    outputs.upToDateWhen { false }
+    testLogging { events 'passed', 'skipped', 'failed'; exceptionFormat = 'short'; showStandardStreams = true }
+}
+tasks.register('mapFirebaseUser', JavaExec) {
+    group = 'database'
+    description = 'Operator-only insert of a verified Firebase UID; no role upsert.'
+    classpath = sourceSets.liveFirebaseTest.runtimeClasspath
+    mainClass = 'com.homecare.live.MapFirebaseUser'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
 }

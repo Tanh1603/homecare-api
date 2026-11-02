@@ -1,6 +1,7 @@
 name: homecare-foundation
 services:
   postgres:
+    networks: [default, workload]
     image: postgres:17.11-alpine3.23@sha256:05aa77262db9277fde6374bb2f901c9604b8a9373029e1a7993440c6aae48736
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Generate .env with dev.ps1 init}
@@ -15,6 +16,7 @@ services:
       timeout: 3s
       retries: 30
   rabbitmq:
+    networks: [default, workload]
     image: rabbitmq:4.2.9-alpine@sha256:aab85daef4295ab28df229600109434ed6ed7b966dd915baeb0fc396279f0e8e
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:?Generate .env with dev.ps1 init}
@@ -27,5 +29,191 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
+  identity:
+    profiles: [core]
+    build:
+      context: .
+      dockerfile: services/identity-service/Dockerfile
+    env_file:
+      - path: ${IDENTITY_ENV_FILE:-./.local/identity.env}
+        required: false
+    environment:
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: 8443
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase_adc
+      TLS_KEYSTORE: file:/run/secrets/identity_p12
+      TLS_TRUSTSTORE: file:/run/secrets/trust_p12
+    secrets: [firebase_adc, identity_p12, trust_p12]
+    ports: ["127.0.0.1:8443:8443"]
+    networks: [workload, identity_egress]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  gateway:
+    profiles: [core]
+    build:
+      context: .
+      dockerfile: services/gateway-service/Dockerfile
+    env_file:
+      - path: ${GATEWAY_ENV_FILE:-./.local/gateway.env}
+        required: false
+    environment:
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: 8080
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase_adc
+      TLS_KEYSTORE: file:/run/secrets/gateway_p12
+      TLS_TRUSTSTORE: file:/run/secrets/trust_p12
+    secrets: [firebase_adc, gateway_p12, trust_p12]
+    ports: ["127.0.0.1:8080:8080"]
+    networks: [workload, gateway_egress]
+    depends_on: [identity]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  household:
+    profiles: [domains]
+    build:
+      context: .
+      dockerfile: services/household-service/Dockerfile
+    env_file:
+      - path: ${HOUSEHOLD_ENV_FILE:-./.local/household.env}
+        required: false
+    environment:
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: 8080
+    networks: [workload]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  provider:
+    profiles: [domains]
+    build:
+      context: .
+      dockerfile: services/provider-service/Dockerfile
+    env_file:
+      - path: ${PROVIDER_ENV_FILE:-./.local/provider.env}
+        required: false
+    environment:
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: 8080
+    networks: [workload]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  booking:
+    profiles: [domains]
+    build:
+      context: .
+      dockerfile: services/booking-service/Dockerfile
+    env_file:
+      - path: ${BOOKING_ENV_FILE:-./.local/booking.env}
+        required: false
+    environment:
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: 8080
+    networks: [workload]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  commerce:
+    profiles: [domains]
+    build:
+      context: .
+      dockerfile: services/commerce-service/Dockerfile
+    env_file:
+      - path: ${COMMERCE_ENV_FILE:-./.local/commerce.env}
+        required: false
+    environment:
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: 8080
+    networks: [workload]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  review:
+    profiles: [domains]
+    build:
+      context: .
+      dockerfile: services/review-service/Dockerfile
+    env_file:
+      - path: ${REVIEW_ENV_FILE:-./.local/review.env}
+        required: false
+    environment:
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: 8080
+    networks: [workload]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  notification:
+    profiles: [domains]
+    build:
+      context: .
+      dockerfile: services/notification-service/Dockerfile
+    env_file:
+      - path: ${NOTIFICATION_ENV_FILE:-./.local/notification.env}
+        required: false
+    environment:
+      SERVER_ADDRESS: 0.0.0.0
+      SERVER_PORT: 8080
+    networks: [workload]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
 volumes:
   postgres-data:
+networks:
+  workload:
+    internal: true
+  identity_egress: {}
+  gateway_egress: {}
+secrets:
+  firebase_adc:
+    file: ${GOOGLE_APPLICATION_CREDENTIALS:-./.local/firebase-adc.json}
+  identity_p12:
+    file: ${IDENTITY_TLS_KEYSTORE:-./.local/identity.p12}
+  gateway_p12:
+    file: ${GATEWAY_TLS_KEYSTORE:-./.local/gateway.p12}
+  trust_p12:
+    file: ${TLS_TRUSTSTORE:-./.local/trust.p12}

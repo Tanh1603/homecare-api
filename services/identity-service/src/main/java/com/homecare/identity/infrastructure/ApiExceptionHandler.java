@@ -15,6 +15,17 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 
 @RestControllerAdvice
 public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+    @ExceptionHandler(com.homecare.identity.profile.ProfileFailure.class)
+    ResponseEntity<Object> profile(com.homecare.identity.profile.ProfileFailure ex, HttpServletRequest request) {
+        var headers = new HttpHeaders();
+        if (ex.code.equals("IDEMPOTENCY_IN_PROGRESS")) headers.set("Retry-After", "1");
+        return new ResponseEntity<>(ApiErrors.body(ex.code, "Yeu cau khong the thuc hien.", List.of(), request), headers, ex.status);
+    }
+
+    @ExceptionHandler({org.springframework.dao.DataAccessException.class, org.springframework.transaction.CannotCreateTransactionException.class})
+    ResponseEntity<Object> unavailable(RuntimeException ex, HttpServletRequest request) {
+        return ResponseEntity.status(503).body(ApiErrors.body("IDENTITY_UNAVAILABLE", "Dich vu tam thoi khong san sang.", List.of(), request));
+    }
     @Override
     protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException ex,
             HttpHeaders headers, HttpStatusCode status, WebRequest request) {

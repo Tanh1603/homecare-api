@@ -1,0 +1,9 @@
+**
+!services/
+!services/*-service/
+!services/*-service/Dockerfile
+!build/
+!build/services/
+!build/services/*-service/
+!build/services/*-service/libs/
+!build/services/*-service/libs/*-SNAPSHOT.jar

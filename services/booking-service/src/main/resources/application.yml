@@ -1,0 +1,67 @@
+spring:
+  application:
+    name: "booking-service"
+  jmx:
+    enabled: "false"
+  mvc:
+    log-request-details: "false"
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: "true"
+  jpa:
+    open-in-view: "false"
+    show-sql: "false"
+    hibernate:
+      ddl-auto: "validate"
+  sql:
+    init:
+      mode: "never"
+  liquibase:
+    enabled: "false"
+  datasource:
+    url: "${DATABASE_URL:${DB_URL}}"
+    username: "${DB_USERNAME}"
+    password: "${DB_PASSWORD}"
+  rabbitmq:
+    addresses: "${RABBITMQ_URL:amqp://${RABBITMQ_HOST:localhost}:${RABBITMQ_PORT:5672}}"
+    username: "${RABBITMQ_USERNAME}"
+    password: "${RABBITMQ_PASSWORD}"
+    virtual-host: "${RABBITMQ_VHOST:homecare}"
+  web:
+    error:
+      include-message: "never"
+      include-stacktrace: "never"
+      include-binding-errors: "never"
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health"
+    jmx:
+      exposure:
+        exclude: "*"
+  endpoint:
+    health:
+      show-details: "never"
+      show-components: "never"
+      probes:
+        enabled: "true"
+      group:
+        readiness:
+          include: "readinessState,db,rabbit"
+server:
+  address: "${SERVER_ADDRESS:127.0.0.1}"
+  port: "${SERVER_PORT:8080}"
+logging:
+  level:
+    org:
+      springframework:
+        web: "INFO"
+      hibernate:
+        SQL: "OFF"
+        orm:
+          jdbc:
+            bind: "OFF"
+    com:
+      zaxxer:
+        hikari: "INFO"

@@ -33,8 +33,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /** Real HTTP on random port. Fixture controllers/security exist only in test output. */
 @SpringBootTest(classes = ApiInfrastructureTest.Fixture.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = {"spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
-                "management.endpoint.health.group.readiness.include=readinessState"})
+        properties = {"spring.config.name=api-fixture", "spring.jackson.deserialization.fail-on-unknown-properties=true",
+                "spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
+                "management.endpoint.health.group.readiness.include=readinessState", "server.ssl.enabled=false",
+                "spring.ssl.bundle.jks.workload.keystore.location=", "spring.ssl.bundle.jks.workload.truststore.location="})
 @ExtendWith(OutputCaptureExtension.class)
 class ApiInfrastructureTest {
     @LocalServerPort int port;
@@ -43,8 +45,18 @@ class ApiInfrastructureTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({CorrelationFilter.class, ApiExceptionHandler.class, FoundationSecurity.class, Controller.class})
+    @Import({CorrelationFilter.class, ApiExceptionHandler.class, Controller.class})
     static class Fixture {
+        @Bean org.springframework.security.core.userdetails.UserDetailsService noLocalAccounts() {
+            return name -> { throw new org.springframework.security.core.userdetails.UsernameNotFoundException("No local accounts"); };
+        }
+        @Bean @Order(1)
+        SecurityFilterChain denyFixture(HttpSecurity http, ObjectMapper json) throws Exception {
+            return http.authorizeHttpRequests(a -> a.anyRequest().denyAll()).exceptionHandling(e -> e.authenticationEntryPoint((req,res,failure) -> {
+                res.setStatus(401); res.setContentType("application/json");
+                json.writeValue(res.getOutputStream(), ApiErrors.body("AUTHENTICATION_REQUIRED", "Required", java.util.List.of(), req));
+            })).build();
+        }
         @Bean @Order(0)
         SecurityFilterChain fixtureSecurity(HttpSecurity http) throws Exception {
             // Deterministic test principal; never packaged in bootJar and not a production auth bypass.

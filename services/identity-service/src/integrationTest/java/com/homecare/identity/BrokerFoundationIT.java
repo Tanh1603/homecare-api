@@ -8,8 +8,12 @@ import static org.assertj.core.api.Assertions.*;
 class BrokerFoundationIT {
     @Test void brokerConnectionAndTransientRoundTrip() throws Exception {
         var factory = new ConnectionFactory();
-        factory.setHost(DatabaseFoundationIT.env("RABBITMQ_HOST"));
-        factory.setPort(Integer.parseInt(DatabaseFoundationIT.env("RABBITMQ_PORT")));
+        String url = System.getenv("RABBITMQ_URL");
+        if (url != null && !url.isBlank()) factory.setUri(url);
+        else {
+            factory.setHost(DatabaseFoundationIT.env("RABBITMQ_HOST"));
+            factory.setPort(Integer.parseInt(DatabaseFoundationIT.env("RABBITMQ_PORT")));
+        }
         factory.setUsername(DatabaseFoundationIT.env("RABBITMQ_USERNAME"));
         factory.setPassword(DatabaseFoundationIT.env("RABBITMQ_PASSWORD"));
         factory.setVirtualHost(DatabaseFoundationIT.env("RABBITMQ_VHOST"));

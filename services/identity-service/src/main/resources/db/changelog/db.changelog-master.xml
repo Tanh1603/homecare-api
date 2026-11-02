@@ -2,5 +2,6 @@
 <databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.0.xsd">
-    <!-- Owner: identity. No business schema approved yet. Add explicit SQL includes after approval. -->
+    <include file="001-identity.sql" relativeToChangelogFile="true"/>
+    <include file="002-idempotency-expiry.sql" relativeToChangelogFile="true"/>
 </databaseChangeLog>

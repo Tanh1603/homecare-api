@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory)][ValidateSet('init','up','provision','migrate','run','test','down')][string]$Action,
-    [ValidateSet('identity','household','provider','booking','commerce','review','notification')][string]$Service = 'identity',
+    [ValidateSet('gateway','identity','household','provider','booking','commerce','review','notification')][string]$Service = 'identity',
     [ValidatePattern('^hc_(dev|test_[a-z0-9]{1,20})$')][string]$DatabasePrefix = 'hc_dev',
     [int]$Port = 8080
 )
@@ -25,7 +25,7 @@ try {
     if ($Action -eq 'init') {
         if (Test-Path -LiteralPath '.env') { throw '.env exists; preserving it.' }
         $lines = @('POSTGRES_PORT=55432', "POSTGRES_PASSWORD=$(New-LocalPassword)",
-            'RABBITMQ_HOST=127.0.0.1', 'RABBITMQ_PORT=55672', 'RABBITMQ_USERNAME=homecare_dev',
+            'RABBITMQ_URL=amqp://127.0.0.1:55672', 'RABBITMQ_PORT=55672', 'RABBITMQ_USERNAME=homecare_dev',
             "RABBITMQ_PASSWORD=$(New-LocalPassword)", 'RABBITMQ_VHOST=homecare')
         foreach ($owner in $owners) {
             $lines += "$($owner.ToUpper())_DB_PASSWORD=$(New-LocalPassword)"
@@ -39,9 +39,10 @@ try {
     foreach ($line in [IO.File]::ReadAllLines((Join-Path $apiRoot '.env'))) {
         if ($line -match '^([A-Z_]+)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process') }
     }
+    if (!$env:RABBITMQ_URL) { $env:RABBITMQ_URL = "amqp://$($env:RABBITMQ_HOST):$($env:RABBITMQ_PORT)" }
     switch ($Action) {
-        'up' { Invoke-Checked { docker compose up -d --wait --wait-timeout 180 } }
-        'down' { Invoke-Checked { docker compose down }; Write-Host 'Database volume preserved.' }
+        'up' { Invoke-Checked { docker compose up -d --wait --wait-timeout 180 postgres rabbitmq } }
+        'down' { Invoke-Checked { docker compose --profile '*' down }; Write-Host 'Database volume preserved.' }
         'provision' {
             # Each invocation creates NEW databases. Existing names fail; never reset existing data.
             Invoke-Checked { docker compose cp scripts/provision.sql postgres:/tmp/homecare-provision.sql }
@@ -71,16 +72,31 @@ try {
             }
         }
         'run' {
-            $env:DB_URL = "jdbc:postgresql://127.0.0.1:$($env:POSTGRES_PORT)/${DatabasePrefix}_${Service}"
-            $env:DB_USERNAME = "${DatabasePrefix}_${Service}_app"
-            $env:DB_PASSWORD = [Environment]::GetEnvironmentVariable("$($Service.ToUpper())_DB_PASSWORD")
+            if ($Service -ne 'gateway') {
+                if (!$env:DATABASE_URL) {
+                    $env:DATABASE_URL = "jdbc:postgresql://127.0.0.1:$($env:POSTGRES_PORT)/${DatabasePrefix}_${Service}"
+                }
+                $env:DB_USERNAME = "${DatabasePrefix}_${Service}_app"
+                $env:DB_PASSWORD = [Environment]::GetEnvironmentVariable("$($Service.ToUpper())_DB_PASSWORD")
+            }
+            if ($Service -in @('identity','gateway')) {
+                $env:TLS_KEYSTORE = [Environment]::GetEnvironmentVariable("$($Service.ToUpper())_TLS_KEYSTORE")
+                $env:TLS_KEYSTORE_PASSWORD = [Environment]::GetEnvironmentVariable("$($Service.ToUpper())_TLS_KEYSTORE_PASSWORD")
+                if (!$env:TLS_KEYSTORE -or !$env:TLS_KEYSTORE_PASSWORD -or !$env:TLS_TRUSTSTORE -or !$env:TLS_TRUSTSTORE_PASSWORD -or !$env:FIREBASE_PROJECT_ID) {
+                    throw 'Phase3 run requires service keystore, truststore, Firebase project and ADC outside source. Use test for the signed local fixture.'
+                }
+            }
             $env:SERVER_PORT = "$Port"
             Invoke-Checked { .\gradlew.bat ":services:${Service}-service:bootRun" }
         }
         'test' {
             if ($DatabasePrefix -notmatch '^hc_test_[a-z0-9]+$') { throw 'Tests require a dedicated hc_test_<run> prefix.' }
             $env:TEST_DATABASE_PREFIX = $DatabasePrefix
-            Invoke-Checked { .\gradlew.bat test integrationTest bootJar }
+            $testTasks = @('test','integrationTest','bootJar')
+            if ($PSBoundParameters.ContainsKey('Service')) {
+                $testTasks = @("${Service}-service") | ForEach-Object { ":services:${_}:test"; ":services:${_}:integrationTest"; ":services:${_}:bootJar" }
+            }
+            Invoke-Checked { .\gradlew.bat @testTasks }
         }
     }
 } finally {

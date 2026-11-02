@@ -1,4 +1,6 @@
-package com.homecare.identity.infrastructure;
+package com.homecare.identity.security;
+
+import com.homecare.identity.infrastructure.ApiErrors;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -9,19 +11,30 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import tools.jackson.databind.ObjectMapper;
 import java.util.List;
+import java.util.Set;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.web.authentication.preauth.AbstractPreAuthenticatedProcessingFilter;
+import org.springframework.http.HttpMethod;
 
-/** Fail closed until Phase 3 installs the approved Firebase/mTLS boundary. */
+/** Phase 3: verified Firebase actor over an allowlisted mTLS workload; all other routes denied. */
 @Configuration(proxyBeanMethods = false)
-public class FoundationSecurity {
+public class IdentitySecurityConfiguration {
     @Bean
     UserDetailsService noLocalAccounts() {
         return username -> { throw new UsernameNotFoundException("Local authentication is disabled"); };
     }
 
     @Bean
-    SecurityFilterChain foundationSecurityFilterChain(HttpSecurity http, ObjectMapper json) throws Exception {
+    SecurityFilterChain identitySecurityFilterChain(HttpSecurity http, ObjectMapper json, FirebaseVerifier verifier,
+            @Value("${homecare.security.allowed-workloads}") Set<String> callers) throws Exception {
         return http.sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(a -> a.anyRequest().denyAll())
+                .csrf(c -> c.disable())
+                .addFilterBefore(new IdentityAuthenticationFilter(verifier, json, callers), AbstractPreAuthenticatedProcessingFilter.class)
+                .authorizeHttpRequests(a -> a
+                        .requestMatchers(HttpMethod.GET, "/api/v1/users/me").authenticated()
+                        .requestMatchers(HttpMethod.PATCH, "/api/v1/users/me").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/users/me/bootstrap", "/internal/v1/principals/resolve").authenticated()
+                        .anyRequest().denyAll())
                 .exceptionHandling(e -> e
                         .authenticationEntryPoint((request, response, failure) -> {
                             response.setStatus(401);

@@ -1,0 +1,68 @@
+spring:
+  application:
+    name: "gateway-service"
+  mvc:
+    log-request-details: "false"
+  jmx:
+    enabled: "false"
+  ssl:
+    bundle:
+      jks:
+        workload:
+          keystore:
+            location: "${TLS_KEYSTORE}"
+            password: "${TLS_KEYSTORE_PASSWORD}"
+            type: "PKCS12"
+          truststore:
+            location: "${TLS_TRUSTSTORE}"
+            password: "${TLS_TRUSTSTORE_PASSWORD}"
+            type: "PKCS12"
+  cloud:
+    gateway:
+      server:
+        webmvc:
+          forwarded-request-headers-filter:
+            enabled: "false"
+          x-forwarded-request-headers-filter:
+            enabled: "false"
+server:
+  address: "${SERVER_ADDRESS:127.0.0.1}"
+  port: "${SERVER_PORT:8080}"
+  ssl:
+    enabled: "true"
+    bundle: "workload"
+    client-auth: "none"
+  error:
+    include-message: "never"
+    include-stacktrace: "never"
+  forward-headers-strategy: "none"
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health"
+    jmx:
+      exposure:
+        exclude: "*"
+  endpoint:
+    health:
+      show-details: "never"
+      show-components: "never"
+      probes:
+        enabled: "true"
+      group:
+        readiness:
+          include: "readinessState"
+homecare:
+  firebase:
+    project-id: "${FIREBASE_PROJECT_ID}"
+    connect-timeout-ms: "${FIREBASE_CONNECT_TIMEOUT_MS:2000}"
+    read-timeout-ms: "${FIREBASE_READ_TIMEOUT_MS:5000}"
+  gateway:
+    identity-url: "${IDENTITY_URL}"
+    provider-url: "${PROVIDER_URL}"
+    commerce-url: "${COMMERCE_URL}"
+    connect-timeout: "2s"
+    response-timeout: "5s"
+    max-body-bytes: "1048576"
+    cors-origins: "${CORS_ORIGINS:}"
