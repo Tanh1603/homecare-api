@@ -1,6 +1,7 @@
 rootProject.name = 'homecare-api'
 
 include(
+    'services:gateway-service',
     'services:identity-service',
     'services:household-service',
     'services:provider-service',
