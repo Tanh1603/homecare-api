@@ -26,23 +26,17 @@ services:
     ports: ["9090:8080"]
     volumes:
       - ./keycloak/import:/opt/keycloak/data/import
-      - ./keycloak/providers:/opt/keycloak/providers   # jar plugin webhook
+      - ./keycloak/providers:/opt/keycloak/providers
 
-  user-service:
-    build: ./user-service
-    environment:
-      DB_URL: jdbc:postgresql://postgres:5432/userdb
-      KEYCLOAK_URL: http://keycloak:9090
-      WEBHOOK_SECRET: change-me-please
+  identity-service:
+    build: ./identity-service
+    env_file: ./identity-service/.env
     depends_on:
       postgres: { condition: service_healthy }
-    expose: ["8081"]            # chỉ nội bộ
+    expose: ["8081:8081"]
 
   gateway:
     build: ./gateway
-    environment:
-      KEYCLOAK_URL: http://keycloak:9090
-      USER_SERVICE_URL: http://user-service:8081
-      REDIS_HOST: redis
-    ports: ["8080:8080"]        # entry point duy nhất
+    env_file: ./gateway/.env
+    ports: ["8080:8080"]
     depends_on: [redis, user-service, keycloak]

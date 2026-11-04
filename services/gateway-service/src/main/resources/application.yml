@@ -1,50 +1,39 @@
 server:
-    port: ${SERVER_PORT:8080}
+  port: ${SERVER_PORT}
 
 spring:
-    application:
-        name: gateway-service
+  application:
+    name: gateway-service
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI}
 
-    security:
-        oauth2:
-            resourceserver:
-                jwt:
-                    jwk-set-uri: ${KEYCLOAK_JWK_SET_URI}
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: identity-service-route
+              uri: ${IDENTITY_URL}
+              predicates:
+                - Path=/api/v1/auth/**,/api/v1/users/**
+            - id: identity-service-v3-docs
+              uri: ${IDENTITY_URL}
+              predicates:
+                - Path=/identity-service/v3/api-docs,/identity-service/v3/api-docs/**
+              filters:
+                - StripPrefix=1
 
-    cloud:
-        gateway:
-            routes:
-                - id: keycloak-auth-route
-                  uri: ${KEYCLOAK_URL}
-                  predicates:
-                      - Path=/api/v1/auth/**
-                  filters:
-                      - RewritePath=/api/v1/auth/(?<segment>.*), /realms/${KEYCLOAK_REALM}/protocol/openid-connect/$\{segment}
-
-                - id: user-service-route
-                  uri: ${USER_SERVICE_URL}
-                  predicates:
-                      - Path=/api/v1/users/**
-                  filters:
-                      - name: CircuitBreaker
-                        args:
-                            name: userServiceCB
-                            fallbackUri: forward:/fallback/services
-
-resilience4j:
-    circuitbreaker:
-        configs:
-            default:
-                slidingWindowSize: 20
-                failureRateThreshold: 50
-                waitDurationInOpenState: 10s
-
-app:
-    cors:
-        allowed-origins: ${CORS_ORIGINS:http://localhost:3000}
-
-management:
-    endpoints:
-        web:
-            exposure:
-                include: health,info,prometheus
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+    urls:
+      - name: Identity Service
+        url: /identity-service/v3/api-docs
+      # - name: Service Request Service
+      #   url: /service-request-service/v3/api-docs
