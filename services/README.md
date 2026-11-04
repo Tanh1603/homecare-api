@@ -38,34 +38,52 @@ database directly.
 
 | Gradle project | Responsibility | Additional dependencies |
 |---|---|---|
-| `:services:identity-service` | Internal profile and RBAC role mapping; Firebase identity integration | Spring Data JPA, PostgreSQL JDBC, Firebase Admin SDK |
+| `:services:gateway-service` | WebFlux routing, Keycloak JWT resource-server boundary, and Swagger reverse proxy | Spring Cloud Gateway WebFlux, Spring Security OAuth2 Resource Server, Resilience4j, reactive Redis starter |
+| `:services:identity-service` | Keycloak auth endpoints and local user profile | Spring Data JPA, PostgreSQL JDBC, Keycloak Admin Client, Flyway |
 | `:services:household-service` | Household, device, warranty, maintenance, and repair history | Spring Data JPA, PostgreSQL JDBC, RabbitMQ |
 | `:services:provider-service` | Providers, technicians, service offerings, and availability | Spring Data JPA, PostgreSQL JDBC, RabbitMQ |
 | `:services:booking-service` | Service requests, booking, assignment, and lifecycle | Spring Data JPA, PostgreSQL JDBC, RabbitMQ |
 | `:services:commerce-service` | Merchant, catalog, inventory, order, and sandbox payment | Spring Data JPA, PostgreSQL JDBC, RabbitMQ |
 | `:services:review-service` | Service reviews and their lifecycle | Spring Data JPA, PostgreSQL JDBC, RabbitMQ |
 | `:services:notification-service` | Notification inbox and delivery processing | Spring Data JPA, PostgreSQL JDBC, RabbitMQ |
-| `:services:assistant-service` | Spring HTTP/security boundary for assistant workflows | No persistence or messaging dependency until required |
 
-All services inherit Spring MVC, validation, Spring Security, Actuator, Java
-21, and the Spring Boot test starter from the root build. PostgreSQL, RabbitMQ,
-Firebase Admin, and service-specific dependencies are declared in each module.
+Service modules inherit Java 21, Spring Security, validation, Actuator, and
+JUnit Platform configuration from the root build. Gateway uses WebFlux; the
+domain services use Spring MVC. PostgreSQL, RabbitMQ, Keycloak Admin Client,
+and other service-specific dependencies are declared in each module.
 
 ## Design notes
 
-- The Spring Security dependency is a boundary scaffold; role/resource rules,
-  Firebase token verification placement, and security configuration remain to
-  be implemented and reviewed.
-- Firebase Admin SDK is included in Identity for integration readiness. No
-  credentials or Firebase project configuration are stored in this repository.
-- `assistant-service` is a Spring Boot API boundary only. The AI runtime,
-  orchestration framework, LLM provider, and RAG implementation are not selected
-  or implemented by this scaffold.
-- Redis, payment-provider SDKs, database migrations, and API documentation
-  tooling are omitted until their usage and contracts are defined.
+- `gateway-service` currently routes `/api/v1/auth/**` and `/api/v1/users/**`
+  to Identity, protects other requests with Keycloak JWT validation, and proxies
+  Identity OpenAPI to Swagger UI. The owner-confirmed current baseline is WebFlux
+  plus Keycloak; see the project audit for observed routes and remaining security
+  gaps before exposing additional routes.
+- Identity currently uses Keycloak Admin Client and password/token endpoints.
+  This is the owner-confirmed behavior baseline, not a production security
+  recommendation: password grant, Admin Client credential handling, missing
+  current-password verification and JPA `ddl-auto=update` remain documented gaps.
+- Supply deployment configuration through environment variables; never commit
+  real credentials, tokens, or private keys.
+- No `assistant-service` module is included in `settings.gradle`; the AI runtime,
+  orchestration framework, LLM provider, and RAG implementation are not
+  implemented in this Gradle build.
+- Identity's current JPA setting is `ddl-auto: update` with SQL logging enabled.
+  This differs from the documented migration/`validate` policy and must not be
+  mistaken for production schema management.
+- Flyway dependencies are declared for Identity, but no migration files were
+  observed under its current resources.
 
-Data-owning services require `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD` and use
-Hibernate `validate` so startup never creates or mutates schema implicitly.
+Identity currently reads `DB_URL`, `DB_USER`, and `DB_PASSWORD`, plus
+`KEYCLOAK_ISSUER_URI`, `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_CLIENT_ID`,
+`KEYCLOAK_CLIENT_SECRET`, `KEYCLOAK_ADMIN_USERNAME`, and
+`KEYCLOAK_ADMIN_PASSWORD`. Gateway reads `SERVER_PORT`, `IDENTITY_URL`, and
+`KEYCLOAK_JWK_SET_URI`. Identity optionally reads `KEYCLOAK_DEFAULT_ROLE` and
+`KEYCLOAK_TOKEN_SCOPE` (defaults: `CUSTOMER` and `openid profile email roles`).
+Never commit values for these settings.
+
+Other data-owning services require their configured database environment and
+use Hibernate `validate` where documented.
 RabbitMQ integrations default to localhost and can be pointed elsewhere with
 `RABBITMQ_HOST` and `RABBITMQ_PORT`. Run one configured service with
 `./gradlew :services:<service-name>:bootRun`, or build artifacts with

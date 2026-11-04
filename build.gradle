@@ -3,6 +3,11 @@ plugins {
 	id 'io.spring.dependency-management' version '1.1.7' apply false
 }
 
+ext {
+	mapstructVersion = '1.6.3'
+	lombokMapstructBindingVersion = '0.2.0'
+}
+
 allprojects {
 	group = 'com.homecare'
 	version = '0.1.0-SNAPSHOT'

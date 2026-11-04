@@ -5,15 +5,13 @@ import org.keycloak.admin.client.KeycloakBuilder;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.client.RestTemplate;
 
 @Configuration
 public class KeycloakConfig {
 
     @Value("${keycloak.server-url}")
     private String serverUrl;
-
-    @Value("${keycloak.realm}")
-    private String realm;
 
     @Value("${keycloak.admin.username}")
     private String adminUsername;
@@ -33,5 +31,10 @@ public class KeycloakConfig {
                 .password(adminPassword)
                 .clientId("admin-cli")
                 .build();
+    }
+
+    @Bean
+    public RestTemplate identityRestTemplate() {
+        return new RestTemplate();
     }
 }

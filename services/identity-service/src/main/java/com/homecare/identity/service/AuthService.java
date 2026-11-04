@@ -2,13 +2,17 @@ package com.homecare.identity.service;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.MessageSource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -19,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
 import com.homecare.identity.dto.AuthDto.ForgotPasswordRequest;
@@ -29,20 +34,30 @@ import com.homecare.identity.dto.AuthDto.RegisterRequest;
 import com.homecare.identity.dto.AuthDto.TokenResponse;
 import com.homecare.identity.dto.LoginResponse;
 import com.homecare.identity.entity.UserProfile;
+import com.homecare.identity.exception.ApiErrorCode;
+import com.homecare.identity.exception.IdentityException;
 import com.homecare.identity.repository.UserRepository;
 
+import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AuthService {
 
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
+    private static final String TOKEN_ENDPOINT = "/realms/%s/protocol/openid-connect/token";
+    private static final String LOGOUT_ENDPOINT = "/realms/%s/protocol/openid-connect/logout";
+    private static final String PASSWORD_GRANT = "password";
+    private static final String REFRESH_GRANT = "refresh_token";
+    private static final String VERIFY_EMAIL_ACTION = "VERIFY_EMAIL";
+    private static final String UPDATE_PASSWORD_ACTION = "UPDATE_PASSWORD";
+
     private final Keycloak keycloakAdminClient;
     private final UserRepository userRepository;
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
+    private final MessageSource messageSource;
 
     @Value("${keycloak.server-url}")
     private String serverUrl;
@@ -56,27 +71,29 @@ public class AuthService {
     @Value("${keycloak.client-secret}")
     private String clientSecret;
 
-    /**
-     * US-HU-001: Đăng ký tài khoản
-     */
+    @Value("${keycloak.token-scope:openid profile email roles}")
+    private String tokenScope;
+
+    @Value("${keycloak.default-role:CUSTOMER}")
+    private String defaultRole;
+
     @Transactional
     public UserProfile register(RegisterRequest request) {
         if (userRepository.existsByUsername(request.getUsername())) {
-            throw new RuntimeException("Tên đăng nhập đã tồn tại");
+            throw new IdentityException(ApiErrorCode.USERNAME_ALREADY_EXISTS);
         }
         if (userRepository.existsByEmail(request.getEmail())) {
-            throw new RuntimeException("Email đã được sử dụng");
+            throw new IdentityException(ApiErrorCode.EMAIL_ALREADY_EXISTS);
         }
 
-        // Tạo User trên Keycloak
         UserRepresentation keycloakUser = new UserRepresentation();
         keycloakUser.setUsername(request.getUsername());
         keycloakUser.setEmail(request.getEmail());
         keycloakUser.setFirstName(request.getFirstName());
         keycloakUser.setLastName(request.getLastName());
         keycloakUser.setEnabled(true);
-        keycloakUser.setEmailVerified(false); // Chưa verify
-        keycloakUser.setRequiredActions(List.of("VERIFY_EMAIL"));
+        keycloakUser.setEmailVerified(false);
+        keycloakUser.setRequiredActions(List.of(VERIFY_EMAIL_ACTION));
 
         CredentialRepresentation credential = new CredentialRepresentation();
         credential.setType(CredentialRepresentation.PASSWORD);
@@ -85,24 +102,9 @@ public class AuthService {
         keycloakUser.setCredentials(Collections.singletonList(credential));
 
         UsersResource usersResource = keycloakAdminClient.realm(realm).users();
-        Response response = usersResource.create(keycloakUser);
+        String keycloakUserId = createKeycloakUser(usersResource, keycloakUser);
+        assignDefaultRole(usersResource, keycloakUserId);
 
-        if (response.getStatus() != 201) {
-            throw new RuntimeException("Lỗi tạo tài khoản trên Keycloak");
-        }
-
-        String path = response.getLocation().getPath();
-        String keycloakUserId = path.substring(path.lastIndexOf('/') + 1);
-
-        // Gán role mặc định ROLE_CUSTOMER
-        try {
-            var roleRep = keycloakAdminClient.realm(realm).roles().get("CUSTOMER").toRepresentation();
-            usersResource.get(keycloakUserId).roles().realmLevel().add(Collections.singletonList(roleRep));
-        } catch (Exception e) {
-            log.warn("Không thể gán role ROLE_CUSTOMER: {}", e.getMessage());
-        }
-
-        // Lưu Local DB
         UserProfile profile = UserProfile.builder()
                 .keycloakUserId(keycloakUserId)
                 .username(request.getUsername())
@@ -116,163 +118,223 @@ public class AuthService {
         return userRepository.save(profile);
     }
 
-    /**
-     * US-HU-001: Đăng nhập & Lấy Access Token từ Keycloak
-     */
-    @SuppressWarnings({ "unchecked", "rawtypes" })
     public LoginResponse login(LoginRequest request) {
-        String tokenUrl = String.format("%s/realms/%s/protocol/openid-connect/token", serverUrl, realm);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-
         MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
-        body.add("grant_type", "password");
+        body.add("grant_type", PASSWORD_GRANT);
         body.add("client_id", clientId);
         body.add("client_secret", clientSecret);
         body.add("username", request.getEmail());
         body.add("password", request.getPassword());
-        body.add("scope", "openid profile email roles");
-
-        HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(body, headers);
+        body.add("scope", tokenScope);
 
         try {
-            ResponseEntity<Map> response = restTemplate.exchange(tokenUrl, HttpMethod.POST, entity, Map.class);
-            Map<String, Object> responseBody = response.getBody();
-
-            TokenResponse tokenResponse = new TokenResponse();
-            tokenResponse.setAccessToken((String) responseBody.get("access_token"));
-            tokenResponse.setRefreshToken((String) responseBody.get("refresh_token"));
-            tokenResponse.setExpiresIn(((Number) responseBody.get("expires_in")).longValue());
-            tokenResponse.setTokenType((String) responseBody.get("token_type"));
+            Map<?, ?> tokenBody = requestToken(TOKEN_ENDPOINT, body);
             return LoginResponse.builder()
                     .requiresEmailVerification(false)
                     .email(request.getEmail())
-                    .tokens(tokenResponse)
-                    .message("Đăng nhập thành công")
+                    .tokens(toTokenResponse(tokenBody))
+                    .message(message("login.succeeded"))
                     .build();
-
-        } catch (HttpClientErrorException e) {
-            String responseString = e.getResponseBodyAsString();
-            log.warn("Login Keycloak Error: {}", responseString);
-
-            if (responseString.contains("Account is not fully set up") || responseString.contains("invalid_grant")) {
-                UsersResource usersResource = keycloakAdminClient.realm(realm).users();
-                List<UserRepresentation> users = usersResource.searchByEmail(request.getEmail(), true);
-
-                if (!users.isEmpty() && Boolean.FALSE.equals(users.getFirst().isEmailVerified())) {
-                    String targetEmail = users.getFirst().getEmail();
-
-                    return LoginResponse.builder()
-                            .requiresEmailVerification(true)
-                            .email(targetEmail)
-                            .message("Tài khoản chưa được xác thực email. Vui lòng kiểm tra hộp thư.")
-                            .build();
-                }
+        } catch (HttpClientErrorException exception) {
+            if (isInvalidGrant(exception) && requiresEmailVerification(request.getEmail())) {
+                throw new IdentityException(ApiErrorCode.EMAIL_VERIFICATION_REQUIRED);
             }
-
-            throw new RuntimeException("Tên đăng nhập hoặc mật khẩu không chính xác");
-        } catch (Exception e) {
-            log.error("Đăng nhập thất bại: {}", e.getMessage());
-            throw new RuntimeException("Tài khoản hoặc mật khẩu không chính xác");
+            log.warn("Keycloak rejected login status={}", exception.getStatusCode().value());
+            throw new IdentityException(ApiErrorCode.INVALID_CREDENTIALS);
+        } catch (RestClientException exception) {
+            log.error("Keycloak login endpoint failed exceptionType={}",
+                    exception.getClass().getSimpleName());
+            throw new IdentityException(ApiErrorCode.AUTH_PROVIDER_UNAVAILABLE, exception);
         }
     }
 
-    /**
-     * Đổi Access Token mới bằng Refresh Token
-     */
     public TokenResponse refreshToken(RefreshTokenRequest request) {
-        String tokenUrl = String.format("%s/realms/%s/protocol/openid-connect/token", serverUrl, realm);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-
         MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
-        body.add("grant_type", "refresh_token");
+        body.add("grant_type", REFRESH_GRANT);
         body.add("client_id", clientId);
         body.add("client_secret", clientSecret);
         body.add("refresh_token", request.getRefreshToken());
 
-        HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(body, headers);
-
         try {
-            ResponseEntity<Map> response = restTemplate.exchange(tokenUrl, HttpMethod.POST, entity, Map.class);
-            Map<String, Object> responseBody = response.getBody();
-
-            TokenResponse tokenResponse = new TokenResponse();
-            tokenResponse.setAccessToken((String) responseBody.get("access_token"));
-            tokenResponse.setRefreshToken((String) responseBody.get("refresh_token"));
-            tokenResponse.setExpiresIn(((Number) responseBody.get("expires_in")).longValue());
-            tokenResponse.setTokenType((String) responseBody.get("token_type"));
-            return tokenResponse;
-        } catch (Exception e) {
-            log.error("Refresh token thất bại hoặc token đã hết hạn: {}", e.getMessage());
-            throw new RuntimeException("Refresh token không hợp lệ hoặc đã hết hạn. Vui lòng đăng nhập lại.");
+            return toTokenResponse(requestToken(TOKEN_ENDPOINT, body));
+        } catch (HttpClientErrorException exception) {
+            log.warn("Keycloak rejected refresh token status={}", exception.getStatusCode().value());
+            throw new IdentityException(ApiErrorCode.INVALID_REFRESH_TOKEN);
+        } catch (RestClientException exception) {
+            log.error("Keycloak refresh endpoint failed exceptionType={}",
+                    exception.getClass().getSimpleName());
+            throw new IdentityException(ApiErrorCode.AUTH_PROVIDER_UNAVAILABLE, exception);
         }
     }
 
-    /**
-     * 2. Endpoint riêng: Gửi (hoặc gửi lại) Email xác minh
-     */
     public void sendVerificationEmail(String email) {
-        UsersResource usersResource = keycloakAdminClient.realm(realm).users();
-        List<UserRepresentation> users = usersResource.searchByEmail(email, true);
+        UsersResource usersResource = usersResource();
+        List<UserRepresentation> users = searchUsersByEmail(usersResource, email);
 
         if (users.isEmpty()) {
-            throw new RuntimeException("Không tìm thấy người dùng với email: " + email);
+            throw new IdentityException(ApiErrorCode.USER_NOT_FOUND);
         }
 
         UserRepresentation user = users.getFirst();
         if (Boolean.TRUE.equals(user.isEmailVerified())) {
-            throw new RuntimeException("Email này đã được xác thực trước đó");
+            throw new IdentityException(ApiErrorCode.EMAIL_ALREADY_VERIFIED);
         }
 
-        // Gọi Keycloak kích hoạt gửi mail xác nhận
-        usersResource.get(user.getId()).sendVerifyEmail();
+        callKeycloak(() -> {
+            usersResource.get(user.getId()).sendVerifyEmail();
+            return null;
+        });
     }
 
-    /**
-     * Quên mật khẩu: Gửi email reset password từ Keycloak
-     */
     public void forgotPassword(ForgotPasswordRequest request) {
-        UsersResource usersResource = keycloakAdminClient.realm(realm).users();
-        List<UserRepresentation> users = usersResource.searchByEmail(request.getEmail(), true);
+        UsersResource usersResource = usersResource();
+        List<UserRepresentation> users = searchUsersByEmail(usersResource, request.getEmail());
 
         if (users.isEmpty()) {
-            // Không tiết lộ email có tồn tại hay không vì lý do bảo mật
-            log.info("Không tìm thấy user với email: {}", request.getEmail());
             return;
         }
 
         UserRepresentation user = users.getFirst();
-        // Gọi Keycloak kích hoạt email reset password
-        usersResource.get(user.getId()).executeActionsEmail(List.of("UPDATE_PASSWORD"));
+        callKeycloak(() -> {
+            usersResource.get(user.getId()).executeActionsEmail(List.of(UPDATE_PASSWORD_ACTION));
+            return null;
+        });
     }
 
-    /**
-     * Đăng xuất: Vô hiệu hóa Refresh Token & Revoke User Session trên Keycloak
-     */
     public void logout(LogoutRequest request) {
-        String logoutUrl = String.format("%s/realms/%s/protocol/openid-connect/logout", serverUrl, realm);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-
         MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
         body.add("client_id", clientId);
         body.add("client_secret", clientSecret);
         body.add("refresh_token", request.getRefreshToken());
 
-        HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(body, headers);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 
         try {
-            ResponseEntity<String> response = restTemplate.postForEntity(logoutUrl, entity, String.class);
+            ResponseEntity<String> response = restTemplate.postForEntity(
+                    serverUrl + String.format(LOGOUT_ENDPOINT, realm),
+                    new HttpEntity<>(body, headers),
+                    String.class);
             if (!response.getStatusCode().is2xxSuccessful()) {
-                log.warn("Keycloak logout response status: {}", response.getStatusCode());
+                log.warn("Keycloak logout returned non-success status={}", response.getStatusCode().value());
+                throw new IdentityException(ApiErrorCode.OPERATION_FAILED);
             }
-        } catch (Exception e) {
-            log.error("Lỗi khi revoke refresh token trên Keycloak: {}", e.getMessage());
-            throw new RuntimeException("Đăng xuất thất bại hoặc Refresh Token không hợp lệ");
+        } catch (HttpClientErrorException exception) {
+            log.warn("Keycloak rejected logout status={}", exception.getStatusCode().value());
+            throw new IdentityException(ApiErrorCode.INVALID_REFRESH_TOKEN);
+        } catch (RestClientException exception) {
+            log.error("Keycloak logout endpoint failed exceptionType={}",
+                    exception.getClass().getSimpleName());
+            throw new IdentityException(ApiErrorCode.AUTH_PROVIDER_UNAVAILABLE, exception);
         }
+    }
+
+    private String createKeycloakUser(UsersResource usersResource, UserRepresentation user) {
+        try (Response response = usersResource.create(user)) {
+            if (response.getStatus() != 201 || response.getLocation() == null) {
+                log.warn("Keycloak user creation returned status={}", response.getStatus());
+                ApiErrorCode errorCode = response.getStatus() == 409
+                        ? ApiErrorCode.CONFLICT
+                        : ApiErrorCode.OPERATION_FAILED;
+                throw new IdentityException(errorCode);
+            }
+            String path = response.getLocation().getPath();
+            return path.substring(path.lastIndexOf('/') + 1);
+        } catch (IdentityException exception) {
+            throw exception;
+        } catch (WebApplicationException exception) {
+            log.warn("Keycloak rejected user creation status={}",
+                    exception.getResponse().getStatus());
+            throw new IdentityException(ApiErrorCode.CONFLICT, exception);
+        } catch (RuntimeException exception) {
+            log.error("Keycloak user creation failed exceptionType={}",
+                    exception.getClass().getSimpleName());
+            throw new IdentityException(ApiErrorCode.AUTH_PROVIDER_UNAVAILABLE, exception);
+        }
+    }
+
+    private void assignDefaultRole(UsersResource usersResource, String userId) {
+        try {
+            var role = keycloakAdminClient.realm(realm).roles().get(defaultRole).toRepresentation();
+            usersResource.get(userId).roles().realmLevel().add(Collections.singletonList(role));
+        } catch (RuntimeException exception) {
+            log.error("Keycloak default role assignment failed exceptionType={}",
+                    exception.getClass().getSimpleName());
+        }
+    }
+
+    private Map<?, ?> requestToken(String endpointTemplate, MultiValueMap<String, String> body) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+        HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(body, headers);
+        ResponseEntity<Map> response = restTemplate.exchange(
+                serverUrl + String.format(endpointTemplate, realm),
+                HttpMethod.POST,
+                entity,
+                Map.class);
+        Map<?, ?> tokenBody = response.getBody();
+        if (tokenBody == null) {
+            throw new IdentityException(ApiErrorCode.OPERATION_FAILED);
+        }
+        return tokenBody;
+    }
+
+    private TokenResponse toTokenResponse(Map<?, ?> tokenBody) {
+        Object accessToken = tokenBody.get("access_token");
+        Object expiresIn = tokenBody.get("expires_in");
+        Object tokenType = tokenBody.get("token_type");
+        if (!(accessToken instanceof String) || !(expiresIn instanceof Number) || !(tokenType instanceof String)) {
+            throw new IdentityException(ApiErrorCode.OPERATION_FAILED);
+        }
+
+        TokenResponse token = new TokenResponse();
+        token.setAccessToken((String) accessToken);
+        token.setRefreshToken(tokenBody.get("refresh_token") instanceof String refreshToken ? refreshToken : null);
+        token.setExpiresIn(((Number) expiresIn).longValue());
+        token.setTokenType((String) tokenType);
+        return token;
+    }
+
+    private boolean isInvalidGrant(HttpClientErrorException exception) {
+        String responseBody = exception.getResponseBodyAsString();
+        return responseBody.contains("invalid_grant")
+                || responseBody.contains("Account is not fully set up");
+    }
+
+    private boolean requiresEmailVerification(String email) {
+        List<UserRepresentation> users = searchUsersByEmail(usersResource(), email);
+        return !users.isEmpty() && Boolean.FALSE.equals(users.getFirst().isEmailVerified());
+    }
+
+    private UsersResource usersResource() {
+        return callKeycloak(() -> keycloakAdminClient.realm(realm).users());
+    }
+
+    private List<UserRepresentation> searchUsersByEmail(UsersResource usersResource, String email) {
+        return callKeycloak(() -> usersResource.searchByEmail(email, true));
+    }
+
+    private <T> T callKeycloak(KeycloakCall<T> call) {
+        try {
+            return call.execute();
+        } catch (IdentityException exception) {
+            throw exception;
+        } catch (WebApplicationException exception) {
+            log.warn("Keycloak operation rejected status={}", exception.getResponse().getStatus());
+            throw new IdentityException(ApiErrorCode.OPERATION_FAILED, exception);
+        } catch (RuntimeException exception) {
+            log.error("Keycloak operation failed exceptionType={}",
+                    exception.getClass().getSimpleName());
+            throw new IdentityException(ApiErrorCode.AUTH_PROVIDER_UNAVAILABLE, exception);
+        }
+    }
+
+    private String message(String key) {
+        return messageSource.getMessage(key, null, Locale.ENGLISH);
+    }
+
+    @FunctionalInterface
+    private interface KeycloakCall<T> {
+        T execute();
     }
 }

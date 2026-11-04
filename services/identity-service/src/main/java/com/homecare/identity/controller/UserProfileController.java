@@ -1,7 +1,5 @@
 package com.homecare.identity.controller;
 
-import java.util.Map;
-
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -14,8 +12,11 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.homecare.identity.dto.AuthDto.ChangePasswordRequest;
 import com.homecare.identity.dto.AuthDto.UpdateProfileRequest;
-import com.homecare.identity.entity.UserProfile;
+import com.homecare.identity.dto.ApiMessageResponse;
+import com.homecare.identity.dto.UserProfileResponse;
+import com.homecare.identity.mapper.UserProfileMapper;
 import com.homecare.identity.service.UserProfileService;
+import com.homecare.identity.web.ApiMessageFactory;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -26,27 +27,30 @@ import lombok.RequiredArgsConstructor;
 public class UserProfileController {
 
     private final UserProfileService userProfileService;
+    private final UserProfileMapper userProfileMapper;
+    private final ApiMessageFactory messageFactory;
 
     @GetMapping
-    public ResponseEntity<UserProfile> getMyProfile(@AuthenticationPrincipal Jwt jwt) {
+    public ResponseEntity<UserProfileResponse> getMyProfile(@AuthenticationPrincipal Jwt jwt) {
         String keycloakUserId = jwt.getSubject();
-        return ResponseEntity.ok(userProfileService.getProfile(keycloakUserId));
+        return ResponseEntity.ok(userProfileMapper.toResponse(userProfileService.getProfile(keycloakUserId)));
     }
 
     @PutMapping
-    public ResponseEntity<UserProfile> updateMyProfile(
+    public ResponseEntity<UserProfileResponse> updateMyProfile(
             @AuthenticationPrincipal Jwt jwt,
             @Valid @RequestBody UpdateProfileRequest request) {
         String keycloakUserId = jwt.getSubject();
-        return ResponseEntity.ok(userProfileService.updateProfile(keycloakUserId, request));
+        return ResponseEntity.ok(
+                userProfileMapper.toResponse(userProfileService.updateProfile(keycloakUserId, request)));
     }
 
     @PostMapping("/change-password")
-    public ResponseEntity<Map<String, String>> changePassword(
+    public ResponseEntity<ApiMessageResponse> changePassword(
             @AuthenticationPrincipal Jwt jwt,
             @Valid @RequestBody ChangePasswordRequest request) {
         String keycloakUserId = jwt.getSubject();
         userProfileService.changePassword(keycloakUserId, request);
-        return ResponseEntity.ok(Map.of("message", "Đổi mật khẩu thành công"));
+        return ResponseEntity.ok(messageFactory.create("success.password.updated"));
     }
 }
