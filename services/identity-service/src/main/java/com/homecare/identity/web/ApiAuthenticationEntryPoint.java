@@ -10,8 +10,8 @@ import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.stereotype.Component;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homecare.identity.exception.ApiErrorCode;
+import tools.jackson.databind.ObjectMapper;
 
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -23,7 +23,7 @@ import lombok.RequiredArgsConstructor;
 public class ApiAuthenticationEntryPoint implements AuthenticationEntryPoint {
 
     private static final Logger log = LoggerFactory.getLogger(ApiAuthenticationEntryPoint.class);
-    private final ApiErrorResponseFactory responseFactory;
+    private final ApiResponseFactory responseFactory;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -35,7 +35,7 @@ public class ApiAuthenticationEntryPoint implements AuthenticationEntryPoint {
         response.setStatus(HttpStatus.UNAUTHORIZED.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         objectMapper.writeValue(response.getOutputStream(),
-                responseFactory.create(ApiErrorCode.UNAUTHENTICATED, null, request));
+                responseFactory.error(ApiErrorCode.UNAUTHENTICATED, null, request));
     }
 
     private String traceId(HttpServletRequest request) {

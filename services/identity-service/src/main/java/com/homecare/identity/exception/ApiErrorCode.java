@@ -3,7 +3,7 @@ package com.homecare.identity.exception;
 import org.springframework.http.HttpStatus;
 
 public enum ApiErrorCode {
-    REQUEST_VALIDATION_FAILED(HttpStatus.BAD_REQUEST, "error.request.validation"),
+    VALIDATION_FAILED(HttpStatus.BAD_REQUEST, "error.request.validation"),
     MALFORMED_REQUEST(HttpStatus.BAD_REQUEST, "error.request.malformed"),
     UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "error.media-type.unsupported"),
     MEDIA_TYPE_NOT_ACCEPTABLE(HttpStatus.NOT_ACCEPTABLE, "error.media-type.not-acceptable"),

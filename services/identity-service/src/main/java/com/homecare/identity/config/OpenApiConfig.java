@@ -9,7 +9,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.security.SecurityScheme;
 
 @Configuration
-@OpenAPIDefinition(info = @Info(title = "Identity Service API", version = "1.0", description = "Dịch vụ Xác thực & Quản lý Tài khoản"), security = @SecurityRequirement(name = "bearerAuth"))
+@OpenAPIDefinition(info = @Info(title = "Identity Service API", version = "1.0", description = "Identity and account management service"), security = @SecurityRequirement(name = "bearerAuth"))
 @SecurityScheme(name = "bearerAuth", type = SecuritySchemeType.HTTP, scheme = "bearer", bearerFormat = "JWT")
 public class OpenApiConfig {
 }

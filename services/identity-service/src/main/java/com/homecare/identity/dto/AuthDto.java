@@ -7,7 +7,7 @@ import lombok.Data;
 
 public class AuthDto {
 
-    // Request đăng ký (US-HU-001)
+    // Registration request.
     @Data
     public static class RegisterRequest {
         @NotBlank(message = "{validation.username.required}")
@@ -31,7 +31,7 @@ public class AuthDto {
         private String address;
     }
 
-    // Request đăng nhập
+    // Login request.
     @Data
     public static class LoginRequest {
         @NotBlank(message = "{validation.email.required}")
@@ -42,7 +42,7 @@ public class AuthDto {
         private String password;
     }
 
-    // Response Token
+    // Token response.
     @Data
     public static class TokenResponse {
         private String accessToken;
@@ -51,7 +51,7 @@ public class AuthDto {
         private String tokenType;
     }
 
-    // Request cập nhật Profile (US-HU-002)
+    // Profile update request.
     @Data
     public static class UpdateProfileRequest {
         @NotBlank(message = "{validation.first-name.required}")
@@ -68,7 +68,7 @@ public class AuthDto {
         private String refreshToken;
     }
 
-    // Request Đổi mật khẩu
+    // Password change request.
     @Data
     public static class ChangePasswordRequest {
         @NotBlank(message = "{validation.current-password.required}")
@@ -79,7 +79,7 @@ public class AuthDto {
         private String newPassword;
     }
 
-    // Request Quên mật khẩu
+    // Password reset request.
     @Data
     public static class ForgotPasswordRequest {
         @NotBlank(message = "{validation.email.required}")

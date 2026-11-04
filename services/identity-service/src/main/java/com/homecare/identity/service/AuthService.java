@@ -2,7 +2,6 @@ package com.homecare.identity.service;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 import org.keycloak.admin.client.Keycloak;
@@ -12,7 +11,6 @@ import org.keycloak.representations.idm.UserRepresentation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.MessageSource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -57,8 +55,6 @@ public class AuthService {
     private final Keycloak keycloakAdminClient;
     private final UserRepository userRepository;
     private final RestTemplate restTemplate;
-    private final MessageSource messageSource;
-
     @Value("${keycloak.server-url}")
     private String serverUrl;
 
@@ -103,7 +99,6 @@ public class AuthService {
 
         UsersResource usersResource = keycloakAdminClient.realm(realm).users();
         String keycloakUserId = createKeycloakUser(usersResource, keycloakUser);
-        assignDefaultRole(usersResource, keycloakUserId);
 
         UserProfile profile = UserProfile.builder()
                 .keycloakUserId(keycloakUserId)
@@ -115,25 +110,24 @@ public class AuthService {
                 .address(request.getAddress())
                 .build();
 
-        return userRepository.save(profile);
+        try {
+            assignDefaultRole(usersResource, keycloakUserId);
+            return userRepository.save(profile);
+        } catch (RuntimeException exception) {
+            removeKeycloakUser(usersResource, keycloakUserId);
+            throw exception;
+        }
     }
 
     public LoginResponse login(LoginRequest request) {
-        MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
-        body.add("grant_type", PASSWORD_GRANT);
-        body.add("client_id", clientId);
-        body.add("client_secret", clientSecret);
-        body.add("username", request.getEmail());
-        body.add("password", request.getPassword());
-        body.add("scope", tokenScope);
-
         try {
-            Map<?, ?> tokenBody = requestToken(TOKEN_ENDPOINT, body);
+            Map<?, ?> tokenBody = requestToken(
+                    TOKEN_ENDPOINT,
+                    passwordGrantBody(request.getEmail(), request.getPassword()));
             return LoginResponse.builder()
                     .requiresEmailVerification(false)
                     .email(request.getEmail())
                     .tokens(toTokenResponse(tokenBody))
-                    .message(message("login.succeeded"))
                     .build();
         } catch (HttpClientErrorException exception) {
             if (isInvalidGrant(exception) && requiresEmailVerification(request.getEmail())) {
@@ -143,6 +137,19 @@ public class AuthService {
             throw new IdentityException(ApiErrorCode.INVALID_CREDENTIALS);
         } catch (RestClientException exception) {
             log.error("Keycloak login endpoint failed exceptionType={}",
+                    exception.getClass().getSimpleName());
+            throw new IdentityException(ApiErrorCode.AUTH_PROVIDER_UNAVAILABLE, exception);
+        }
+    }
+
+    public void verifyCurrentPassword(String username, String currentPassword) {
+        try {
+            requestToken(TOKEN_ENDPOINT, passwordGrantBody(username, currentPassword));
+        } catch (HttpClientErrorException exception) {
+            log.warn("Keycloak rejected current password status={}", exception.getStatusCode().value());
+            throw new IdentityException(ApiErrorCode.INVALID_CREDENTIALS);
+        } catch (RestClientException exception) {
+            log.error("Keycloak current-password verification failed exceptionType={}",
                     exception.getClass().getSimpleName());
             throw new IdentityException(ApiErrorCode.AUTH_PROVIDER_UNAVAILABLE, exception);
         }
@@ -254,13 +261,31 @@ public class AuthService {
     }
 
     private void assignDefaultRole(UsersResource usersResource, String userId) {
-        try {
+        callKeycloak(() -> {
             var role = keycloakAdminClient.realm(realm).roles().get(defaultRole).toRepresentation();
             usersResource.get(userId).roles().realmLevel().add(Collections.singletonList(role));
-        } catch (RuntimeException exception) {
-            log.error("Keycloak default role assignment failed exceptionType={}",
-                    exception.getClass().getSimpleName());
+            return null;
+        });
+    }
+
+    private void removeKeycloakUser(UsersResource usersResource, String userId) {
+        try {
+            usersResource.get(userId).remove();
+        } catch (RuntimeException cleanupException) {
+            log.error("Keycloak user cleanup after failed registration failed exceptionType={}",
+                    cleanupException.getClass().getSimpleName());
         }
+    }
+
+    private MultiValueMap<String, String> passwordGrantBody(String username, String password) {
+        MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
+        body.add("grant_type", PASSWORD_GRANT);
+        body.add("client_id", clientId);
+        body.add("client_secret", clientSecret);
+        body.add("username", username);
+        body.add("password", password);
+        body.add("scope", tokenScope);
+        return body;
     }
 
     private Map<?, ?> requestToken(String endpointTemplate, MultiValueMap<String, String> body) {
@@ -327,10 +352,6 @@ public class AuthService {
                     exception.getClass().getSimpleName());
             throw new IdentityException(ApiErrorCode.AUTH_PROVIDER_UNAVAILABLE, exception);
         }
-    }
-
-    private String message(String key) {
-        return messageSource.getMessage(key, null, Locale.ENGLISH);
     }
 
     @FunctionalInterface

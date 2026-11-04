@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
-import com.homecare.identity.dto.ApiErrorResponse;
+import com.homecare.identity.dto.ApiResponse;
 import com.homecare.identity.exception.ApiErrorCode;
 import com.homecare.identity.exception.IdentityException;
 
@@ -30,14 +30,14 @@ import jakarta.validation.ConstraintViolationException;
 public class ApiExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
-    private final ApiErrorResponseFactory responseFactory;
+    private final ApiResponseFactory responseFactory;
 
-    public ApiExceptionHandler(ApiErrorResponseFactory responseFactory) {
+    public ApiExceptionHandler(ApiResponseFactory responseFactory) {
         this.responseFactory = responseFactory;
     }
 
     @ExceptionHandler(IdentityException.class)
-    public ResponseEntity<ApiErrorResponse> handleIdentityException(
+    public ResponseEntity<ApiResponse<Void>> handleIdentityException(
             IdentityException exception,
             HttpServletRequest request) {
         log.warn("Identity request failed code={} traceId={}",
@@ -46,39 +46,39 @@ public class ApiExceptionHandler {
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ApiErrorResponse> handleInvalidArguments(
+    public ResponseEntity<ApiResponse<Void>> handleInvalidArguments(
             MethodArgumentNotValidException exception,
             HttpServletRequest request) {
-        List<ApiErrorResponse.FieldErrorDetail> fieldErrors = exception.getBindingResult()
+        List<ApiResponse.FieldError> errors = exception.getBindingResult()
                 .getFieldErrors()
                 .stream()
                 .map(this::fieldError)
-                .sorted(Comparator.comparing(ApiErrorResponse.FieldErrorDetail::field))
+                .sorted(Comparator.comparing(ApiResponse.FieldError::field))
                 .toList();
         log.warn("Identity request validation failed fieldCount={} traceId={}",
-                fieldErrors.size(), traceId(request));
-        return response(ApiErrorCode.REQUEST_VALIDATION_FAILED, fieldErrors, request);
+                errors.size(), traceId(request));
+        return response(ApiErrorCode.VALIDATION_FAILED, errors, request);
     }
 
     @ExceptionHandler(ConstraintViolationException.class)
-    public ResponseEntity<ApiErrorResponse> handleConstraintViolation(
+    public ResponseEntity<ApiResponse<Void>> handleConstraintViolation(
             ConstraintViolationException exception,
             HttpServletRequest request) {
-        List<ApiErrorResponse.FieldErrorDetail> fieldErrors = exception.getConstraintViolations()
+        List<ApiResponse.FieldError> errors = exception.getConstraintViolations()
                 .stream()
                 .map(this::fieldError)
-                .sorted(Comparator.comparing(ApiErrorResponse.FieldErrorDetail::field))
+                .sorted(Comparator.comparing(ApiResponse.FieldError::field))
                 .toList();
         log.warn("Identity constraint validation failed fieldCount={} traceId={}",
-                fieldErrors.size(), traceId(request));
-        return response(ApiErrorCode.REQUEST_VALIDATION_FAILED, fieldErrors, request);
+                errors.size(), traceId(request));
+        return response(ApiErrorCode.VALIDATION_FAILED, errors, request);
     }
 
     @ExceptionHandler({
             HttpMessageNotReadableException.class,
             MethodArgumentTypeMismatchException.class
     })
-    public ResponseEntity<ApiErrorResponse> handleMalformedRequest(
+    public ResponseEntity<ApiResponse<Void>> handleMalformedRequest(
             Exception exception,
             HttpServletRequest request) {
         log.warn("Identity request could not be parsed exceptionType={} traceId={}",
@@ -87,19 +87,19 @@ public class ApiExceptionHandler {
     }
 
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
-    public ResponseEntity<ApiErrorResponse> handleUnsupportedMediaType(HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<Void>> handleUnsupportedMediaType(HttpServletRequest request) {
         log.warn("Identity request media type is not supported traceId={}", traceId(request));
         return response(ApiErrorCode.UNSUPPORTED_MEDIA_TYPE, null, request);
     }
 
     @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
-    public ResponseEntity<ApiErrorResponse> handleUnacceptableMediaType(HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<Void>> handleUnacceptableMediaType(HttpServletRequest request) {
         log.warn("Identity response media type is not acceptable traceId={}", traceId(request));
         return response(ApiErrorCode.MEDIA_TYPE_NOT_ACCEPTABLE, null, request);
     }
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
-    public ResponseEntity<ApiErrorResponse> handleMethodNotAllowed(
+    public ResponseEntity<ApiResponse<Void>> handleMethodNotAllowed(
             HttpRequestMethodNotSupportedException exception,
             HttpServletRequest request) {
         log.warn("Identity method not allowed method={} traceId={}",
@@ -108,13 +108,13 @@ public class ApiExceptionHandler {
     }
 
     @ExceptionHandler(NoResourceFoundException.class)
-    public ResponseEntity<ApiErrorResponse> handleResourceNotFound(HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<Void>> handleResourceNotFound(HttpServletRequest request) {
         log.warn("Identity resource not found traceId={}", traceId(request));
         return response(ApiErrorCode.RESOURCE_NOT_FOUND, null, request);
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)
-    public ResponseEntity<ApiErrorResponse> handleDataConflict(
+    public ResponseEntity<ApiResponse<Void>> handleDataConflict(
             DataIntegrityViolationException exception,
             HttpServletRequest request) {
         log.warn("Identity persistence conflict exceptionType={} traceId={}",
@@ -123,7 +123,7 @@ public class ApiExceptionHandler {
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiErrorResponse> handleUnexpected(
+    public ResponseEntity<ApiResponse<Void>> handleUnexpected(
             Exception exception,
             HttpServletRequest request) {
         log.error("Unexpected Identity API failure exceptionType={} traceId={}",
@@ -131,40 +131,22 @@ public class ApiExceptionHandler {
         return response(ApiErrorCode.INTERNAL_ERROR, null, request);
     }
 
-    private ApiErrorResponse.FieldErrorDetail fieldError(FieldError error) {
-        String code = fieldCode(error.getCode());
-        String message = error.getDefaultMessage();
-        return new ApiErrorResponse.FieldErrorDetail(error.getField(), code, message);
+    private ApiResponse.FieldError fieldError(FieldError error) {
+        return new ApiResponse.FieldError(error.getField(), error.getDefaultMessage());
     }
 
-    private ApiErrorResponse.FieldErrorDetail fieldError(ConstraintViolation<?> violation) {
+    private ApiResponse.FieldError fieldError(ConstraintViolation<?> violation) {
         String path = violation.getPropertyPath().toString();
         String field = path.substring(path.lastIndexOf('.') + 1);
-        String annotation = violation.getConstraintDescriptor().getAnnotation().annotationType().getSimpleName();
-        return new ApiErrorResponse.FieldErrorDetail(
-                field,
-                fieldCode(annotation),
-                violation.getMessage());
+        return new ApiResponse.FieldError(field, violation.getMessage());
     }
 
-    private String fieldCode(String validationCode) {
-        if (validationCode == null) {
-            return "INVALID_VALUE";
-        }
-        return switch (validationCode) {
-            case "NotBlank", "NotNull", "NotEmpty" -> "REQUIRED";
-            case "Email", "Pattern" -> "INVALID_FORMAT";
-            case "Size", "Min", "Max", "Length" -> "SIZE_OR_RANGE_INVALID";
-            default -> "INVALID_VALUE";
-        };
-    }
-
-    private ResponseEntity<ApiErrorResponse> response(
+    private ResponseEntity<ApiResponse<Void>> response(
             ApiErrorCode errorCode,
-            List<ApiErrorResponse.FieldErrorDetail> fieldErrors,
+            List<ApiResponse.FieldError> errors,
             HttpServletRequest request) {
         return ResponseEntity.status(errorCode.status())
-                .body(responseFactory.create(errorCode, fieldErrors, request));
+                .body(responseFactory.error(errorCode, errors, request));
     }
 
     private String traceId(HttpServletRequest request) {

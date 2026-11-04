@@ -8,7 +8,7 @@ spring:
     basename: messages
     encoding: UTF-8
   web:
-    locale: en
+    locale: en_US
     locale-resolver: fixed
   datasource:
     url: ${DB_URL}

@@ -10,14 +10,13 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.support.StaticMessageSource;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.HttpStatus;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.mock.web.MockHttpServletRequest;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.homecare.identity.dto.ApiErrorResponse;
+import tools.jackson.databind.ObjectMapper;
+import com.homecare.identity.dto.ApiResponse;
 import com.homecare.identity.dto.AuthDto;
 import com.homecare.identity.exception.ApiErrorCode;
 import com.homecare.identity.exception.IdentityException;
@@ -26,15 +25,17 @@ class ApiExceptionHandlerTest {
 
     private ApiExceptionHandler handler;
     private MockHttpServletRequest request;
+    private ObjectMapper objectMapper;
 
     @BeforeEach
     void setUp() {
         StaticMessageSource messages = new StaticMessageSource();
         messages.addMessage("error.profile.not-found", Locale.ENGLISH, "The user profile was not found.");
-        messages.addMessage("error.request.validation", Locale.ENGLISH, "One or more request fields are invalid.");
-        handler = new ApiExceptionHandler(new ApiErrorResponseFactory(messages));
+        messages.addMessage("error.request.validation", Locale.ENGLISH, "The request contains invalid data.");
+        handler = new ApiExceptionHandler(new ApiResponseFactory(messages));
         request = new MockHttpServletRequest();
         request.setAttribute(CorrelationIdFilter.REQUEST_ATTRIBUTE, "request-123");
+        objectMapper = new ObjectMapper();
     }
 
     @Test
@@ -44,20 +45,25 @@ class ApiExceptionHandlerTest {
                 request);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
-        assertThat(response.getBody()).isEqualTo(new ApiErrorResponse(
-                new ApiErrorResponse.ErrorDetail(
-                        "PROFILE_NOT_FOUND",
-                        "The user profile was not found.",
-                        null,
-                        "request-123")));
-        assertThat(new ObjectMapper().valueToTree(response.getBody())
-            .path("error").path("code").asText()).isEqualTo("PROFILE_NOT_FOUND");
-        assertThat(new ObjectMapper().valueToTree(response.getBody())
-            .path("error").has("fieldErrors")).isFalse();
+        assertThat(response.getBody()).isEqualTo(new ApiResponse<>(
+                false,
+                HttpStatus.NOT_FOUND.value(),
+                "PROFILE_NOT_FOUND",
+                "The user profile was not found.",
+                null,
+                null,
+                response.getBody().timestamp(),
+                "request-123"));
+
+        var json = objectMapper.valueToTree(response.getBody());
+        assertThat(json.path("data").isNull()).isTrue();
+        assertThat(json.path("code").asInt()).isEqualTo(HttpStatus.NOT_FOUND.value());
+        assertThat(json.path("traceId").asText()).isEqualTo("request-123");
+        assertThat(json.has("errors")).isFalse();
     }
 
     @Test
-    void mapsFieldValidationToStableCodeAndEnglishMessage() throws Exception {
+    void mapsFieldValidationToStandardErrorEnvelope() throws Exception {
         AuthDto.LoginRequest target = new AuthDto.LoginRequest();
         BeanPropertyBindingResult bindingResult = new BeanPropertyBindingResult(target, "loginRequest");
         bindingResult.addError(new FieldError(
@@ -75,13 +81,17 @@ class ApiExceptionHandlerTest {
         var response = handler.handleInvalidArguments(exception, request);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-        assertThat(response.getBody().error().code()).isEqualTo("REQUEST_VALIDATION_FAILED");
-        assertThat(response.getBody().error().fieldErrors()).containsExactly(
-                new ApiErrorResponse.FieldErrorDetail(
-                        "email",
-                        "INVALID_FORMAT",
-                        "Enter a valid email address."));
-        assertThat(response.getBody().error().traceId()).isEqualTo("request-123");
+        assertThat(response.getBody().success()).isFalse();
+        assertThat(response.getBody().code()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+        assertThat(response.getBody().errorCode()).isEqualTo("VALIDATION_FAILED");
+        assertThat(response.getBody().data()).isNull();
+        assertThat(response.getBody().errors()).containsExactly(
+                new ApiResponse.FieldError("email", "Enter a valid email address."));
+        assertThat(response.getBody().traceId()).isEqualTo("request-123");
+
+        var json = objectMapper.valueToTree(response.getBody());
+        assertThat(json.path("errors").get(0).has("code")).isFalse();
+        assertThat(json.has("error")).isFalse();
     }
 
     private MethodParameter loginRequestParameter() throws NoSuchMethodException {

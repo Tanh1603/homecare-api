@@ -25,21 +25,18 @@ public class UserProfileService {
     private static final Logger log = LoggerFactory.getLogger(UserProfileService.class);
     private final UserRepository userRepository;
     private final Keycloak keycloakAdminClient;
+    private final AuthService authService;
 
     @Value("${keycloak.realm}")
     private String realm;
 
-    /**
-     * US-HU-002: Lấy thông tin hồ sơ cá nhân hiện tại
-     */
+    /** Returns the current user's profile. */
     public UserProfile getProfile(String keycloakUserId) {
         return userRepository.findByKeycloakUserId(keycloakUserId)
                 .orElseThrow(() -> new IdentityException(ApiErrorCode.PROFILE_NOT_FOUND));
     }
 
-    /**
-     * US-HU-002: Cập nhật thông tin hồ sơ cá nhân (Họ tên, SĐT, Địa chỉ)
-     */
+    /** Updates the current user's profile. */
     @Transactional
     public UserProfile updateProfile(String keycloakUserId, UpdateProfileRequest request) {
         UserProfile profile = getProfile(keycloakUserId);
@@ -49,7 +46,7 @@ public class UserProfileService {
         profile.setPhone(request.getPhone());
         profile.setAddress(request.getAddress());
 
-        // Đồng bộ họ tên sang Keycloak User Representation
+        // Synchronize the name with the Keycloak user representation.
         try {
             var userResource = keycloakAdminClient.realm(realm).users().get(keycloakUserId);
             var keycloakUser = userResource.toRepresentation();
@@ -64,10 +61,11 @@ public class UserProfileService {
         return userRepository.save(profile);
     }
 
-    /**
-     * Đổi mật khẩu chủ động khi đã đăng nhập
-     */
+    /** Changes the password for the authenticated user. */
     public void changePassword(String keycloakUserId, ChangePasswordRequest request) {
+        UserProfile profile = getProfile(keycloakUserId);
+        authService.verifyCurrentPassword(profile.getUsername(), request.getCurrentPassword());
+
         CredentialRepresentation credential = new CredentialRepresentation();
         credential.setType(CredentialRepresentation.PASSWORD);
         credential.setValue(request.getNewPassword());

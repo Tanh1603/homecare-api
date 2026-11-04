@@ -15,5 +15,4 @@ public class LoginResponse {
     private boolean requiresEmailVerification;
     private String email;
     private TokenResponse tokens;
-    private String message;
 }
