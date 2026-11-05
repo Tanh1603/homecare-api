@@ -1,42 +1,102 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: userdb
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-    ports: ["5432:5432"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app -d userdb"]
-      interval: 5s
-      retries: 10
-
   redis:
     image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: 123456
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - homecare
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.8.1
-    command: start-dev --import-realm
+    command:
+      - start-dev
+      - --import-realm
     environment:
-      KC_HTTP_PORT: 9090
+      KC_DB: postgres
+      KC_DB_URL_HOST: postgres
+      KC_DB_URL_DATABASE: keycloak
+      KC_DB_PASSWORD: 123456
+      KC_DB_USERNAME: keycloak
+      KC_DB_SCHEMA: public
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
-      KC_PROXY_HEADERS: xforwarded
-      KC_HOSTNAME_STRICT: "false"
-    ports: ["9090:8080"]
+      KC_BOOTSTRAP_ADMIN_PASSWORD: password
+    ports:
+      - "9090:8080"
     volumes:
-      - ./keycloak/import:/opt/keycloak/data/import
-      - ./keycloak/providers:/opt/keycloak/providers
+      - ./keycloak/import:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - homecare
 
   identity-service:
-    build: ./identity-service
-    env_file: ./identity-service/.env
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: identity-service
+    image: homecare/identity-service:dev
+    env_file:
+      - ./services/identity-service/.env
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    expose:
+      - "8081"
     depends_on:
-      postgres: { condition: service_healthy }
-    expose: ["8081:8081"]
+      keycloak:
+        condition: service_started
+      redis:
+        condition: service_started
+    restart: unless-stopped
 
   gateway:
-    build: ./gateway
-    env_file: ./gateway/.env
-    ports: ["8080:8080"]
-    depends_on: [redis, user-service, keycloak]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: gateway
+    image: homecare/gateway-service:dev
+    env_file:
+      - ./services/gateway-service/.env
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - identity-service
+      - keycloak
+      - redis
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  homecare:
+    driver: bridge

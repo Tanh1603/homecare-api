@@ -1,5 +1,8 @@
 package com.homecare.identity.service;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -11,6 +14,8 @@ import org.keycloak.representations.idm.UserRepresentation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -39,14 +44,16 @@ import com.homecare.identity.repository.UserRepository;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response;
 import lombok.RequiredArgsConstructor;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 @RequiredArgsConstructor
 public class AuthService {
 
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
+    public static final String BLACKLIST_SESSION_KEY_PREFIX = "auth:blacklist:session:";
     private static final String TOKEN_ENDPOINT = "/realms/%s/protocol/openid-connect/token";
-    private static final String LOGOUT_ENDPOINT = "/realms/%s/protocol/openid-connect/logout";
     private static final String PASSWORD_GRANT = "password";
     private static final String REFRESH_GRANT = "refresh_token";
     private static final String VERIFY_EMAIL_ACTION = "VERIFY_EMAIL";
@@ -55,6 +62,9 @@ public class AuthService {
     private final Keycloak keycloakAdminClient;
     private final UserRepository userRepository;
     private final RestTemplate restTemplate;
+    private final StringRedisTemplate redisTemplate;
+    private final ObjectMapper objectMapper;
+
     @Value("${keycloak.server-url}")
     private String serverUrl;
 
@@ -121,7 +131,7 @@ public class AuthService {
 
     public LoginResponse login(LoginRequest request) {
         try {
-            Map<?, ?> tokenBody = requestToken(
+            Map<String, Object> tokenBody = requestToken(
                     TOKEN_ENDPOINT,
                     passwordGrantBody(request.getEmail(), request.getPassword()));
             return LoginResponse.builder()
@@ -209,30 +219,74 @@ public class AuthService {
     }
 
     public void logout(LogoutRequest request) {
-        MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
-        body.add("client_id", clientId);
-        body.add("client_secret", clientSecret);
-        body.add("refresh_token", request.getRefreshToken());
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-
-        try {
-            ResponseEntity<String> response = restTemplate.postForEntity(
-                    serverUrl + String.format(LOGOUT_ENDPOINT, realm),
-                    new HttpEntity<>(body, headers),
-                    String.class);
-            if (!response.getStatusCode().is2xxSuccessful()) {
-                log.warn("Keycloak logout returned non-success status={}", response.getStatusCode().value());
-                throw new IdentityException(ApiErrorCode.OPERATION_FAILED);
-            }
-        } catch (HttpClientErrorException exception) {
-            log.warn("Keycloak rejected logout status={}", exception.getStatusCode().value());
+        SessionClaims sessionClaims = extractSessionClaims(request.getRefreshToken());
+        long remainingSeconds = sessionClaims.exp() - Instant.now().getEpochSecond();
+        if (remainingSeconds <= 0) {
             throw new IdentityException(ApiErrorCode.INVALID_REFRESH_TOKEN);
-        } catch (RestClientException exception) {
-            log.error("Keycloak logout endpoint failed exceptionType={}",
+        }
+
+        deleteKeycloakSession(sessionClaims.sid());
+        blacklistSession(sessionClaims.sid(), remainingSeconds);
+    }
+
+    private SessionClaims extractSessionClaims(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            throw new IdentityException(ApiErrorCode.INVALID_REFRESH_TOKEN);
+        }
+        try {
+            String[] parts = refreshToken.split("\\.");
+            if (parts.length < 2) {
+                throw new IdentityException(ApiErrorCode.INVALID_REFRESH_TOKEN);
+            }
+            byte[] payloadBytes = Base64.getUrlDecoder().decode(parts[1]);
+            JsonNode payload = objectMapper.readTree(payloadBytes);
+
+            String sid = payload.hasNonNull("sid") ? payload.get("sid").asString() : null;
+            if (sid == null || sid.isBlank()) {
+                sid = payload.hasNonNull("session_state") ? payload.get("session_state").asString() : null;
+            }
+            long exp = payload.hasNonNull("exp") ? payload.get("exp").asLong() : 0L;
+
+            if (sid == null || sid.isBlank() || exp <= 0L) {
+                throw new IdentityException(ApiErrorCode.INVALID_REFRESH_TOKEN);
+            }
+            return new SessionClaims(sid, exp);
+        } catch (IdentityException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            log.warn("Failed to parse refresh token claims exceptionType={}",
+                    exception.getClass().getSimpleName());
+            throw new IdentityException(ApiErrorCode.INVALID_REFRESH_TOKEN, exception);
+        }
+    }
+
+    private void deleteKeycloakSession(String sid) {
+        try {
+            keycloakAdminClient.realm(realm).deleteSession(sid, false);
+        } catch (WebApplicationException exception) {
+            int status = exception.getResponse() != null ? exception.getResponse().getStatus() : 0;
+            log.warn("Keycloak rejected session deletion status={}", status);
+            if (status == 404 || status == 400) {
+                throw new IdentityException(ApiErrorCode.INVALID_REFRESH_TOKEN, exception);
+            }
+            throw new IdentityException(ApiErrorCode.OPERATION_FAILED, exception);
+        } catch (RuntimeException exception) {
+            log.error("Keycloak session deletion failed exceptionType={}",
                     exception.getClass().getSimpleName());
             throw new IdentityException(ApiErrorCode.AUTH_PROVIDER_UNAVAILABLE, exception);
+        }
+    }
+
+    private void blacklistSession(String sid, long remainingSeconds) {
+        if (remainingSeconds <= 0) {
+            return;
+        }
+        try {
+            String key = BLACKLIST_SESSION_KEY_PREFIX + sid;
+            redisTemplate.opsForValue().set(key, "revoked", Duration.ofSeconds(remainingSeconds));
+            log.info("Session blacklisted successfully with key={} (TTL={}s)", key, remainingSeconds);
+        } catch (Exception exception) {
+            log.error("Failed to blacklist session sid={}: {}", sid, exception.getMessage(), exception);
         }
     }
 
@@ -288,23 +342,23 @@ public class AuthService {
         return body;
     }
 
-    private Map<?, ?> requestToken(String endpointTemplate, MultiValueMap<String, String> body) {
+    private Map<String, Object> requestToken(String endpointTemplate, MultiValueMap<String, String> body) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
         HttpEntity<MultiValueMap<String, String>> entity = new HttpEntity<>(body, headers);
-        ResponseEntity<Map> response = restTemplate.exchange(
+        ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
                 serverUrl + String.format(endpointTemplate, realm),
                 HttpMethod.POST,
                 entity,
-                Map.class);
-        Map<?, ?> tokenBody = response.getBody();
+                new ParameterizedTypeReference<Map<String, Object>>() {});
+        Map<String, Object> tokenBody = response.getBody();
         if (tokenBody == null) {
             throw new IdentityException(ApiErrorCode.OPERATION_FAILED);
         }
         return tokenBody;
     }
 
-    private TokenResponse toTokenResponse(Map<?, ?> tokenBody) {
+    private TokenResponse toTokenResponse(Map<String, Object> tokenBody) {
         Object accessToken = tokenBody.get("access_token");
         Object expiresIn = tokenBody.get("expires_in");
         Object tokenType = tokenBody.get("token_type");
@@ -357,5 +411,8 @@ public class AuthService {
     @FunctionalInterface
     private interface KeycloakCall<T> {
         T execute();
+    }
+
+    private record SessionClaims(String sid, long exp) {
     }
 }

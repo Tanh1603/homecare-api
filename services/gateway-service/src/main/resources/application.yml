@@ -4,6 +4,10 @@ server:
 spring:
   application:
     name: gateway-service
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
   security:
     oauth2:
       resourceserver:
@@ -25,7 +29,29 @@ spring:
                 - Path=/identity-service/v3/api-docs,/identity-service/v3/api-docs/**
               filters:
                 - StripPrefix=1
-
+          globalcors:
+            cors-configurations:
+              '[/**]':
+                # Nhận danh sách domain qua biến môi trường CORS_ALLOWED_ORIGINS, phân tách bởi dấu phẩy
+                allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+                allowed-methods:
+                  - GET
+                  - POST
+                  - PUT
+                  - DELETE
+                  - PATCH
+                  - OPTIONS
+                allowed-headers:
+                  - Authorization
+                  - Content-Type
+                  - Accept
+                  - Origin
+                  - X-Requested-With
+                exposed-headers:
+                  - Authorization
+                  - Content-Disposition
+                allow-credentials: true
+                max-age: 3600
 springdoc:
   api-docs:
     enabled: true
