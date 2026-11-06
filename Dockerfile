@@ -1,15 +1,18 @@
-FROM gradle:8.10-jdk21 AS build
+FROM gradle:9.7.1-jdk21 AS build
 WORKDIR /app
 
-# Cache dependencies: chỉ copy file build trước
-COPY build.gradle.kts settings.gradle.kts ./
-RUN gradle dependencies --no-daemon -q > /dev/null 2>&1 || true
+ARG SERVICE
+COPY . .
 
-COPY src ./src
-RUN gradle bootJar --no-daemon -x test
+RUN set -eu; \
+    test -n "$SERVICE"; \
+    gradle ":services:${SERVICE}:bootJar" --no-daemon -x test; \
+    artifact="$(find "/app/build/services/${SERVICE}/libs" -type f -name '*.jar' ! -name '*-plain.jar' -print -quit)"; \
+    test -n "$artifact"; \
+    cp "$artifact" /app/app.jar
 
 FROM eclipse-temurin:21-jre
 WORKDIR /app
-COPY --from=build /app/build/libs/*.jar app.jar
+COPY --from=build /app/app.jar app.jar
 EXPOSE 8080
 ENTRYPOINT ["java","-jar","app.jar"]

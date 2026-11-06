@@ -10,7 +10,8 @@ See the [springdoc compatibility matrix](https://springdoc.org/faq.html).
 Start Identity with its required DB/Keycloak environment. Start Gateway with
 `SERVER_PORT=8080`, `IDENTITY_URL=http://localhost:8081` for host processes,
 and `KEYCLOAK_JWK_SET_URI` pointing to the configured realm.
-For container-to-container routing, use a reachable service DNS URL instead of localhost.
+For container-to-container routing, use a reachable service DNS URL instead of localhost;
+Compose sets Gateway's `IDENTITY_URL` to `http://identity-service:8081`.
 
 - UI: `http://localhost:8080/swagger-ui.html`.
 - UI configuration: `http://localhost:8080/v3/api-docs/swagger-config`.

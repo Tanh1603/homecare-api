@@ -1,0 +1,40 @@
+name: homecare-backend
+services:
+  identity-service:
+    container_name: identity-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: identity-service
+    image: homecare/identity-service:dev
+    env_file:
+      - ./services/identity-service/.env
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+    networks:
+      - shared
+
+  gateway:
+    container_name: api-gateway
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: gateway-service
+    image: homecare/gateway-service:dev
+    env_file:
+      - ./services/gateway-service/.env
+    ports:
+      - "8080:8080"
+    depends_on:
+      - identity-service
+    restart: unless-stopped
+    networks:
+      - shared
+
+networks:
+  shared:
+    external: true
+    name: homecare-shared
