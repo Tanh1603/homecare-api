@@ -1,0 +1,42 @@
+plugins {
+    id 'java-library'
+    id 'io.spring.dependency-management'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencyManagement {
+    imports {
+        mavenBom org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES
+    }
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+dependencies {
+    api 'org.springframework:spring-web'
+    api 'org.springframework.security:spring-security-core'
+    api 'org.springframework.security:spring-security-oauth2-resource-server'
+    api 'org.springframework.security:spring-security-oauth2-jose'
+    api 'com.fasterxml.jackson.core:jackson-annotations'
+
+    compileOnly 'org.springframework.boot:spring-boot-starter-web'
+    compileOnly 'org.springframework.boot:spring-boot-starter-validation'
+    compileOnly 'org.springframework.boot:spring-boot-starter-jackson'
+    compileOnly 'org.springframework.security:spring-security-web'
+    compileOnly 'org.springframework:spring-tx'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-web'
+    testImplementation 'org.springframework.boot:spring-boot-starter-validation'
+    testImplementation 'org.springframework.boot:spring-boot-starter-jackson'
+    testImplementation 'org.springframework.security:spring-security-web'
+    testImplementation 'org.springframework:spring-tx'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}

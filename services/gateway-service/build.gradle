@@ -1,0 +1,56 @@
+sourceSets {
+  integrationTest {
+    compileClasspath += sourceSets.main.output
+    runtimeClasspath += output + compileClasspath
+  }
+}
+
+configurations {
+  integrationTestImplementation.extendsFrom testImplementation
+  integrationTestRuntimeOnly.extendsFrom testRuntimeOnly
+}
+
+dependencies {
+  implementation(project(":libs:common-web"))
+  implementation("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server")
+  implementation("org.springframework.cloud:spring-cloud-starter-gateway-server-webflux")
+  implementation("org.springframework.cloud:spring-cloud-starter-circuitbreaker-resilience4j")
+  implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive")
+  implementation 'org.springdoc:springdoc-openapi-starter-webflux-ui:3.2.0'
+  testImplementation("org.springframework.boot:spring-boot-starter-test")
+  testImplementation("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server-test")
+  testImplementation("io.projectreactor:reactor-test")
+  integrationTestImplementation(project(":services:identity-service"))
+  integrationTestImplementation("org.keycloak:keycloak-admin-client:26.0.12")
+  integrationTestImplementation("org.testcontainers:junit-jupiter:1.21.3")
+  integrationTestImplementation("org.testcontainers:postgresql:1.21.3")
+  integrationTestRuntimeOnly("org.postgresql:postgresql")
+
+}
+
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.cloud:spring-cloud-dependencies:2025.1.4"
+    }
+}
+
+tasks.named("processIntegrationTestResources") {
+  from(project(":services:identity-service").file("src/main/resources/application.yml")) {
+    rename { "identity-service-application.yml" }
+  }
+  from("src/main/resources/application.yml") {
+    rename { "gateway-service-application.yml" }
+  }
+}
+
+tasks.register("integrationTest", Test) {
+  description = "Runs integration tests against Identity, PostgreSQL, and Keycloak."
+  group = LifecycleBasePlugin.VERIFICATION_GROUP
+  testClassesDirs = sourceSets.integrationTest.output.classesDirs
+  classpath = sourceSets.integrationTest.runtimeClasspath
+  shouldRunAfter(tasks.named("test"))
+}
+
+tasks.named("check") {
+  dependsOn(tasks.named("integrationTest"))
+}

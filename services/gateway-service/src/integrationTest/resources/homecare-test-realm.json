@@ -1,0 +1,23 @@
+{
+  "realm": "homecare-test",
+  "enabled": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "CUSTOMER"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "homecare-client",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "test-client-secret",
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": false,
+      "fullScopeAllowed": true
+    }
+  ]
+}
