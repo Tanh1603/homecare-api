@@ -16,6 +16,117 @@ services:
     networks:
       - shared
 
+  household-service:
+    container_name: household-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: household-service
+    image: homecare/household-service:dev
+    environment:
+      SERVER_PORT: 8082
+      DB_URL: jdbc:postgresql://postgres:5432/household_db
+    ports:
+      - "8082:8082"
+    restart: unless-stopped
+    networks:
+      - shared
+
+  provider-service:
+    container_name: provider-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: provider-service
+    image: homecare/provider-service:dev
+    environment:
+      SERVER_PORT: 8083
+      GRPC_SERVER_PORT: 9083
+      DB_URL: jdbc:postgresql://postgres:5432/provider_db
+    ports:
+      - "8083:8083"
+      - "9083:9083"
+    restart: unless-stopped
+    networks:
+      - shared
+
+  booking-service:
+    container_name: booking-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: booking-service
+    image: homecare/booking-service:dev
+    environment:
+      SERVER_PORT: 8084
+      DB_URL: jdbc:postgresql://postgres:5432/booking_db
+      PROVIDER_GRPC_ADDRESS: static://provider-service:9083
+    ports:
+      - "8084:8084"
+    depends_on:
+      - provider-service
+      - household-service
+    restart: unless-stopped
+    networks:
+      - shared
+
+  commerce-service:
+    container_name: commerce-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: commerce-service
+    image: homecare/commerce-service:dev
+    environment:
+      SERVER_PORT: 8085
+      DB_URL: jdbc:postgresql://postgres:5432/commerce_db
+    ports:
+      - "8085:8085"
+    restart: unless-stopped
+    networks:
+      - shared
+
+  review-service:
+    container_name: review-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: review-service
+    image: homecare/review-service:dev
+    environment:
+      SERVER_PORT: 8086
+      DB_URL: jdbc:postgresql://postgres:5432/review_db
+    ports:
+      - "8086:8086"
+    depends_on:
+      - booking-service
+      - commerce-service
+    restart: unless-stopped
+    networks:
+      - shared
+
+  notification-service:
+    container_name: notification-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: notification-service
+    image: homecare/notification-service:dev
+    environment:
+      SERVER_PORT: 8087
+      DB_URL: jdbc:postgresql://postgres:5432/notification_db
+    ports:
+      - "8087:8087"
+    restart: unless-stopped
+    networks:
+      - shared
+
   gateway:
     container_name: api-gateway
     build:
@@ -30,6 +141,12 @@ services:
       - "8080:8080"
     depends_on:
       - identity-service
+      - household-service
+      - provider-service
+      - booking-service
+      - commerce-service
+      - review-service
+      - notification-service
     restart: unless-stopped
     networks:
       - shared

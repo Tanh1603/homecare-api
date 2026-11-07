@@ -16,6 +16,10 @@ allprojects {
 	}
 }
 
+configure(subprojects.findAll { it.path.startsWith(':libs:') }) {
+	layout.buildDirectory.set(rootProject.layout.buildDirectory.dir("libs/${project.name}"))
+}
+
 configure(subprojects.findAll { it.path.startsWith(':services:') }) {
 	apply plugin: 'java'
 	apply plugin: 'org.springframework.boot'

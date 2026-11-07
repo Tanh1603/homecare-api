@@ -315,11 +315,8 @@ public class AuthService {
     }
 
     private void assignDefaultRole(UsersResource usersResource, String userId) {
-        callKeycloak(() -> {
-            var role = keycloakAdminClient.realm(realm).roles().get(defaultRole).toRepresentation();
-            usersResource.get(userId).roles().realmLevel().add(Collections.singletonList(role));
-            return null;
-        });
+        var role = keycloakAdminClient.realm(realm).roles().get(defaultRole).toRepresentation();
+        usersResource.get(userId).roles().realmLevel().add(Collections.singletonList(role));
     }
 
     private void removeKeycloakUser(UsersResource usersResource, String userId) {

@@ -225,6 +225,7 @@ class AuthServiceTest {
 
         Response notFoundResponse = mock(Response.class);
         when(notFoundResponse.getStatus()).thenReturn(404);
+        when(notFoundResponse.getStatusInfo()).thenReturn(Response.Status.NOT_FOUND);
         doThrow(new WebApplicationException(notFoundResponse))
                 .when(realmResource).deleteSession("missing-session-123", false);
 

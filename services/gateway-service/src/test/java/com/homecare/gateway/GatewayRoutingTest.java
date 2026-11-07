@@ -34,13 +34,23 @@ class GatewayRoutingTest {
             String result = exchange.getRequestMethod() + " " + exchange.getRequestURI() + " " + requestBody;
             byte[] bytes = result.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("X-Upstream-Fixture", "identity");
+            String corrId = exchange.getRequestHeaders().getFirst("X-Correlation-Id");
+            if (corrId != null) {
+                exchange.getResponseHeaders().add("X-Upstream-Correlation-Id", corrId);
+            }
             exchange.sendResponseHeaders(202, bytes.length);
             exchange.getResponseBody().write(bytes);
             exchange.close();
         });
         upstream.start();
-        properties.add("IDENTITY_URL",
-            () -> "http://127.0.0.1:" + upstream.getAddress().getPort());
+        String upstreamBase = "http://127.0.0.1:" + upstream.getAddress().getPort();
+        properties.add("IDENTITY_URL", () -> upstreamBase);
+        properties.add("HOUSEHOLD_URL", () -> upstreamBase);
+        properties.add("PROVIDER_URL", () -> upstreamBase);
+        properties.add("BOOKING_URL", () -> upstreamBase);
+        properties.add("COMMERCE_URL", () -> upstreamBase);
+        properties.add("REVIEW_URL", () -> upstreamBase);
+        properties.add("NOTIFICATION_URL", () -> upstreamBase);
     }
 
     @AfterAll static void shutdown() {
@@ -55,14 +65,42 @@ class GatewayRoutingTest {
         assertEquals(202, response.statusCode());
         assertEquals("identity", response.headers().firstValue("X-Upstream-Fixture").orElseThrow());
         assertEquals("POST /api/v1/auth/login?test=1 {\"probe\":true}", response.body());
+        assertTrue(response.headers().firstValue("X-Correlation-Id").isPresent());
+        assertTrue(response.headers().firstValue("X-Upstream-Correlation-Id").isPresent());
     }
 
-    @Test void missingBearerStillBlocksProtectedProfileBeforeUpstream() throws Exception {
+    @Test void missingBearerStillBlocksProtectedProfileBeforeUpstreamWithJsonEnvelope() throws Exception {
         int before = calls.get();
-        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/users/me")).GET().build();
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/users/me"))
+            .header("X-Correlation-Id", "corr-401-test")
+            .GET().build();
         var response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
         assertEquals(401, response.statusCode());
         assertEquals(before, calls.get());
+        assertTrue(response.body().contains("\"errorCode\":\"UNAUTHENTICATED\""));
+        assertTrue(response.body().contains("\"traceId\":\"corr-401-test\""));
+    }
+
+    @Test void blocksInternalRoutesAndAllowsGuestGetAllowlist() throws Exception {
+        int before = calls.get();
+        var internalReq = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/internal/v1/offerings/verify"))
+            .header("X-Correlation-Id", "corr-internal-block")
+            .GET().build();
+        var internalResp = HttpClient.newHttpClient().send(internalReq, HttpResponse.BodyHandlers.ofString());
+        assertEquals(403, internalResp.statusCode());
+        assertEquals(before, calls.get());
+        assertTrue(internalResp.body().contains("corr-internal-block"));
+
+        var guestServicesResp = get("/api/v1/services");
+        assertEquals(202, guestServicesResp.statusCode());
+        assertEquals("GET /api/v1/services ", guestServicesResp.body());
+
+        var guestProductsResp = get("/api/v1/products");
+        assertEquals(202, guestProductsResp.statusCode());
+        assertEquals("GET /api/v1/products ", guestProductsResp.body());
+
+        var vnpayIpnResp = get("/api/v1/payments/vnpay/ipn?vnp_TxnRef=ord1");
+        assertEquals(202, vnpayIpnResp.statusCode());
     }
 
     @Test void forwardsServiceDocsWithoutServicePrefix() throws Exception {

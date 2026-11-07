@@ -15,11 +15,13 @@ import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 
-import tools.jackson.databind.ObjectMapper;
-import com.homecare.identity.dto.ApiResponse;
+import com.homecare.common.web.ApiResponse;
+import com.homecare.common.web.EtagSupport;
 import com.homecare.identity.dto.AuthDto;
 import com.homecare.identity.exception.ApiErrorCode;
 import com.homecare.identity.exception.IdentityException;
+
+import tools.jackson.databind.ObjectMapper;
 
 class ApiExceptionHandlerTest {
 
@@ -92,6 +94,19 @@ class ApiExceptionHandlerTest {
         var json = objectMapper.valueToTree(response.getBody());
         assertThat(json.path("errors").get(0).has("code")).isFalse();
         assertThat(json.has("error")).isFalse();
+    }
+
+    @Test
+    void inheritsPreconditionHandlingFromCommonWebBaseHandler() {
+        var response = handler.handlePreconditionException(
+                new EtagSupport.PreconditionException(
+                        HttpStatus.PRECONDITION_REQUIRED,
+                        "PRECONDITION_REQUIRED",
+                        "The If-Match header is required for this update."),
+                request);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.PRECONDITION_REQUIRED);
+        assertThat(response.getBody().errorCode()).isEqualTo("PRECONDITION_REQUIRED");
+        assertThat(response.getBody().traceId()).isEqualTo("request-123");
     }
 
     private MethodParameter loginRequestParameter() throws NoSuchMethodException {

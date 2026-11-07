@@ -1,4 +1,5 @@
 dependencies {
+    implementation(project(":libs:common-web"))
     implementation("org.keycloak:keycloak-admin-client:26.0.12")
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-jackson")

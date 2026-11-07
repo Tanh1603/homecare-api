@@ -573,6 +573,106 @@
       },
       "notBefore": 0,
       "groups": []
+    },
+    {
+      "id": "11111111-1111-4111-8111-111111111101",
+      "username": "demo-customer",
+      "email": "customer@homecare.local",
+      "firstName": "Demo",
+      "lastName": "Customer",
+      "emailVerified": true,
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Demo@123456",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-homecare-realm",
+        "CUSTOMER"
+      ]
+    },
+    {
+      "id": "11111111-1111-4111-8111-111111111102",
+      "username": "demo-technician",
+      "email": "technician@homecare.local",
+      "firstName": "Demo",
+      "lastName": "Technician",
+      "emailVerified": true,
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Demo@123456",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-homecare-realm",
+        "TECHNICIAN"
+      ]
+    },
+    {
+      "id": "11111111-1111-4111-8111-111111111103",
+      "username": "demo-provider",
+      "email": "provider@homecare.local",
+      "firstName": "Demo",
+      "lastName": "Provider",
+      "emailVerified": true,
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Demo@123456",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-homecare-realm",
+        "PROVIDER"
+      ]
+    },
+    {
+      "id": "11111111-1111-4111-8111-111111111104",
+      "username": "demo-merchant",
+      "email": "merchant@homecare.local",
+      "firstName": "Demo",
+      "lastName": "Merchant",
+      "emailVerified": true,
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Demo@123456",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-homecare-realm",
+        "MERCHANT"
+      ]
+    },
+    {
+      "id": "11111111-1111-4111-8111-111111111105",
+      "username": "demo-admin",
+      "email": "admin@homecare.local",
+      "firstName": "Demo",
+      "lastName": "Admin",
+      "emailVerified": true,
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Demo@123456",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "default-roles-homecare-realm",
+        "ADMIN"
+      ]
     }
   ],
   "scopeMappings": [

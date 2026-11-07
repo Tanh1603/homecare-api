@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.homecare.identity.dto.ApiResponse;
+import com.homecare.common.web.ApiResponse;
 import com.homecare.identity.dto.AuthDto.ChangePasswordRequest;
 import com.homecare.identity.dto.AuthDto.UpdateProfileRequest;
 import com.homecare.identity.dto.UserProfileResponse;

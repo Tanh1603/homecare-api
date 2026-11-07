@@ -1,5 +1,5 @@
 server:
-  port: ${SERVER_PORT}
+  port: ${SERVER_PORT:8080}
 
 spring:
   application:
@@ -13,8 +13,6 @@ spring:
       resourceserver:
         jwt:
           jwk-set-uri: ${KEYCLOAK_JWK_SET_URI}
-          issuer-uri: ${KEYCLOAK_ISSUER_URI}
-
 
   cloud:
     gateway:
@@ -22,11 +20,35 @@ spring:
         webflux:
           routes:
             - id: identity-service-route
-              uri: ${IDENTITY_URL}
+              uri: ${IDENTITY_URL:http://localhost:8081}
               predicates:
-                - Path=/api/v1/auth/**,/api/v1/users/**
+                - Path=/api/v1/auth/**,/api/v1/users/**,/api/v1/admin/users/**
+            - id: household-service-route
+              uri: ${HOUSEHOLD_URL:http://localhost:8082}
+              predicates:
+                - Path=/api/v1/households,/api/v1/households/**,/api/v1/devices,/api/v1/devices/**,/api/v1/warranties/**,/api/v1/maintenance-schedules/**,/api/v1/care-history/**,/api/v1/admin/device-types/**
+            - id: review-service-route
+              uri: ${REVIEW_URL:http://localhost:8086}
+              predicates:
+                - Path=/api/v1/service-reviews,/api/v1/service-reviews/**,/api/v1/providers/*/service-reviews,/api/v1/products/*/reviews
+            - id: provider-service-route
+              uri: ${PROVIDER_URL:http://localhost:8083}
+              predicates:
+                - Path=/api/v1/services,/api/v1/services/**,/api/v1/providers,/api/v1/providers/**,/api/v1/technicians,/api/v1/technicians/**,/api/v1/admin/providers/**,/api/v1/admin/technicians/**,/api/v1/admin/service-categories/**
+            - id: booking-service-route
+              uri: ${BOOKING_URL:http://localhost:8084}
+              predicates:
+                - Path=/api/v1/bookings,/api/v1/bookings/**,/api/v1/assignment-operations/**
+            - id: commerce-service-route
+              uri: ${COMMERCE_URL:http://localhost:8085}
+              predicates:
+                - Path=/api/v1/products,/api/v1/products/**,/api/v1/merchant/**,/api/v1/orders,/api/v1/orders/**,/api/v1/payments/vnpay/ipn,/api/v1/admin/product-categories/**
+            - id: notification-service-route
+              uri: ${NOTIFICATION_URL:http://localhost:8087}
+              predicates:
+                - Path=/api/v1/notifications,/api/v1/notifications/**,/api/v1/notification-devices,/api/v1/notification-devices/**
             - id: identity-service-v3-docs
-              uri: ${IDENTITY_URL}
+              uri: ${IDENTITY_URL:http://localhost:8081}
               predicates:
                 - Path=/identity-service/v3/api-docs,/identity-service/v3/api-docs/**
               filters:
@@ -34,7 +56,6 @@ spring:
           globalcors:
             cors-configurations:
               '[/**]':
-                # Nhận danh sách domain qua biến môi trường CORS_ALLOWED_ORIGINS, phân tách bởi dấu phẩy
                 allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
                 allowed-methods:
                   - GET
@@ -49,9 +70,14 @@ spring:
                   - Accept
                   - Origin
                   - X-Requested-With
+                  - X-Correlation-Id
+                  - If-Match
+                  - Idempotency-Key
                 exposed-headers:
                   - Authorization
                   - Content-Disposition
+                  - X-Correlation-Id
+                  - ETag
                 allow-credentials: true
                 max-age: 3600
 springdoc:
@@ -63,5 +89,3 @@ springdoc:
     urls:
       - name: Identity Service
         url: /identity-service/v3/api-docs
-      # - name: Service Request Service
-      #   url: /service-request-service/v3/api-docs

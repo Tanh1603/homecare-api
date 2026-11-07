@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package homecare.provider.v1;
+
+option java_multiple_files = true;
+option java_package = "com.homecare.provider.v1";
+option java_outer_classname = "ProviderServiceProto";
+
+service ProviderAllocationService {
+  rpc VerifyOffering (VerifyOfferingRequest) returns (VerifyOfferingResponse);
+  rpc AllocateTechnician (AllocateTechnicianRequest) returns (AllocateTechnicianResponse);
+}
+
+message VerifyOfferingRequest {
+  string service_id = 1;
+}
+
+message VerifyOfferingResponse {
+  string service_id = 1;
+  string provider_id = 2;
+  string name = 3;
+  int64 base_price = 4;
+  bool active = 5;
+}
+
+message AllocateTechnicianRequest {
+  string intent_id = 1;
+  string booking_id = 2;
+  string service_id = 3;
+  string preferred_start_iso = 4;
+  string preferred_end_iso = 5;
+}
+
+message AllocateTechnicianResponse {
+  string intent_id = 1;
+  bool allocated = 2;
+  string technician_id = 3;
+  string provider_id = 4;
+  string failure_reason = 5;
+}

@@ -2,7 +2,9 @@ package com.homecare.identity.exception;
 
 import org.springframework.http.HttpStatus;
 
-public enum ApiErrorCode {
+import com.homecare.common.error.ApiErrorCodeContract;
+
+public enum ApiErrorCode implements ApiErrorCodeContract {
     VALIDATION_FAILED(HttpStatus.BAD_REQUEST, "error.request.validation"),
     MALFORMED_REQUEST(HttpStatus.BAD_REQUEST, "error.request.malformed"),
     UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "error.media-type.unsupported"),
@@ -32,10 +34,12 @@ public enum ApiErrorCode {
         this.messageKey = messageKey;
     }
 
+    @Override
     public HttpStatus status() {
         return status;
     }
 
+    @Override
     public String messageKey() {
         return messageKey;
     }
