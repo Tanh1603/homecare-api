@@ -1,1 +1,14 @@
 rootProject.name = 'homecare-api'
+
+include(
+    'libs:common-web',
+    'libs:grpc-contracts',
+    'services:gateway-service',
+    'services:identity-service',
+    'services:household-service',
+    'services:provider-service',
+    'services:booking-service',
+    'services:commerce-service',
+    'services:review-service',
+    'services:notification-service',
+)
