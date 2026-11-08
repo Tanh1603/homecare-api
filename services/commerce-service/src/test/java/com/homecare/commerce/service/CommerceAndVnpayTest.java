@@ -70,8 +70,10 @@ class CommerceAndVnpayTest {
         assertThat(activeRes).hasSize(1);
         assertThat(activeRes.getFirst().getStatus()).isEqualTo("ACTIVE");
 
-        PaymentAttemptResponse attempt = service.createPaymentAttempt("buyer-1", order.id());
+        PaymentAttemptResponse attempt = service.createPaymentAttempt(
+                "buyer-1", order.id(), "homecare://payment-result");
         assertThat(attempt.paymentUrl()).contains("vnp_SecureHash=");
+        assertThat(attempt.paymentUrl()).contains("vnp_ReturnUrl=homecare%3A%2F%2Fpayment-result");
 
         Map<String, String> ipnParams = new HashMap<>();
         ipnParams.put("vnp_TxnRef", attempt.txnRef());

@@ -54,6 +54,10 @@ public final class CommerceDtos {
             String fulfillmentStatus) {
     }
 
+    public record CreatePaymentAttemptRequest(
+            String returnUrl) {
+    }
+
     public record PaymentAttemptResponse(
             UUID id,
             UUID orderId,

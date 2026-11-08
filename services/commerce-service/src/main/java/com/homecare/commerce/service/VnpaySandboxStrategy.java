@@ -38,6 +38,14 @@ public class VnpaySandboxStrategy {
     }
 
     public String buildPaymentUrl(String txnRef, long amountVnd, String orderInfo) {
+        return buildPaymentUrl(txnRef, amountVnd, orderInfo, null);
+    }
+
+    public String buildPaymentUrl(String txnRef, long amountVnd, String orderInfo, String customReturnUrl) {
+        String effectiveReturnUrl = (customReturnUrl != null && !customReturnUrl.isBlank())
+                ? customReturnUrl.trim()
+                : returnUrl;
+
         ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Asia/Ho_Chi_Minh"));
         Map<String, String> params = new TreeMap<>();
         params.put("vnp_Version", "2.1.0");
@@ -49,7 +57,7 @@ public class VnpaySandboxStrategy {
         params.put("vnp_OrderInfo", orderInfo);
         params.put("vnp_OrderType", "other");
         params.put("vnp_Locale", "vn");
-        params.put("vnp_ReturnUrl", returnUrl);
+        params.put("vnp_ReturnUrl", effectiveReturnUrl);
         params.put("vnp_IpAddr", "127.0.0.1");
         params.put("vnp_CreateDate", now.format(VNP_TIME_FORMAT));
 

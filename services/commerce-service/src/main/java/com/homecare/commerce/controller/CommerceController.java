@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderRequest;
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderReturnRequest;
+import com.homecare.commerce.dto.CommerceDtos.CreatePaymentAttemptRequest;
 import com.homecare.commerce.dto.CommerceDtos.OrderResponse;
 import com.homecare.commerce.dto.CommerceDtos.OrderReturnResponse;
 import com.homecare.commerce.dto.CommerceDtos.PaymentAttemptResponse;
@@ -121,9 +122,11 @@ public class CommerceController {
     public ResponseEntity<ApiResponse<PaymentAttemptResponse>> createPaymentAttempt(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID orderId,
+            @RequestBody(required = false) CreatePaymentAttemptRequest body,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             HttpServletRequest httpRequest) {
         String sub = jwt.getSubject();
+        String returnUrl = body != null ? body.returnUrl() : null;
         PaymentAttemptResponse attempt;
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
             attempt = idempotencyService.execute(
@@ -131,9 +134,9 @@ public class CommerceController {
                     "POST:/api/v1/orders/" + orderId + "/payment-attempts",
                     idempotencyKey,
                     orderId.toString(),
-                    () -> service.createPaymentAttempt(sub, orderId));
+                    () -> service.createPaymentAttempt(sub, orderId, returnUrl));
         } else {
-            attempt = service.createPaymentAttempt(sub, orderId);
+            attempt = service.createPaymentAttempt(sub, orderId, returnUrl);
         }
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created("Payment attempt created", attempt, httpRequest));

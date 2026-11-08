@@ -179,6 +179,11 @@ public class CommerceDomainService {
 
     @Transactional
     public PaymentAttemptResponse createPaymentAttempt(String buyerProfileId, UUID orderId) {
+        return createPaymentAttempt(buyerProfileId, orderId, null);
+    }
+
+    @Transactional
+    public PaymentAttemptResponse createPaymentAttempt(String buyerProfileId, UUID orderId, String customReturnUrl) {
         OrderEntity order = requireOwnedOrder(buyerProfileId, orderId);
         if ("PAID".equals(order.getPaymentStatus())) {
             throw new DomainException(
@@ -191,7 +196,7 @@ public class CommerceDomainService {
         String txnRef = "HC-" + order.getId().toString().substring(0, 8).toUpperCase()
                 + "-" + (System.currentTimeMillis() % 100_000);
         String url = vnpayStrategy.buildPaymentUrl(
-                txnRef, order.getTotalAmount(), "Thanh toan don hang " + order.getId());
+                txnRef, order.getTotalAmount(), "Thanh toan don hang " + order.getId(), customReturnUrl);
         Instant now = Instant.now();
         PaymentAttemptEntity saved = paymentAttemptRepository.save(PaymentAttemptEntity.builder()
                 .id(UUID.randomUUID())
