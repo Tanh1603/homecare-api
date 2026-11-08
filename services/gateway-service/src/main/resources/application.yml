@@ -53,6 +53,42 @@ spring:
                 - Path=/identity-service/v3/api-docs,/identity-service/v3/api-docs/**
               filters:
                 - StripPrefix=1
+            - id: household-service-v3-docs
+              uri: ${HOUSEHOLD_URL:http://localhost:8082}
+              predicates:
+                - Path=/household-service/v3/api-docs,/household-service/v3/api-docs/**
+              filters:
+                - StripPrefix=1
+            - id: provider-service-v3-docs
+              uri: ${PROVIDER_URL:http://localhost:8083}
+              predicates:
+                - Path=/provider-service/v3/api-docs,/provider-service/v3/api-docs/**
+              filters:
+                - StripPrefix=1
+            - id: booking-service-v3-docs
+              uri: ${BOOKING_URL:http://localhost:8084}
+              predicates:
+                - Path=/booking-service/v3/api-docs,/booking-service/v3/api-docs/**
+              filters:
+                - StripPrefix=1
+            - id: commerce-service-v3-docs
+              uri: ${COMMERCE_URL:http://localhost:8085}
+              predicates:
+                - Path=/commerce-service/v3/api-docs,/commerce-service/v3/api-docs/**
+              filters:
+                - StripPrefix=1
+            - id: review-service-v3-docs
+              uri: ${REVIEW_URL:http://localhost:8086}
+              predicates:
+                - Path=/review-service/v3/api-docs,/review-service/v3/api-docs/**
+              filters:
+                - StripPrefix=1
+            - id: notification-service-v3-docs
+              uri: ${NOTIFICATION_URL:http://localhost:8087}
+              predicates:
+                - Path=/notification-service/v3/api-docs,/notification-service/v3/api-docs/**
+              filters:
+                - StripPrefix=1
           globalcors:
             cors-configurations:
               '[/**]':
@@ -89,3 +125,15 @@ springdoc:
     urls:
       - name: Identity Service
         url: /identity-service/v3/api-docs
+      - name: Household Service
+        url: /household-service/v3/api-docs
+      - name: Provider Service
+        url: /provider-service/v3/api-docs
+      - name: Booking Service
+        url: /booking-service/v3/api-docs
+      - name: Commerce Service
+        url: /commerce-service/v3/api-docs
+      - name: Review Service
+        url: /review-service/v3/api-docs
+      - name: Notification Service
+        url: /notification-service/v3/api-docs

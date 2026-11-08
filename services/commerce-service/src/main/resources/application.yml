@@ -1,0 +1,54 @@
+server:
+  port: ${SERVER_PORT:8085}
+
+grpc:
+  server:
+    port: ${COMMERCE_GRPC_PORT:9085}
+
+spring:
+  application:
+    name: commerce-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/commerce_db}
+    username: ${DB_USER:keycloak}
+    password: ${DB_PASSWORD:change_me_local_pg_password}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_DEFAULT_USER:homecare}
+    password: ${RABBITMQ_DEFAULT_PASS:change_me_local_mq_password}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/homecare/protocol/openid-connect/certs}
+
+homecare:
+  internal:
+    workload-token: ${INTERNAL_WORKLOAD_TOKEN:change_me_internal_workload_token}
+  vnpay:
+    tmn-code: ${VNPAY_TMN_CODE:HOMECARE01}
+    hash-secret: ${VNPAY_HASH_SECRET:HOMECARE_VNPAY_SANDBOX_SECRET_KEY_2026}
+    pay-url: ${VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
+    return-url: ${VNPAY_RETURN_URL:http://localhost:3000/orders/payment-result}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

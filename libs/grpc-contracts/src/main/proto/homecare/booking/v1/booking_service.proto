@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package homecare.booking.v1;
+
+option java_multiple_files = true;
+option java_package = "com.homecare.booking.v1";
+option java_outer_classname = "BookingServiceProto";
+
+service BookingVerificationService {
+  rpc VerifyBookingEligibility (VerifyBookingEligibilityRequest) returns (VerifyBookingEligibilityResponse);
+}
+
+message VerifyBookingEligibilityRequest {
+  string booking_id = 1;
+  string requester_profile_id = 2;
+}
+
+message VerifyBookingEligibilityResponse {
+  bool eligible = 1;
+  string booking_id = 2;
+  string provider_id = 3;
+  string service_id = 4;
+  string status = 5;
+}

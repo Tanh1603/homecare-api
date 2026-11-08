@@ -21,6 +21,9 @@ message VerifyOfferingResponse {
   string name = 3;
   int64 base_price = 4;
   bool active = 5;
+  string category = 6;
+  int32 estimated_duration_minutes = 7;
+  string provider_name = 8;
 }
 
 message AllocateTechnicianRequest {
@@ -29,6 +32,9 @@ message AllocateTechnicianRequest {
   string service_id = 3;
   string preferred_start_iso = 4;
   string preferred_end_iso = 5;
+  string device_type = 6;
+  string provider_id = 7;
+  bool strict_provider_match = 8;
 }
 
 message AllocateTechnicianResponse {
@@ -37,4 +43,7 @@ message AllocateTechnicianResponse {
   string technician_id = 3;
   string provider_id = 4;
   string failure_reason = 5;
+  string technician_profile_id = 6;
+  string technician_name = 7;
+  string allocation_id = 8;
 }

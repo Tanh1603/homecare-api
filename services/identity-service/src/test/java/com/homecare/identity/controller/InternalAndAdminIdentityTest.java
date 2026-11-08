@@ -18,8 +18,8 @@ class InternalAndAdminIdentityTest {
     @Test
     void keycloakRealmJsonSeedsAllFiveRolesAndDemoUsers() throws Exception {
         String realmJson = Files.readString(Path.of("../../keycloak/import/homecare-realm.json"));
-        assertThat(realmJson).contains("\"CUSTOMER\"", "\"TECHNICIAN\"", "\"PROVIDER\"", "\"MERCHANT\"", "\"ADMIN\"");
-        assertThat(realmJson).contains("demo-customer", "demo-technician", "demo-provider", "demo-merchant", "demo-admin");
+        assertThat(realmJson).contains("\"CUSTOMER\"", "\"TECHNICIAN\"", "\"ORGANIZATION\"", "\"PROVIDER\"", "\"MERCHANT\"", "\"ADMIN\"");
+        assertThat(realmJson).contains("demo-customer", "demo-technician", "demo-organization", "demo-provider", "demo-merchant", "demo-admin");
     }
 
     @Test

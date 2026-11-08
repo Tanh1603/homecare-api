@@ -1,0 +1,49 @@
+server:
+  port: ${SERVER_PORT:8082}
+
+grpc:
+  server:
+    port: ${HOUSEHOLD_GRPC_PORT:9082}
+
+spring:
+  application:
+    name: household-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/household_db}
+    username: ${DB_USER:keycloak}
+    password: ${DB_PASSWORD:change_me_local_pg_password}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_DEFAULT_USER:homecare}
+    password: ${RABBITMQ_DEFAULT_PASS:change_me_local_mq_password}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/homecare/protocol/openid-connect/certs}
+
+homecare:
+  internal:
+    workload-token: ${INTERNAL_WORKLOAD_TOKEN:change_me_internal_workload_token}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

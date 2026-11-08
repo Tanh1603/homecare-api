@@ -126,6 +126,15 @@
       {
         "id": "6a5ce363-9df7-4699-9fc5-bc00fc716cba",
         "name": "TECHNICIAN",
+        "description": "Field Technician Role",
+        "composite": false,
+        "clientRole": false,
+        "containerId": "e7b5b6b9-c855-41a3-a722-34c0c519f9e1",
+        "attributes": {}
+      },
+      {
+        "id": "9f8e7d6c-5b4a-4321-8765-1029384756ab",
+        "name": "ORGANIZATION",
         "description": "",
         "composite": false,
         "clientRole": false,
@@ -617,6 +626,10 @@
     {
       "id": "11111111-1111-4111-8111-111111111103",
       "username": "demo-provider",
+      "attributes": {
+        "aliasUsername": ["demo-organization"],
+        "unifiedRole": ["ORGANIZATION"]
+      },
       "email": "provider@homecare.local",
       "firstName": "Demo",
       "lastName": "Provider",

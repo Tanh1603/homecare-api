@@ -1,4 +1,4 @@
-name: homecare-ifra
+name: homecare-infra
 services:
   redis:
     container_name: redis
@@ -9,6 +9,14 @@ services:
       - redis_data:/data
     command: redis-server --appendonly yes
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
+        reservations:
+          cpus: '0.10'
+          memory: 64M
     networks:
       - shared
 
@@ -29,6 +37,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.00'
+          memory: 768M
+        reservations:
+          cpus: '0.20'
+          memory: 256M
     networks:
       - shared
 
@@ -49,6 +66,14 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 512M
+        reservations:
+          cpus: '0.15'
+          memory: 256M
     networks:
       - shared
 
@@ -60,6 +85,8 @@ services:
       - --import-realm
     env_file:
       - .env
+    environment:
+      JAVA_OPTS_APPEND: "-Xms256m -Xmx512m -XX:MaxMetaspaceSize=192m"
     ports:
       - "9090:8080"
     volumes:
@@ -67,6 +94,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.00'
+          memory: 1024M
+        reservations:
+          cpus: '0.25'
+          memory: 512M
     networks:
       - shared
 
