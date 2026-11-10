@@ -67,8 +67,8 @@ public class HouseholdController {
     @GetMapping("/households")
     public ResponseEntity<ApiResponse<PageResponse<HouseholdResponse>>> listHouseholds(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
         List<HouseholdResponse> items = service.listHouseholds(jwt.getSubject());
         return ResponseEntity.ok(responseFactory.ok(
@@ -124,8 +124,8 @@ public class HouseholdController {
     public ResponseEntity<ApiResponse<PageResponse<DeviceResponse>>> listDevices(
             @AuthenticationPrincipal Jwt jwt,
             @RequestParam(required = false) UUID householdId,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
         List<DeviceResponse> items = service.listDevices(jwt.getSubject(), householdId);
         return ResponseEntity.ok(responseFactory.ok(

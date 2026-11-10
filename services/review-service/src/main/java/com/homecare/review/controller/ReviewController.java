@@ -66,8 +66,8 @@ public class ReviewController {
     @GetMapping("/providers/{providerId}/service-reviews")
     public ResponseEntity<ApiResponse<PageResponse<ReviewResponse>>> listProviderReviews(
             @PathVariable UUID providerId,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
         List<ReviewResponse> items = service.listProviderReviews(providerId);
         return ResponseEntity.ok(responseFactory.ok(
@@ -92,8 +92,8 @@ public class ReviewController {
     @GetMapping("/products/{productId}/reviews")
     public ResponseEntity<ApiResponse<PageResponse<ReviewResponse>>> listProductReviews(
             @PathVariable UUID productId,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
         List<ReviewResponse> items = service.listProductReviews(productId);
         return ResponseEntity.ok(responseFactory.ok(

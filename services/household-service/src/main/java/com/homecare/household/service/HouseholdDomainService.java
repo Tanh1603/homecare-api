@@ -6,10 +6,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.household.dto.HouseholdDtos.CareRecordResponse;
@@ -35,6 +35,7 @@ import com.homecare.household.entity.Household;
 import com.homecare.household.entity.HouseholdOutboxEvent;
 import com.homecare.household.entity.MaintenanceSchedule;
 import com.homecare.household.entity.Warranty;
+import com.homecare.household.exception.HouseholdErrorCode;
 import com.homecare.household.repository.CareRecordRepository;
 import com.homecare.household.repository.DeviceRepository;
 import com.homecare.household.repository.HouseholdOutboxEventRepository;
@@ -192,9 +193,8 @@ public class HouseholdDomainService {
         Device device = requireOwnedDevice(ownerProfileId, deviceId);
         if (request.endsOn().isBefore(request.startsOn())) {
             throw new DomainException(
-                HttpStatus.CONFLICT,
-                "DATE_ORDER_INVALID",
-                "Warranty endsOn must not be before startsOn.");
+                    HouseholdErrorCode.DATE_ORDER_INVALID,
+                    "Warranty endsOn must not be before startsOn.");
         }
         Warranty saved = warrantyRepository.save(Warranty.builder()
                 .id(UUID.randomUUID())
@@ -260,7 +260,8 @@ public class HouseholdDomainService {
                 .orderLineId(orderLineId)
                 .productId(productId)
                 .source("ORDER_AUTO_ACTIVATED")
-                .providerName(merchantName != null && !merchantName.isBlank() ? merchantName.trim() : "Cửa hàng HomeCare")
+                .providerName(
+                        merchantName != null && !merchantName.isBlank() ? merchantName.trim() : "Cửa hàng HomeCare")
                 .startsOn(today)
                 .endsOn(today.plusMonths(warrantyMonths))
                 .notes("Bảo hành điện tử tự động kích hoạt (" + warrantyMonths + " tháng) từ đơn hàng #" + orderId)
@@ -318,18 +319,15 @@ public class HouseholdDomainService {
     @Transactional
     public WarrantyResponse updateWarranty(String ownerProfileId, UUID warrantyId, UpdateWarrantyRequest request) {
         Warranty w = warrantyRepository.findById(warrantyId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "WARRANTY_NOT_FOUND", "Warranty not found."));
+                .orElseThrow(() -> new DomainException(HouseholdErrorCode.WARRANTY_NOT_FOUND));
         if (!w.getOwnerProfileId().equals(ownerProfileId)) {
-            throw new DomainException(
-                    HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "Not the owner of this warranty.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this warranty.");
         }
         LocalDate newStarts = request.startsOn() != null ? request.startsOn() : w.getStartsOn();
         LocalDate newEnds = request.endsOn() != null ? request.endsOn() : w.getEndsOn();
         if (newEnds.isBefore(newStarts)) {
             throw new DomainException(
-                    HttpStatus.CONFLICT,
-                    "DATE_ORDER_INVALID",
+                    HouseholdErrorCode.DATE_ORDER_INVALID,
                     "Warranty endsOn must not be before startsOn.");
         }
         w.setStartsOn(newStarts);
@@ -352,11 +350,9 @@ public class HouseholdDomainService {
     @Transactional
     public void deleteWarranty(String ownerProfileId, UUID warrantyId) {
         Warranty w = warrantyRepository.findById(warrantyId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "WARRANTY_NOT_FOUND", "Warranty not found."));
+                .orElseThrow(() -> new DomainException(HouseholdErrorCode.WARRANTY_NOT_FOUND));
         if (!w.getOwnerProfileId().equals(ownerProfileId)) {
-            throw new DomainException(
-                    HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "Not the owner of this warranty.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this warranty.");
         }
         warrantyRepository.delete(w);
     }
@@ -395,18 +391,15 @@ public class HouseholdDomainService {
             UUID scheduleId,
             UpdateMaintenanceScheduleRequest request) {
         MaintenanceSchedule s = scheduleRepository.findById(scheduleId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "SCHEDULE_NOT_FOUND", "Maintenance schedule not found."));
+                .orElseThrow(() -> new DomainException(HouseholdErrorCode.SCHEDULE_NOT_FOUND));
         if (!s.getOwnerProfileId().equals(ownerProfileId)) {
-            throw new DomainException(
-                    HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "Not the owner of this schedule.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this schedule.");
         }
         if (request.dueOn() != null
                 && s.getNotifiedAt() != null
                 && !"COMPLETED".equals(request.status())) {
             throw new DomainException(
-                    HttpStatus.CONFLICT,
-                    "SCHEDULE_ALREADY_NOTIFIED",
+                    HouseholdErrorCode.SCHEDULE_ALREADY_NOTIFIED,
                     "Schedule has already triggered a notification; complete or create a new schedule.");
         }
         if (request.title() != null && !request.title().isBlank()) {
@@ -431,11 +424,9 @@ public class HouseholdDomainService {
     @Transactional
     public void deleteSchedule(String ownerProfileId, UUID scheduleId) {
         MaintenanceSchedule s = scheduleRepository.findById(scheduleId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "SCHEDULE_NOT_FOUND", "Maintenance schedule not found."));
+                .orElseThrow(() -> new DomainException(HouseholdErrorCode.SCHEDULE_NOT_FOUND));
         if (!s.getOwnerProfileId().equals(ownerProfileId)) {
-            throw new DomainException(
-                    HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "Not the owner of this schedule.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this schedule.");
         }
         scheduleRepository.delete(s);
     }
@@ -476,11 +467,9 @@ public class HouseholdDomainService {
             UUID recordId,
             UpdateCareRecordRequest request) {
         CareRecord r = careRecordRepository.findById(recordId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "CARE_RECORD_NOT_FOUND", "Care record not found."));
+                .orElseThrow(() -> new DomainException(HouseholdErrorCode.CARE_RECORD_NOT_FOUND));
         if (!r.getOwnerProfileId().equals(ownerProfileId)) {
-            throw new DomainException(
-                    HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "Not the owner of this care record.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this care record.");
         }
         if (request.kind() != null && !request.kind().isBlank()) {
             r.setKind(request.kind().trim().toUpperCase());
@@ -500,11 +489,9 @@ public class HouseholdDomainService {
     @Transactional
     public void deleteCareRecord(String ownerProfileId, UUID recordId) {
         CareRecord r = careRecordRepository.findById(recordId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "CARE_RECORD_NOT_FOUND", "Care record not found."));
+                .orElseThrow(() -> new DomainException(HouseholdErrorCode.CARE_RECORD_NOT_FOUND));
         if (!r.getOwnerProfileId().equals(ownerProfileId)) {
-            throw new DomainException(
-                    HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "Not the owner of this care record.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this care record.");
         }
         careRecordRepository.delete(r);
     }
@@ -583,15 +570,17 @@ public class HouseholdDomainService {
             UUID eventId = UUID.randomUUID();
             String payloadJson = """
                     {"eventId":"%s","eventType":"maintenance.reminder.due.v1","occurredAt":"%s","producer":"household-service","correlationId":"%s","data":{"scheduleId":"%s","deviceId":"%s","ownerProfileId":"%s","title":"%s","dueOn":"%s"}}
-                    """.formatted(
-                    eventId,
-                    now,
-                    eventId,
-                    schedule.getId(),
-                    schedule.getDeviceId(),
-                    schedule.getOwnerProfileId(),
-                    schedule.getTitle(),
-                    schedule.getDueOn()).strip();
+                    """
+                    .formatted(
+                            eventId,
+                            now,
+                            eventId,
+                            schedule.getId(),
+                            schedule.getDeviceId(),
+                            schedule.getOwnerProfileId(),
+                            schedule.getTitle(),
+                            schedule.getDueOn())
+                    .strip();
             outboxEventRepository.save(HouseholdOutboxEvent.builder()
                     .id(eventId)
                     .aggregateType("MaintenanceSchedule")
@@ -621,22 +610,18 @@ public class HouseholdDomainService {
 
     private Household requireOwnedHousehold(String ownerProfileId, UUID householdId) {
         Household h = householdRepository.findById(householdId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "HOUSEHOLD_NOT_FOUND", "Household not found."));
+                .orElseThrow(() -> new DomainException(HouseholdErrorCode.HOUSEHOLD_NOT_FOUND));
         if (!h.getOwnerProfileId().equals(ownerProfileId)) {
-            throw new DomainException(
-                    HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "You do not own this household.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "You do not own this household.");
         }
         return h;
     }
 
     private Device requireOwnedDevice(String ownerProfileId, UUID deviceId) {
         Device d = deviceRepository.findById(deviceId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "DEVICE_NOT_FOUND", "Device not found."));
+                .orElseThrow(() -> new DomainException(HouseholdErrorCode.DEVICE_NOT_FOUND));
         if (!d.getOwnerProfileId().equals(ownerProfileId)) {
-            throw new DomainException(
-                    HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "You do not own this device.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "You do not own this device.");
         }
         return d;
     }

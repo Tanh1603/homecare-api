@@ -19,6 +19,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.homecare.common.error.DomainException;
+import com.homecare.common.security.KeycloakJwtConverterSupport;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
@@ -47,8 +49,8 @@ public class ProviderPublicAndTechController {
     @GetMapping("/services")
     public ResponseEntity<ApiResponse<PageResponse<ServiceOfferingResponse>>> listServices(
             @RequestParam(required = false) String category,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
         List<ServiceOfferingResponse> items = service.listOfferings(category);
         return ResponseEntity.ok(responseFactory.ok(
@@ -69,8 +71,8 @@ public class ProviderPublicAndTechController {
 
     @GetMapping("/providers")
     public ResponseEntity<ApiResponse<PageResponse<ProviderResponse>>> listProviders(
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
         List<ProviderResponse> items = service.listProviders();
         return ResponseEntity.ok(responseFactory.ok(
@@ -92,8 +94,8 @@ public class ProviderPublicAndTechController {
     @GetMapping("/technicians")
     public ResponseEntity<ApiResponse<PageResponse<TechnicianResponse>>> listTechnicians(
             @RequestParam(required = false) UUID providerId,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
         List<TechnicianResponse> items = service.listTechnicians(providerId);
         return ResponseEntity.ok(responseFactory.ok(
@@ -130,6 +132,7 @@ public class ProviderPublicAndTechController {
             @AuthenticationPrincipal Jwt jwt,
             @Valid @RequestBody CreateScheduleWindowRequest request,
             HttpServletRequest httpRequest) {
+        verifyScheduleManager(jwt);
         String sub = jwt != null ? jwt.getSubject() : null;
         ScheduleWindowResponse created = service.createScheduleWindow(technicianId, sub, request);
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -145,10 +148,18 @@ public class ProviderPublicAndTechController {
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @RequestBody UpdateScheduleWindowRequest request,
             HttpServletRequest httpRequest) {
+        verifyScheduleManager(jwt);
         String sub = jwt != null ? jwt.getSubject() : null;
         ScheduleWindowResponse updated = service.updateScheduleWindow(technicianId, sub, windowId, ifMatch, request);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
                 .body(responseFactory.ok("Schedule window updated", updated, httpRequest));
+    }
+
+    private void verifyScheduleManager(Jwt jwt) {
+        if (!KeycloakJwtConverterSupport.hasAnyRole(jwt, "TECHNICIAN", "ORGANIZATION", "ADMIN")) {
+            throw new DomainException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN",
+                    "Only technician, organization, or admin can manage schedules.");
+        }
     }
 }

@@ -28,7 +28,9 @@ import com.homecare.commerce.dto.CommerceDtos.PaymentAttemptResponse;
 import com.homecare.commerce.dto.CommerceDtos.ProductResponse;
 import com.homecare.commerce.dto.CommerceDtos.ResolveOrderReturnRequest;
 import com.homecare.commerce.service.CommerceDomainService;
+import com.homecare.common.error.DomainException;
 import com.homecare.common.idempotency.IdempotencyService;
+import com.homecare.common.security.KeycloakJwtConverterSupport;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
@@ -51,8 +53,8 @@ public class CommerceController {
     @GetMapping("/products")
     public ResponseEntity<ApiResponse<PageResponse<ProductResponse>>> listProducts(
             @RequestParam(required = false) String category,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
         List<ProductResponse> items = service.listProducts(category);
         return ResponseEntity.ok(responseFactory.ok(
@@ -97,8 +99,8 @@ public class CommerceController {
     @GetMapping("/orders")
     public ResponseEntity<ApiResponse<PageResponse<OrderResponse>>> listOrders(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
         List<OrderResponse> items = service.listOrders(jwt.getSubject());
         return ResponseEntity.ok(responseFactory.ok(
@@ -158,6 +160,7 @@ public class CommerceController {
             @PathVariable UUID orderId,
             @PathVariable UUID lineId,
             HttpServletRequest httpRequest) {
+        verifyOrganizationOrAdmin(jwt, "Only organization or admin can fulfill order lines.");
         return ResponseEntity.ok(responseFactory.ok(
                 "Order line fulfilled",
                 service.fulfillOrderLine(jwt.getSubject(), orderId, lineId),
@@ -184,9 +187,16 @@ public class CommerceController {
             @PathVariable UUID returnId,
             @Valid @RequestBody ResolveOrderReturnRequest request,
             HttpServletRequest httpRequest) {
+        verifyOrganizationOrAdmin(jwt, "Only organization or admin can resolve order returns.");
         OrderReturnResponse resolved = service.resolveOrderReturnRequest(
                 jwt.getSubject(), orderId, returnId, request);
         return ResponseEntity.ok(responseFactory.ok("Order return request resolved", resolved, httpRequest));
+    }
+
+    private void verifyOrganizationOrAdmin(Jwt jwt, String message) {
+        if (!KeycloakJwtConverterSupport.hasAnyRole(jwt, "ORGANIZATION", "ADMIN")) {
+            throw new DomainException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", message);
+        }
     }
 
     @GetMapping("/orders/{orderId}/returns")

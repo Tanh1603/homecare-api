@@ -44,6 +44,8 @@ import com.homecare.commerce.repository.OrderRepository;
 import com.homecare.commerce.repository.OrderReturnRequestRepository;
 import com.homecare.commerce.repository.PaymentAttemptRepository;
 import com.homecare.commerce.repository.ProductRepository;
+import com.homecare.commerce.exception.CommerceErrorCode;
+import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 
 import lombok.RequiredArgsConstructor;
@@ -97,21 +99,17 @@ public class CommerceDomainService {
         for (OrderLineRequest item : request.items()) {
             ProductEntity product = productRepository.findById(item.productId())
                     .orElseThrow(() -> new DomainException(
-                            HttpStatus.NOT_FOUND, "PRODUCT_NOT_FOUND", "Product not found: " + item.productId()));
+                            CommerceErrorCode.PRODUCT_NOT_FOUND, "Product not found: " + item.productId()));
             merchantIds.add(product.getMerchantId());
             if (merchantIds.size() > 1) {
-                throw new DomainException(
-                        HttpStatus.CONFLICT,
-                        "MIXED_MERCHANT_ORDER",
-                        "All order lines in a single order must belong to the same merchant.");
+                throw new DomainException(CommerceErrorCode.MIXED_MERCHANT_ORDER);
             }
             InventoryEntity inv = inventoryRepository.findByProductId(product.getId())
                     .orElseThrow(() -> new DomainException(
-                            HttpStatus.CONFLICT, "STOCK_INSUFFICIENT", "Inventory not found."));
+                            CommerceErrorCode.STOCK_INSUFFICIENT, "Inventory not found."));
             if (inv.getAvailableQty() < item.quantity()) {
                 throw new DomainException(
-                        HttpStatus.CONFLICT,
-                        "STOCK_INSUFFICIENT",
+                        CommerceErrorCode.STOCK_INSUFFICIENT,
                         "Insufficient stock for product " + product.getName());
             }
             inv.setAvailableQty(inv.getAvailableQty() - item.quantity());
@@ -186,12 +184,10 @@ public class CommerceDomainService {
     public PaymentAttemptResponse createPaymentAttempt(String buyerProfileId, UUID orderId, String customReturnUrl) {
         OrderEntity order = requireOwnedOrder(buyerProfileId, orderId);
         if ("PAID".equals(order.getPaymentStatus())) {
-            throw new DomainException(
-                    HttpStatus.CONFLICT, "ORDER_INVALID_STATE", "Order is already paid.");
+            throw new DomainException(CommerceErrorCode.ORDER_INVALID_STATE, "Order is already paid.");
         }
         if (Instant.now().isAfter(order.getQuoteExpiresAt())) {
-            throw new DomainException(
-                    HttpStatus.CONFLICT, "ORDER_QUOTE_EXPIRED", "Order quote has expired.");
+            throw new DomainException(CommerceErrorCode.ORDER_QUOTE_EXPIRED);
         }
         String txnRef = "HC-" + order.getId().toString().substring(0, 8).toUpperCase()
                 + "-" + (System.currentTimeMillis() % 100_000);
@@ -283,14 +279,11 @@ public class CommerceDomainService {
     @Transactional
     public OrderResponse fulfillOrderLine(String actorProfileId, UUID orderId, UUID lineId) {
         OrderEntity order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "ORDER_NOT_FOUND", "Order not found."));
+                .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
         OrderLineEntity line = orderLineRepository.findById(lineId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "ORDER_LINE_NOT_FOUND", "Order line not found."));
+                .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_LINE_NOT_FOUND));
         if (!line.getOrderId().equals(orderId)) {
-            throw new DomainException(
-                    HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Order line does not belong to order.");
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Order line does not belong to order.");
         }
         Instant now = Instant.now();
         line.setFulfillmentStatus("DELIVERED");
@@ -322,42 +315,29 @@ public class CommerceDomainService {
             CreateOrderReturnRequest request) {
         OrderEntity order = requireOwnedOrder(buyerProfileId, orderId);
         OrderLineEntity line = orderLineRepository.findById(lineId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "ORDER_LINE_NOT_FOUND", "Order line not found."));
+                .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_LINE_NOT_FOUND));
         if (!line.getOrderId().equals(orderId)) {
-            throw new DomainException(
-                    HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Order line does not belong to order.");
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Order line does not belong to order.");
         }
         if (!"DELIVERED".equals(line.getFulfillmentStatus())) {
-            throw new DomainException(
-                    HttpStatus.CONFLICT,
-                    "ORDER_LINE_NOT_DELIVERED",
-                    "Only DELIVERED order lines can request a return or exchange.");
+            throw new DomainException(CommerceErrorCode.ORDER_LINE_NOT_DELIVERED);
         }
         if (request.quantity() > line.getQuantity()) {
-            throw new DomainException(
-                    HttpStatus.CONFLICT,
-                    "RETURN_QUANTITY_EXCEEDED",
-                    "Requested return quantity exceeds purchased line quantity.");
+            throw new DomainException(CommerceErrorCode.RETURN_QUANTITY_EXCEEDED);
         }
         ProductEntity product = productRepository.findById(line.getProductId())
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "PRODUCT_NOT_FOUND", "Product not found."));
+                .orElseThrow(() -> new DomainException(CommerceErrorCode.PRODUCT_NOT_FOUND));
         Instant deliveredAt = line.getDeliveredAt() != null ? line.getDeliveredAt() : order.getUpdatedAt();
         Instant returnDeadline = deliveredAt.plus(product.getReturnWindowDays(), ChronoUnit.DAYS);
         if (product.getReturnWindowDays() <= 0 || Instant.now().isAfter(returnDeadline)) {
             throw new DomainException(
-                    HttpStatus.CONFLICT,
-                    "RETURN_WINDOW_EXPIRED",
+                    CommerceErrorCode.RETURN_WINDOW_EXPIRED,
                     "Return window of " + product.getReturnWindowDays() + " days has expired.");
         }
 
         String returnType = request.returnType().trim().toUpperCase();
         if (!"REFUND".equals(returnType) && !"EXCHANGE".equals(returnType)) {
-            throw new DomainException(
-                    HttpStatus.BAD_REQUEST,
-                    "VALIDATION_FAILED",
-                    "returnType must be REFUND or EXCHANGE.");
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "returnType must be REFUND or EXCHANGE.");
         }
 
         OrderReturnRequestEntity saved = returnRequestRepository.save(OrderReturnRequestEntity.builder()
@@ -384,18 +364,14 @@ public class CommerceDomainService {
             UUID returnId,
             ResolveOrderReturnRequest request) {
         OrderEntity order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "ORDER_NOT_FOUND", "Order not found."));
+                .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
         OrderReturnRequestEntity ret = returnRequestRepository.findById(returnId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "RETURN_REQUEST_NOT_FOUND", "Return request not found."));
+                .orElseThrow(() -> new DomainException(CommerceErrorCode.RETURN_REQUEST_NOT_FOUND));
         if (!ret.getOrderId().equals(orderId)) {
-            throw new DomainException(
-                    HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Return request does not belong to order.");
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Return request does not belong to order.");
         }
         if (!"REQUESTED".equals(ret.getStatus())) {
-            throw new DomainException(
-                    HttpStatus.CONFLICT, "RETURN_ALREADY_RESOLVED", "Return request is already resolved.");
+            throw new DomainException(CommerceErrorCode.RETURN_ALREADY_RESOLVED);
         }
 
         String action = request.action().trim().toUpperCase();
@@ -460,11 +436,9 @@ public class CommerceDomainService {
 
     private OrderEntity requireOwnedOrder(String buyerProfileId, UUID orderId) {
         OrderEntity order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "ORDER_NOT_FOUND", "Order not found."));
+                .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
         if (!order.getBuyerProfileId().equals(buyerProfileId)) {
-            throw new DomainException(
-                    HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "Not the owner of this order.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this order.");
         }
         return order;
     }

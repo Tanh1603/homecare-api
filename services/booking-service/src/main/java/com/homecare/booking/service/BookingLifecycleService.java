@@ -8,7 +8,6 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,11 +26,13 @@ import com.homecare.booking.entity.BookingEntity;
 import com.homecare.booking.entity.BookingHistoryEntry;
 import com.homecare.booking.entity.BookingOutboxEventEntity;
 import com.homecare.booking.entity.WorkUpdateEntity;
+import com.homecare.booking.exception.BookingErrorCode;
 import com.homecare.booking.repository.BookingAllocationSagaRepository;
 import com.homecare.booking.repository.BookingHistoryRepository;
 import com.homecare.booking.repository.BookingOutboxEventRepository;
 import com.homecare.booking.repository.BookingRepository;
 import com.homecare.booking.repository.WorkUpdateRepository;
+import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
@@ -121,10 +122,7 @@ public class BookingLifecycleService {
             saga.setUpdatedAt(Instant.now());
             saga.setCompletedAt(Instant.now());
             sagaRepository.save(saga);
-            throw new DomainException(
-                    HttpStatus.CONFLICT,
-                    "SERVICE_NOT_AVAILABLE",
-                    "Requested service offering is inactive or unavailable.");
+            throw new DomainException(BookingErrorCode.SERVICE_NOT_AVAILABLE);
         }
 
         int durationMins = offering.getEstimatedDurationMinutes() > 0
@@ -143,12 +141,14 @@ public class BookingLifecycleService {
         long quotedPrice;
 
         if (isWarrantyClaim) {
-            // Flow 1: In-Warranty Claim -> Free (0 VND) and strictly locked to the selling store (organizationId)
+            // Flow 1: In-Warranty Claim -> Free (0 VND) and strictly locked to the selling
+            // store (organizationId)
             targetProviderId = warrantyOrganizationId != null ? warrantyOrganizationId : offeringProviderId;
             strictProviderMatch = true;
             quotedPrice = 0L;
         } else {
-            // Flow 2 & 3: Standard Paid Booking -> Prioritize preferredProviderId / offeringProviderId, allow fallback
+            // Flow 2 & 3: Standard Paid Booking -> Prioritize preferredProviderId /
+            // offeringProviderId, allow fallback
             targetProviderId = request.preferredProviderId() != null
                     ? request.preferredProviderId()
                     : offeringProviderId;
@@ -281,8 +281,7 @@ public class BookingLifecycleService {
     public BookingResponse getBooking(String actorProfileId, boolean isTechOrAdmin, UUID bookingId) {
         BookingEntity booking = requireBooking(bookingId);
         if (!isTechOrAdmin && !booking.getRequesterProfileId().equals(actorProfileId)) {
-            throw new DomainException(
-                    HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "Not allowed to view this booking.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not allowed to view this booking.");
         }
         return toBookingResponse(booking);
     }
@@ -296,16 +295,14 @@ public class BookingLifecycleService {
             CancelBookingRequest request) {
         BookingEntity booking = requireBooking(bookingId);
         if (!isAdmin && !booking.getRequesterProfileId().equals(actorProfileId)) {
-            throw new DomainException(
-                    HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "Not allowed to cancel this booking.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not allowed to cancel this booking.");
         }
         EtagSupport.verifyIfMatch(ifMatchHeader, booking.getVersion());
         if ("IN_PROGRESS".equals(booking.getStatus())
                 || "COMPLETED".equals(booking.getStatus())
                 || "CANCELLED".equals(booking.getStatus())) {
             throw new DomainException(
-                    HttpStatus.CONFLICT,
-                    "BOOKING_INVALID_STATE",
+                    BookingErrorCode.BOOKING_INVALID_STATE,
                     "Cannot cancel a booking in status " + booking.getStatus());
         }
         String previous = booking.getStatus();
@@ -339,34 +336,31 @@ public class BookingLifecycleService {
             case "ARRIVED", "DIAGNOSED", "STARTED", "IN_PROGRESS" -> {
                 if (!"ASSIGNED".equals(previous) && !"REQUESTED".equals(previous) && !"IN_PROGRESS".equals(previous)) {
                     throw new DomainException(
-                            HttpStatus.CONFLICT,
-                            "BOOKING_INVALID_STATE",
+                            BookingErrorCode.BOOKING_INVALID_STATE,
                             "Cannot update work progress (" + kind + ") from status " + previous);
                 }
                 booking.setStatus("IN_PROGRESS");
-                recordHistory(bookingId, previous, "IN_PROGRESS", technicianProfileId, "[" + kind + "] " + (request.note() != null ? request.note() : ""));
+                recordHistory(bookingId, previous, "IN_PROGRESS", technicianProfileId,
+                        "[" + kind + "] " + (request.note() != null ? request.note() : ""));
             }
             case "NOTE" -> {
                 if (!"ASSIGNED".equals(previous) && !"IN_PROGRESS".equals(previous)) {
                     throw new DomainException(
-                            HttpStatus.CONFLICT,
-                            "BOOKING_INVALID_STATE",
+                            BookingErrorCode.BOOKING_INVALID_STATE,
                             "Cannot add work note in status " + previous);
                 }
             }
             case "COMPLETED" -> {
                 if (!"IN_PROGRESS".equals(previous) && !"ASSIGNED".equals(previous)) {
                     throw new DomainException(
-                            HttpStatus.CONFLICT,
-                            "BOOKING_INVALID_STATE",
+                            BookingErrorCode.BOOKING_INVALID_STATE,
                             "Cannot complete booking from status " + previous);
                 }
                 booking.setStatus("COMPLETED");
                 recordHistory(bookingId, previous, "COMPLETED", technicianProfileId, request.note());
             }
             default -> throw new DomainException(
-                    HttpStatus.BAD_REQUEST,
-                    "VALIDATION_FAILED",
+                    CommonErrorCode.VALIDATION_FAILED,
                     "Unsupported work update kind: " + kind);
         }
 
@@ -426,19 +420,22 @@ public class BookingLifecycleService {
         UUID eventId = UUID.randomUUID();
         String payload = """
                 {"eventId":"%s","eventType":"%s","occurredAt":"%s","producer":"booking-service","correlationId":"%s","data":{"bookingId":"%s","requesterProfileId":"%s","technicianProfileId":"%s","serviceName":"%s","status":"%s","bookingType":"%s","deviceId":"%s","warrantyId":"%s"}}
-                """.formatted(
-                eventId,
-                eventType,
-                now,
-                booking.getId(),
-                booking.getId(),
-                booking.getRequesterProfileId(),
-                booking.getAssignedTechnicianProfileId() == null ? "demo-technician" : booking.getAssignedTechnicianProfileId(),
-                booking.getServiceName(),
-                booking.getStatus(),
-                booking.getBookingType(),
-                booking.getDeviceId(),
-                booking.getWarrantyId()).strip();
+                """
+                .formatted(
+                        eventId,
+                        eventType,
+                        now,
+                        booking.getId(),
+                        booking.getId(),
+                        booking.getRequesterProfileId(),
+                        booking.getAssignedTechnicianProfileId() == null ? "demo-technician"
+                                : booking.getAssignedTechnicianProfileId(),
+                        booking.getServiceName(),
+                        booking.getStatus(),
+                        booking.getBookingType(),
+                        booking.getDeviceId(),
+                        booking.getWarrantyId())
+                .strip();
 
         BookingOutboxEventEntity outbox = outboxEventRepository.save(BookingOutboxEventEntity.builder()
                 .id(eventId)
@@ -465,8 +462,7 @@ public class BookingLifecycleService {
 
     private BookingEntity requireBooking(UUID bookingId) {
         return bookingRepository.findById(bookingId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "BOOKING_NOT_FOUND", "Booking not found."));
+                .orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
     }
 
     private UUID parseUuidOrNull(String value) {
@@ -484,12 +480,14 @@ public class BookingLifecycleService {
         List<BookingHistoryResponse> history = historyRepository.findByBookingIdOrderByOccurredAtAsc(b.getId())
                 .stream()
                 .map(h -> new BookingHistoryResponse(
-                        h.getId(), h.getFromStatus(), h.getToStatus(), h.getActorId(), h.getReason(), h.getOccurredAt()))
+                        h.getId(), h.getFromStatus(), h.getToStatus(), h.getActorId(), h.getReason(),
+                        h.getOccurredAt()))
                 .toList();
         List<WorkUpdateResponse> updates = workUpdateRepository.findByBookingIdOrderByCreatedAtAsc(b.getId())
                 .stream()
                 .map(u -> new WorkUpdateResponse(
-                        u.getId(), u.getBookingId(), u.getTechnicianProfileId(), u.getKind(), u.getNote(), u.getCreatedAt()))
+                        u.getId(), u.getBookingId(), u.getTechnicianProfileId(), u.getKind(), u.getNote(),
+                        u.getCreatedAt()))
                 .toList();
         return new BookingResponse(
                 b.getId(),

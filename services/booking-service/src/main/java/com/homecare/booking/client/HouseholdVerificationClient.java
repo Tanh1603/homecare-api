@@ -1,15 +1,15 @@
 package com.homecare.booking.client;
 
-import java.time.LocalDate;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
+import com.homecare.booking.exception.BookingErrorCode;
+import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.household.v1.HouseholdVerificationServiceGrpc;
 import com.homecare.household.v1.VerifyDeviceReferenceRequest;
@@ -25,8 +25,8 @@ import net.devh.boot.grpc.client.inject.GrpcClient;
 public class HouseholdVerificationClient {
 
     private static final Logger log = LoggerFactory.getLogger(HouseholdVerificationClient.class);
-    private static final Metadata.Key<String> WORKLOAD_TOKEN_KEY =
-            Metadata.Key.of("X-Internal-Workload-Token", Metadata.ASCII_STRING_MARSHALLER);
+    private static final Metadata.Key<String> WORKLOAD_TOKEN_KEY = Metadata.Key.of("X-Internal-Workload-Token",
+            Metadata.ASCII_STRING_MARSHALLER);
 
     @GrpcClient("householdService")
     private HouseholdVerificationServiceGrpc.HouseholdVerificationServiceBlockingStub householdStub;
@@ -47,10 +47,7 @@ public class HouseholdVerificationClient {
                             .build());
 
             if (!response.getValid()) {
-                throw new DomainException(
-                        HttpStatus.CONFLICT,
-                        "DEVICE_REFERENCE_INVALID",
-                        "Referenced device does not belong to requester or is inactive.");
+                throw new DomainException(BookingErrorCode.DEVICE_REFERENCE_INVALID);
             }
             if (!response.getDeviceType().isBlank()) {
                 return response.getDeviceType();
@@ -65,8 +62,8 @@ public class HouseholdVerificationClient {
 
     public WarrantyVerificationResult verifyWarranty(UUID warrantyId, String requesterProfileId) {
         if (warrantyId == null) {
-            throw new DomainException(
-                    HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "warrantyId is required for WARRANTY_CLAIM booking.");
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "warrantyId is required for WARRANTY_CLAIM booking.");
         }
         try {
             VerifyWarrantyResponse response = withInternalMetadata(householdStub)
@@ -77,16 +74,10 @@ public class HouseholdVerificationClient {
                             .build());
 
             if (response.getExpired()) {
-                throw new DomainException(
-                        HttpStatus.CONFLICT,
-                        "WARRANTY_EXPIRED",
-                        "Warranty has expired; please book a paid repair service instead.");
+                throw new DomainException(BookingErrorCode.WARRANTY_EXPIRED);
             }
             if (!response.getValid()) {
-                throw new DomainException(
-                        HttpStatus.CONFLICT,
-                        "WARRANTY_INVALID",
-                        "Referenced warranty does not belong to requester or is invalid.");
+                throw new DomainException(BookingErrorCode.WARRANTY_INVALID);
             }
             UUID deviceId = parseUuid(response.getDeviceId());
             UUID orgId = parseUuid(response.getOrganizationId());

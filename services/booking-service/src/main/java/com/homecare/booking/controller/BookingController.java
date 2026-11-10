@@ -1,8 +1,6 @@
 package com.homecare.booking.controller;
 
-import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.http.HttpHeaders;
@@ -74,10 +72,11 @@ public class BookingController {
     @GetMapping("/bookings")
     public ResponseEntity<ApiResponse<PageResponse<BookingResponse>>> listBookings(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<BookingResponse> items = service.listBookings(jwt.getSubject(), hasAnyRole(jwt, "TECHNICIAN", "ADMIN", "SUPPORT"));
+        List<BookingResponse> items = service.listBookings(jwt.getSubject(),
+                hasAnyRole(jwt, "TECHNICIAN", "ORGANIZATION", "ADMIN"));
         return ResponseEntity.ok(responseFactory.ok(
                 "Bookings retrieved",
                 PageResponse.of(items, page, size, items.size()),
@@ -91,7 +90,7 @@ public class BookingController {
             HttpServletRequest httpRequest) {
         BookingResponse booking = service.getBooking(
                 jwt.getSubject(),
-                hasAnyRole(jwt, "TECHNICIAN", "ADMIN", "SUPPORT"),
+                hasAnyRole(jwt, "TECHNICIAN", "ORGANIZATION", "ADMIN"),
                 bookingId);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(booking.version()))
@@ -107,7 +106,7 @@ public class BookingController {
             HttpServletRequest httpRequest) {
         BookingResponse updated = service.cancelBooking(
                 jwt.getSubject(),
-                hasAnyRole(jwt, "ADMIN", "SUPPORT"),
+                hasAnyRole(jwt, "ADMIN", "ORGANIZATION"),
                 bookingId,
                 ifMatch,
                 request);

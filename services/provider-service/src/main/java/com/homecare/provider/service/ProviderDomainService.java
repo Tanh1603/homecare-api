@@ -7,10 +7,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.provider.dto.ProviderDtos.CreateScheduleWindowRequest;
@@ -24,6 +24,7 @@ import com.homecare.provider.entity.ScheduleWindow;
 import com.homecare.provider.entity.ServiceOffering;
 import com.homecare.provider.entity.Technician;
 import com.homecare.provider.entity.TechnicianAllocation;
+import com.homecare.provider.exception.ProviderErrorCode;
 import com.homecare.provider.repository.ProviderRepository;
 import com.homecare.provider.repository.ScheduleWindowRepository;
 import com.homecare.provider.repository.ServiceOfferingRepository;
@@ -46,7 +47,8 @@ public class ProviderDomainService {
     public List<ServiceOfferingResponse> listOfferings(String category) {
         return offeringRepository.findByActiveTrueOrderByCreatedAtDesc()
                 .stream()
-                .filter(o -> category == null || category.isBlank() || o.getCategory().equalsIgnoreCase(category.trim()))
+                .filter(o -> category == null || category.isBlank()
+                        || o.getCategory().equalsIgnoreCase(category.trim()))
                 .map(this::toOfferingResponse)
                 .toList();
     }
@@ -54,8 +56,7 @@ public class ProviderDomainService {
     @Transactional(readOnly = true)
     public ServiceOfferingResponse getOffering(UUID serviceId) {
         ServiceOffering offering = offeringRepository.findById(serviceId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "SERVICE_NOT_FOUND", "Service offering not found."));
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.SERVICE_NOT_FOUND));
         return toOfferingResponse(offering);
     }
 
@@ -67,8 +68,7 @@ public class ProviderDomainService {
     @Transactional(readOnly = true)
     public ProviderResponse getProvider(UUID providerId) {
         ProviderEntity p = providerRepository.findById(providerId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "PROVIDER_NOT_FOUND", "Provider not found."));
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.PROVIDER_NOT_FOUND));
         return toProviderResponse(p);
     }
 
@@ -83,8 +83,7 @@ public class ProviderDomainService {
     @Transactional(readOnly = true)
     public TechnicianResponse getTechnician(UUID technicianId) {
         Technician t = technicianRepository.findById(technicianId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "TECHNICIAN_NOT_FOUND", "Technician not found."));
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.TECHNICIAN_NOT_FOUND));
         return toTechnicianResponse(t);
     }
 
@@ -99,12 +98,11 @@ public class ProviderDomainService {
             }
             return technicianRepository.findById(ProviderDataInitializer.DEMO_TECH_ID)
                     .orElseThrow(() -> new DomainException(
-                            HttpStatus.NOT_FOUND, "TECHNICIAN_NOT_FOUND", "Demo technician not found."));
+                            ProviderErrorCode.TECHNICIAN_NOT_FOUND, "Demo technician not found."));
         }
         UUID id = UUID.fromString(technicianIdOrMe);
         return technicianRepository.findById(id)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "TECHNICIAN_NOT_FOUND", "Technician not found."));
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.TECHNICIAN_NOT_FOUND));
     }
 
     @Transactional(readOnly = true)
@@ -123,16 +121,12 @@ public class ProviderDomainService {
             CreateScheduleWindowRequest request) {
         Technician tech = resolveTechnicianOrDemo(technicianIdOrMe, jwtSubject);
         if (!request.endsAt().isAfter(request.startsAt())) {
-            throw new DomainException(
-                    HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "endsAt must be after startsAt.");
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "endsAt must be after startsAt.");
         }
         List<ScheduleWindow> overlaps = scheduleWindowRepository.findOverlapping(
                 tech.getId(), request.startsAt(), request.endsAt());
         if (!overlaps.isEmpty()) {
-            throw new DomainException(
-                    HttpStatus.CONFLICT,
-                    "SCHEDULE_OVERLAP",
-                    "Schedule window overlaps an existing schedule window.");
+            throw new DomainException(ProviderErrorCode.SCHEDULE_OVERLAP);
         }
         ScheduleWindow saved = scheduleWindowRepository.saveAndFlush(ScheduleWindow.builder()
                 .id(UUID.randomUUID())
@@ -154,18 +148,13 @@ public class ProviderDomainService {
             UpdateScheduleWindowRequest request) {
         Technician tech = resolveTechnicianOrDemo(technicianIdOrMe, jwtSubject);
         ScheduleWindow window = scheduleWindowRepository.findById(windowId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "SCHEDULE_WINDOW_NOT_FOUND", "Schedule window not found."));
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.SCHEDULE_WINDOW_NOT_FOUND));
         if (!window.getTechnicianId().equals(tech.getId())) {
-            throw new DomainException(
-                    HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "Not the owner of this schedule window.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this schedule window.");
         }
         EtagSupport.verifyIfMatch(ifMatchHeader, window.getVersion());
         if (window.getAllocatedBookingId() != null) {
-            throw new DomainException(
-                    HttpStatus.CONFLICT,
-                    "SCHEDULE_ALLOCATION_CONFLICT",
-                    "Cannot modify a schedule window with an active booking allocation.");
+            throw new DomainException(ProviderErrorCode.SCHEDULE_ALLOCATION_CONFLICT);
         }
         if (request.startsAt() != null) {
             window.setStartsAt(request.startsAt());
@@ -228,10 +217,12 @@ public class ProviderDomainService {
 
         List<Technician> candidates;
         if (strictProviderMatch) {
-            // Flow 1 (WARRANTY_CLAIM): Strictly lock technician search to the store that issued the warranty
+            // Flow 1 (WARRANTY_CLAIM): Strictly lock technician search to the store that
+            // issued the warranty
             candidates = technicianRepository.findByProviderIdAndStatus(targetProviderId, "ACTIVE");
         } else {
-            // Flow 2 & 3 (STANDARD): Search all active technicians, giving +25.0 affinity bonus to targetProviderId
+            // Flow 2 & 3 (STANDARD): Search all active technicians, giving +25.0 affinity
+            // bonus to targetProviderId
             candidates = technicianRepository.findByStatus("ACTIVE");
         }
 
@@ -241,7 +232,8 @@ public class ProviderDomainService {
                         t.getId(), preferredStart, preferredEnd).isEmpty())
                 .filter(t -> allocationRepository.findActiveOverlapping(
                         t.getId(), preferredStart, preferredEnd).isEmpty())
-                .sorted(Comparator.comparingDouble((Technician t) -> aiRankScoreWithStoreAffinity(t, targetProviderId)).reversed())
+                .sorted(Comparator.comparingDouble((Technician t) -> aiRankScoreWithStoreAffinity(t, targetProviderId))
+                        .reversed())
                 .toList();
 
         if (eligible.isEmpty()) {

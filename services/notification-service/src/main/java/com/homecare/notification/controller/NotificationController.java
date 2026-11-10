@@ -41,8 +41,8 @@ public class NotificationController {
     @GetMapping("/notifications")
     public ResponseEntity<ApiResponse<PageResponse<NotificationResponse>>> listNotifications(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
         List<NotificationResponse> items = service.listInbox(jwt.getSubject());
         return ResponseEntity.ok(responseFactory.ok(

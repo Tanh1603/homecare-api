@@ -6,10 +6,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.notification.dto.NotificationDtos.DeviceRegistrationResponse;
 import com.homecare.notification.dto.NotificationDtos.NotificationResponse;
@@ -17,6 +17,7 @@ import com.homecare.notification.dto.NotificationDtos.RegisterDeviceRequest;
 import com.homecare.notification.entity.DeviceRegistrationEntity;
 import com.homecare.notification.entity.NotificationEntity;
 import com.homecare.notification.entity.ProcessedEventEntity;
+import com.homecare.notification.exception.NotificationErrorCode;
 import com.homecare.notification.repository.DeviceRegistrationRepository;
 import com.homecare.notification.repository.NotificationRepository;
 import com.homecare.notification.repository.ProcessedEventRepository;
@@ -71,7 +72,8 @@ public class NotificationInboxService {
                 .createdAt(now)
                 .build());
 
-        // Trigger FCM push notification to user's registered devices (wake-up ping for inbox synchronization)
+        // Trigger FCM push notification to user's registered devices (wake-up ping for
+        // inbox synchronization)
         java.util.Map<String, String> data = new java.util.HashMap<>();
         if (eventType != null) {
             data.put("eventType", eventType);
@@ -93,11 +95,9 @@ public class NotificationInboxService {
     @Transactional
     public NotificationResponse markAsRead(String recipientId, UUID notificationId) {
         NotificationEntity n = notificationRepository.findById(notificationId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "NOTIFICATION_NOT_FOUND", "Notification not found."));
+                .orElseThrow(() -> new DomainException(NotificationErrorCode.NOTIFICATION_NOT_FOUND));
         if (!n.getRecipientId().equals(recipientId)) {
-            throw new DomainException(
-                    HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "Not the recipient of this notification.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the recipient of this notification.");
         }
         if (!n.isRead()) {
             n.setRead(true);
@@ -114,10 +114,7 @@ public class NotificationInboxService {
         if (existing.isPresent()) {
             DeviceRegistrationEntity d = existing.get();
             if (!d.getRecipientId().equals(recipientId)) {
-                throw new DomainException(
-                        HttpStatus.CONFLICT,
-                        "TOKEN_ALREADY_REGISTERED",
-                        "Push token is already registered to another user.");
+                throw new DomainException(NotificationErrorCode.TOKEN_ALREADY_REGISTERED);
             }
             d.setActive(true);
             return toDeviceResponse(deviceRegistrationRepository.save(d));
@@ -136,11 +133,9 @@ public class NotificationInboxService {
     @Transactional
     public void deactivateDevice(String recipientId, UUID deviceId) {
         DeviceRegistrationEntity d = deviceRegistrationRepository.findById(deviceId)
-                .orElseThrow(() -> new DomainException(
-                        HttpStatus.NOT_FOUND, "DEVICE_REGISTRATION_NOT_FOUND", "Device registration not found."));
+                .orElseThrow(() -> new DomainException(NotificationErrorCode.DEVICE_REGISTRATION_NOT_FOUND));
         if (!d.getRecipientId().equals(recipientId)) {
-            throw new DomainException(
-                    HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", "Not the owner of this device registration.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this device registration.");
         }
         d.setActive(false);
         deviceRegistrationRepository.save(d);
