@@ -32,7 +32,7 @@ spring:
     host: ${RABBITMQ_HOST:localhost}
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_DEFAULT_USER:homecare}
-    password: ${RABBITMQ_DEFAULT_PASS:change_me_local_mq_password}
+    password: ${RABBITMQ_DEFAULT_PASS:123456}
   security:
     oauth2:
       resourceserver:

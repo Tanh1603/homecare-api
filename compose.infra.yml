@@ -52,9 +52,8 @@ services:
   rabbitmq:
     container_name: rabbitmq
     image: rabbitmq:4.0-management-alpine
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-homecare}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-homecare}
+    env_file:
+      - .env
     ports:
       - "5672:5672"
       - "15672:15672"
