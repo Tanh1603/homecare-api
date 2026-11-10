@@ -1,7 +1,5 @@
 package com.homecare.review.config;
 
-import java.time.Clock;
-
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -47,7 +45,8 @@ public class ReviewSecurityConfig {
                         .permitAll()
                         .requestMatchers(HttpMethod.GET,
                                 "/api/v1/providers/*/service-reviews",
-                                "/api/v1/products/*/reviews").permitAll()
+                                "/api/v1/products/*/reviews")
+                        .permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(

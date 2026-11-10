@@ -1,0 +1,12 @@
+{"properties": [
+  {
+    "name": "homecare.internal.workload-token",
+    "type": "java.lang.String",
+    "description": "A description for 'homecare.internal.workload-token'"
+  },
+  {
+    "name": "homecare.household.base-url",
+    "type": "java.lang.String",
+    "description": "A description for 'homecare.household.base-url'"
+  }
+]}

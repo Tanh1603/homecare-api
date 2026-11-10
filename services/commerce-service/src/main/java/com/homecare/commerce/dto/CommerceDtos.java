@@ -113,11 +113,6 @@ public final class CommerceDtos {
             Instant resolvedAt) {
     }
 
-    public record VerifyOrderLineReviewEligibilityRequest(
-            @NotNull UUID orderLineId,
-            @NotBlank String requesterProfileId) {
-    }
-
     public record VerifyOrderLineReviewEligibilityResponse(
             boolean eligible,
             UUID orderLineId,

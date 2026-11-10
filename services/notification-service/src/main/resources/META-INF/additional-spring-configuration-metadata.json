@@ -1,0 +1,12 @@
+{"properties": [
+  {
+    "name": "homecare.fcm.project-id",
+    "type": "java.lang.String",
+    "description": "A description for 'homecare.fcm.project-id'"
+  },
+  {
+    "name": "homecare.fcm.sandbox-mode",
+    "type": "java.lang.String",
+    "description": "A description for 'homecare.fcm.sandbox-mode'"
+  }
+]}

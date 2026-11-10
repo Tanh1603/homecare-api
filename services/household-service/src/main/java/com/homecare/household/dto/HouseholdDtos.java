@@ -172,11 +172,6 @@ public final class HouseholdDtos {
             Instant createdAt) {
     }
 
-    public record VerifyDeviceReferenceRequest(
-            @NotNull UUID deviceId,
-            @NotBlank String requesterProfileId) {
-    }
-
     public record VerifyDeviceReferenceResponse(
             boolean valid,
             UUID deviceId,
@@ -184,11 +179,6 @@ public final class HouseholdDtos {
             String deviceType,
             String deviceName,
             String status) {
-    }
-
-    public record VerifyWarrantyRequest(
-            @NotNull UUID warrantyId,
-            @NotBlank String requesterProfileId) {
     }
 
     public record VerifyWarrantyResponse(

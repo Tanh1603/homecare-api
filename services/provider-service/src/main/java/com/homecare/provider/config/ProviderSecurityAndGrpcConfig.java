@@ -1,7 +1,5 @@
 package com.homecare.provider.config;
 
-import java.time.Clock;
-
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -30,8 +28,8 @@ import net.devh.boot.grpc.server.interceptor.GrpcGlobalServerInterceptor;
 @EnableMethodSecurity
 public class ProviderSecurityAndGrpcConfig {
 
-    private static final Metadata.Key<String> WORKLOAD_TOKEN_KEY =
-            Metadata.Key.of("X-Internal-Workload-Token", Metadata.ASCII_STRING_MARSHALLER);
+    private static final Metadata.Key<String> WORKLOAD_TOKEN_KEY = Metadata.Key.of("X-Internal-Workload-Token",
+            Metadata.ASCII_STRING_MARSHALLER);
 
     @Value("${homecare.internal.workload-token}")
     private String expectedWorkloadToken;
@@ -57,8 +55,10 @@ public class ProviderSecurityAndGrpcConfig {
                     ServerCallHandler<ReqT, RespT> next) {
                 String token = headers.get(WORKLOAD_TOKEN_KEY);
                 if (token == null || !expectedWorkloadToken.equals(token)) {
-                    call.close(Status.UNAUTHENTICATED.withDescription("Invalid internal workload token"), new Metadata());
-                    return new ServerCall.Listener<>() {};
+                    call.close(Status.UNAUTHENTICATED.withDescription("Invalid internal workload token"),
+                            new Metadata());
+                    return new ServerCall.Listener<>() {
+                    };
                 }
                 return next.startCall(call, headers);
             }
@@ -82,7 +82,8 @@ public class ProviderSecurityAndGrpcConfig {
                         .requestMatchers(HttpMethod.GET,
                                 "/api/v1/services", "/api/v1/services/**",
                                 "/api/v1/providers", "/api/v1/providers/**",
-                                "/api/v1/technicians", "/api/v1/technicians/**").permitAll()
+                                "/api/v1/technicians", "/api/v1/technicians/**")
+                        .permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(

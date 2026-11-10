@@ -1,7 +1,5 @@
 package com.homecare.commerce.config;
 
-import java.time.Clock;
-
 import org.springframework.amqp.core.TopicExchange;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -54,7 +52,6 @@ public class CommerceSecurityAndRabbitConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/actuator/**",
-                                "/internal/v1/**",
                                 "/api/v1/payments/vnpay/ipn",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",

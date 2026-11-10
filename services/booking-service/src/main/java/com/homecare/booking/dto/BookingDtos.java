@@ -91,11 +91,6 @@ public final class BookingDtos {
             List<WorkUpdateResponse> workUpdates) {
     }
 
-    public record VerifyBookingReviewEligibilityRequest(
-            @NotNull UUID bookingId,
-            @NotBlank String requesterProfileId) {
-    }
-
     public record VerifyBookingReviewEligibilityResponse(
             boolean eligible,
             UUID bookingId,
