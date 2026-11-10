@@ -26,6 +26,7 @@ import com.homecare.booking.dto.BookingDtos.CreateBookingRequest;
 import com.homecare.booking.dto.BookingDtos.CreateWorkUpdateRequest;
 import com.homecare.booking.service.BookingLifecycleService;
 import com.homecare.common.idempotency.IdempotencyService;
+import com.homecare.common.security.KeycloakJwtConverterSupport;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
@@ -129,17 +130,6 @@ public class BookingController {
     }
 
     private boolean hasAnyRole(Jwt jwt, String... roles) {
-        if (jwt == null) {
-            return false;
-        }
-        Object realmAccess = jwt.getClaim("realm_access");
-        if (realmAccess instanceof Map<?, ?> map && map.get("roles") instanceof Collection<?> roleList) {
-            for (String target : roles) {
-                if (roleList.contains(target)) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        return KeycloakJwtConverterSupport.hasAnyRole(jwt, roles);
     }
 }

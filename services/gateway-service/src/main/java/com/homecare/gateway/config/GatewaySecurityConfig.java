@@ -37,7 +37,14 @@ public class GatewaySecurityConfig {
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**",
                                 "/webjars/**",
-                                "/identity-service/v3/api-docs/**")
+                                "/*-service/v3/api-docs/**",
+                                "/identity-service/v3/api-docs/**",
+                                "/household-service/v3/api-docs/**",
+                                "/provider-service/v3/api-docs/**",
+                                "/booking-service/v3/api-docs/**",
+                                "/commerce-service/v3/api-docs/**",
+                                "/review-service/v3/api-docs/**",
+                                "/notification-service/v3/api-docs/**")
                         .permitAll()
                         .anyExchange().authenticated())
                 .exceptionHandling(ex -> ex

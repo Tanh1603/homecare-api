@@ -52,7 +52,14 @@ public class CommerceSecurityAndRabbitConfig {
         http.csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/actuator/**", "/internal/v1/**", "/api/v1/payments/vnpay/ipn").permitAll()
+                        .requestMatchers(
+                                "/actuator/**",
+                                "/internal/v1/**",
+                                "/api/v1/payments/vnpay/ipn",
+                                "/v3/api-docs/**",
+                                "/swagger-ui/**",
+                                "/swagger-ui.html")
+                        .permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/products", "/api/v1/products/**").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2

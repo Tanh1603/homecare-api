@@ -336,15 +336,15 @@ public class BookingLifecycleService {
         String previous = booking.getStatus();
 
         switch (kind) {
-            case "STARTED", "IN_PROGRESS" -> {
-                if (!"ASSIGNED".equals(previous) && !"REQUESTED".equals(previous)) {
+            case "ARRIVED", "DIAGNOSED", "STARTED", "IN_PROGRESS" -> {
+                if (!"ASSIGNED".equals(previous) && !"REQUESTED".equals(previous) && !"IN_PROGRESS".equals(previous)) {
                     throw new DomainException(
                             HttpStatus.CONFLICT,
                             "BOOKING_INVALID_STATE",
-                            "Cannot start work from status " + previous);
+                            "Cannot update work progress (" + kind + ") from status " + previous);
                 }
                 booking.setStatus("IN_PROGRESS");
-                recordHistory(bookingId, previous, "IN_PROGRESS", technicianProfileId, request.note());
+                recordHistory(bookingId, previous, "IN_PROGRESS", technicianProfileId, "[" + kind + "] " + (request.note() != null ? request.note() : ""));
             }
             case "NOTE" -> {
                 if (!"ASSIGNED".equals(previous) && !"IN_PROGRESS".equals(previous)) {

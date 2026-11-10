@@ -104,16 +104,31 @@ class GatewayRoutingTest {
     }
 
     @Test void forwardsServiceDocsWithoutServicePrefix() throws Exception {
-        var response = get("/identity-service/v3/api-docs");
-        assertEquals(202, response.statusCode());
-        assertEquals("GET /v3/api-docs ", response.body());
-        assertEquals("identity", response.headers().firstValue("X-Upstream-Fixture").orElseThrow());
+        for (String serviceName : java.util.List.of(
+                "identity-service",
+                "household-service",
+                "provider-service",
+                "booking-service",
+                "commerce-service",
+                "review-service",
+                "notification-service")) {
+            var response = get("/" + serviceName + "/v3/api-docs");
+            assertEquals(202, response.statusCode(), "Failed forwarding docs for " + serviceName);
+            assertEquals("GET /v3/api-docs ", response.body());
+            assertEquals("identity", response.headers().firstValue("X-Upstream-Fixture").orElseThrow());
+        }
     }
 
-    @Test void swaggerConfigListsIdentityAndUiIsAccessible() throws Exception {
+    @Test void swaggerConfigListsAllServicesAndUiIsAccessible() throws Exception {
         var config = get("/v3/api-docs/swagger-config");
         assertEquals(200, config.statusCode());
         assertTrue(config.body().contains("/identity-service/v3/api-docs"));
+        assertTrue(config.body().contains("/household-service/v3/api-docs"));
+        assertTrue(config.body().contains("/provider-service/v3/api-docs"));
+        assertTrue(config.body().contains("/booking-service/v3/api-docs"));
+        assertTrue(config.body().contains("/commerce-service/v3/api-docs"));
+        assertTrue(config.body().contains("/review-service/v3/api-docs"));
+        assertTrue(config.body().contains("/notification-service/v3/api-docs"));
         var redirect = get("/swagger-ui.html");
         assertTrue(redirect.statusCode() >= 300 && redirect.statusCode() < 400);
         var page = get(redirect.headers().firstValue("Location").orElseThrow());
