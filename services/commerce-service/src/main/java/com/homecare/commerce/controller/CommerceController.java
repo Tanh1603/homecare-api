@@ -30,7 +30,7 @@ import com.homecare.commerce.dto.CommerceDtos.ResolveOrderReturnRequest;
 import com.homecare.commerce.service.CommerceDomainService;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.idempotency.IdempotencyService;
-import com.homecare.common.security.KeycloakJwtConverterSupport;
+import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
@@ -194,7 +194,7 @@ public class CommerceController {
     }
 
     private void verifyOrganizationOrAdmin(Jwt jwt, String message) {
-        if (!KeycloakJwtConverterSupport.hasAnyRole(jwt, "ORGANIZATION", "ADMIN")) {
+        if (!SupabaseJwtConverterSupport.hasAnyRole(jwt, "ORGANIZATION", "ADMIN")) {
             throw new DomainException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", message);
         }
     }

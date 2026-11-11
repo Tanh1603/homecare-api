@@ -6,7 +6,7 @@ spring:
         name: notification-service
     datasource:
         url: ${DB_URL:jdbc:postgresql://localhost:5432/notification_db}
-        username: ${DB_USER:keycloak}
+        username: ${DB_USER:postgres}
         password: ${DB_PASSWORD:change_me_local_pg_password}
         driver-class-name: org.postgresql.Driver
     jpa:
@@ -26,7 +26,7 @@ spring:
         oauth2:
             resourceserver:
                 jwt:
-                    jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8180/realms/homecare/protocol/openid-connect/certs}
+                    jwk-set-uri: ${SUPABASE_JWKS_URI:https://placeholder.supabase.co/auth/v1/.well-known/jwks.json}
 
 homecare:
     fcm:

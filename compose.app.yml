@@ -1,29 +1,5 @@
 name: homecare-backend
 services:
-  identity-service:
-    container_name: identity-service
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: identity-service
-    image: homecare/identity-service:dev
-    env_file:
-      - ./services/identity-service/.env
-    ports:
-      - "8081:8081"
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '0.75'
-          memory: 512M
-        reservations:
-          cpus: '0.15'
-          memory: 256M
-    networks:
-      - shared
-
   household-service:
     container_name: household-service
     build:
@@ -191,7 +167,6 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - identity-service
       - household-service
       - provider-service
       - booking-service

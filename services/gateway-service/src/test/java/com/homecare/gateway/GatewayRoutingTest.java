@@ -16,7 +16,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Real Gateway HTTP forwarding; the upstream is a transport fixture, not Identity/Keycloak. */
+/** Real Gateway HTTP forwarding; the upstream is a transport fixture, not Supabase/IdP. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class GatewayRoutingTest {
     private static final AtomicInteger calls = new AtomicInteger();
@@ -26,7 +26,7 @@ class GatewayRoutingTest {
     @DynamicPropertySource
     static void upstream(DynamicPropertyRegistry properties) throws Exception {
         properties.add("SERVER_PORT", () -> "0");
-        properties.add("KEYCLOAK_JWK_SET_URI", () -> "http://127.0.0.1:1/unused-test-jwks");
+        properties.add("SUPABASE_JWKS_URI", () -> "http://127.0.0.1:1/unused-test-jwks");
         upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         upstream.createContext("/", exchange -> {
             calls.incrementAndGet();
@@ -57,21 +57,20 @@ class GatewayRoutingTest {
         if (upstream != null) upstream.stop(0);
     }
 
-    @Test void forwardsAuthPostWithoutChangingPathQueryOrBody() throws Exception {
-        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/auth/login?test=1"))
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString("{\"probe\":true}")).build();
+    @Test void forwardsServicesGetWithoutChangingPathOrQuery() throws Exception {
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/services?test=1"))
+            .GET().build();
         var response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
         assertEquals(202, response.statusCode());
         assertEquals("identity", response.headers().firstValue("X-Upstream-Fixture").orElseThrow());
-        assertEquals("POST /api/v1/auth/login?test=1 {\"probe\":true}", response.body());
+        assertEquals("GET /api/v1/services?test=1 ", response.body());
         assertTrue(response.headers().firstValue("X-Correlation-Id").isPresent());
         assertTrue(response.headers().firstValue("X-Upstream-Correlation-Id").isPresent());
     }
 
-    @Test void missingBearerStillBlocksProtectedProfileBeforeUpstreamWithJsonEnvelope() throws Exception {
+    @Test void missingBearerStillBlocksProtectedResourceBeforeUpstreamWithJsonEnvelope() throws Exception {
         int before = calls.get();
-        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/users/me"))
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/households"))
             .header("X-Correlation-Id", "corr-401-test")
             .GET().build();
         var response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
@@ -105,7 +104,6 @@ class GatewayRoutingTest {
 
     @Test void forwardsServiceDocsWithoutServicePrefix() throws Exception {
         for (String serviceName : java.util.List.of(
-                "identity-service",
                 "household-service",
                 "provider-service",
                 "booking-service",
@@ -122,7 +120,6 @@ class GatewayRoutingTest {
     @Test void swaggerConfigListsAllServicesAndUiIsAccessible() throws Exception {
         var config = get("/v3/api-docs/swagger-config");
         assertEquals(200, config.statusCode());
-        assertTrue(config.body().contains("/identity-service/v3/api-docs"));
         assertTrue(config.body().contains("/household-service/v3/api-docs"));
         assertTrue(config.body().contains("/provider-service/v3/api-docs"));
         assertTrue(config.body().contains("/booking-service/v3/api-docs"));

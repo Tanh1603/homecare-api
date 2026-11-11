@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.homecare.booking.service.BookingLifecycleService;
 import com.homecare.common.idempotency.IdempotencyService;
-import com.homecare.common.security.KeycloakJwtConverterSupport;
+import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.servlet.BaseApiExceptionHandler;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import com.homecare.common.web.servlet.ServletCorrelationIdFilter;
@@ -58,7 +58,7 @@ public class BookingSecurityAndRabbitConfig {
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(
-                                KeycloakJwtConverterSupport.createJwtAuthenticationConverter())))
+                                SupabaseJwtConverterSupport.createJwtAuthenticationConverter())))
                 .addFilterBefore(correlationIdFilter, SecurityContextHolderFilter.class);
         return http.build();
     }
