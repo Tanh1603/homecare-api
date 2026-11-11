@@ -9,7 +9,7 @@ Each directory under `homecare-api/services/` is an independent Spring Boot 4.1.
 | Service | Gradle Module | HTTP Port | gRPC Port | Database (`PostgreSQL 16`) | CAP & Consistency Role | Env Example |
 | :--- | :--- | :---: | :---: | :--- | :--- | :--- |
 | **Gateway Service** | `:services:gateway-service` | `8080` | — | Stateless + Redis `:6379` | Edge Router, Supabase JWT Auth, Token Blacklist, Guest GET Allowlist | [`services/gateway-service/.env.example`](./gateway-service/.env.example) |
-| **Supabase Cloud (IdP)** | *External SaaS* | — | — | Supabase PostgreSQL (`auth` + `public`) | **IdP & RBAC:** Supabase Auth, `profiles`, `roles`, `permissions`, `custom_access_token_hook` | [`docs/sources/supabase_init.sql`](../../docs/sources/supabase_init.sql) |
+| **Supabase Cloud (IdP)** | *External SaaS* | — | — | Supabase PostgreSQL (`auth` + `public`) | **IdP & RBAC:** Supabase Auth, `profiles`, `roles`, `permissions`, `custom_access_token_hook` | [`docs/source/supabase_init.sql`](../../docs/source/supabase_init.sql) |
 | **Household Service** | `:services:household-service` | `8082` | — | `household_db` | Household, Device (`@Version` ETag), Warranty, Maintenance Reminder + `household_outbox_events` | [`services/household-service/.env.example`](./household-service/.env.example) |
 | **Provider Service** | `:services:provider-service` | `8083` | `9083` | `provider_db` | **CP Core:** Catalog, Technician Schedule, AI Auto-Dispatch gRPC (`@Version` + `intentId` Ledger) | [`services/provider-service/.env.example`](./provider-service/.env.example) |
 | **Booking Service** | `:services:booking-service` | `8084` | Client | `booking_db` | **AP + Saga Orchestrator:** `booking_allocation_saga` + `booking_outbox_events` + Work Updates | [`services/booking-service/.env.example`](./booking-service/.env.example) |
@@ -47,7 +47,7 @@ From `homecare-api/`:
 docker compose -f compose.infra.yml --env-file .env up -d
 ```
 - **PostgreSQL 17 (`:5432`)** automatically initializes 6 databases via `docker/postgres/init-multiple-dbs.sh`: `household_db`, `provider_db`, `booking_db`, `commerce_db`, `review_db`, `notification_db`.
-- **Identity Provider & RBAC**: Managed via Supabase Cloud. Run `docs/sources/supabase_init.sql` in the Supabase SQL Editor to initialize schemas, RBAC tables, triggers, and seed accounts (`admin@homecare.com`, `org@homecare.com`, `technician@homecare.com`, `customer@homecare.com` with password `Homecare@2026`).
+- **Identity Provider & RBAC**: Managed via Supabase Cloud. Run `docs/source/supabase_init.sql` in the Supabase SQL Editor to initialize schemas, RBAC tables, triggers, and seed accounts (`admin@homecare.com`, `org@homecare.com`, `technician@homecare.com`, `customer@homecare.com` with password `Homecare@2026`).
 - **RabbitMQ (`:5672`, UI `:15672`)** and **Redis (`:6379`)** start with healthchecks.
 
 ### Step 2: Build Shared Libraries & Services

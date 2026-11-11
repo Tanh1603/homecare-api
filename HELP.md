@@ -149,8 +149,8 @@ Khi bạn đang phát triển hoặc debug mã nguồn của 1 hoặc 2 service 
 
 Hệ thống đã tích hợp sẵn cơ chế nạp dữ liệu mẫu (Seed Data) ngay khi khởi tạo:
 
-### 5.1. Tài khoản Supabase Cloud mẫu (Tạo qua `docs/sources/supabase_init.sql`)
-Được định nghĩa hoàn chỉnh trong [`docs/sources/supabase_init.sql`](../docs/sources/supabase_init.sql) bao gồm schema `profiles`, `roles`, `permissions`, trigger hook và seed users:
+### 5.1. Tài khoản Supabase Cloud mẫu (Tạo qua `docs/source/supabase_init.sql`)
+Được định nghĩa hoàn chỉnh trong [`docs/source/supabase_init.sql`](../docs/source/supabase_init.sql) bao gồm schema `profiles`, `roles`, `permissions`, trigger hook và seed users:
 - **Quản trị viên (Admin)**: `admin@homecare.com` / Mật khẩu: `Homecare@2026` (Roles: `ADMIN`).
 - **Khách hàng (Customer)**: `customer@homecare.com` / Mật khẩu: `Homecare@2026` (Roles: `CUSTOMER`).
 - **Kỹ thuật viên (Technician)**: `technician@homecare.com` / Mật khẩu: `Homecare@2026` (Roles: `TECHNICIAN`).

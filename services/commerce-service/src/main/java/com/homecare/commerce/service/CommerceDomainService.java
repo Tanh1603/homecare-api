@@ -405,7 +405,13 @@ public class CommerceDomainService {
     }
 
     @Transactional(readOnly = true)
-    public List<OrderReturnResponse> listOrderReturns(UUID orderId) {
+    public List<OrderReturnResponse> listOrderReturns(String callerProfileId, boolean isPrivileged, UUID orderId) {
+        OrderEntity order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND, "Order not found: " + orderId));
+        if (!isPrivileged && !order.getBuyerProfileId().equals(callerProfileId)) {
+            throw new DomainException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN",
+                    "You do not have permission to view returns for this order.");
+        }
         return returnRequestRepository.findByOrderIdOrderByCreatedAtDesc(orderId)
                 .stream()
                 .map(this::toOrderReturnResponse)

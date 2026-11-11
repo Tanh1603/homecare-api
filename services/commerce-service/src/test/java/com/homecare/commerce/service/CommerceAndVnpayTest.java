@@ -156,4 +156,21 @@ class CommerceAndVnpayTest {
         OrderResponse updatedOrder = service.getOrder("buyer-return-1", order.id());
         assertThat(updatedOrder.lines().getFirst().fulfillmentStatus()).isEqualTo("RETURNED");
     }
+
+    @Test
+    void listOrderReturnsEnforcesOwnershipCheck() {
+        OrderResponse order = service.createOrder(
+                "buyer-owner-xyz",
+                new CreateOrderRequest(
+                        List.of(new OrderLineRequest(CommerceDataInitializer.PRODUCT_WRENCH_SCREW_KIT_ID, 1)),
+                        "123 Nguyễn Huệ, Q1"));
+
+        assertThatThrownBy(() -> service.listOrderReturns("stranger-user", false, order.id()))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
+
+        assertThat(service.listOrderReturns("buyer-owner-xyz", false, order.id())).isEmpty();
+        assertThat(service.listOrderReturns("admin-user", true, order.id())).isEmpty();
+    }
 }

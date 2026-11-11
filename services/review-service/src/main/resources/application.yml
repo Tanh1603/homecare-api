@@ -40,10 +40,6 @@ spring:
 homecare:
     internal:
         workload-token: ${INTERNAL_WORKLOAD_TOKEN:change_me_internal_workload_token}
-    booking:
-        base-url: ${BOOKING_INTERNAL_URL:http://localhost:8084}
-    commerce:
-        base-url: ${COMMERCE_INTERNAL_URL:http://localhost:8085}
 
 springdoc:
     api-docs:

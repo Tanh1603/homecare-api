@@ -42,8 +42,6 @@ spring:
 homecare:
   internal:
     workload-token: ${INTERNAL_WORKLOAD_TOKEN:change_me_internal_workload_token}
-  household:
-    base-url: ${HOUSEHOLD_INTERNAL_URL:http://localhost:8082}
 
 springdoc:
   api-docs:

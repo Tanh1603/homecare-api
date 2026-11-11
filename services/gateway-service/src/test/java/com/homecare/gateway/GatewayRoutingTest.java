@@ -100,6 +100,13 @@ class GatewayRoutingTest {
 
         var vnpayIpnResp = get("/api/v1/payments/vnpay/ipn?vnp_TxnRef=ord1");
         assertEquals(202, vnpayIpnResp.statusCode());
+
+        var postRequest = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/payments/vnpay/ipn"))
+                .POST(HttpRequest.BodyPublishers.ofString("vnp_TxnRef=ord1"))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .build();
+        var vnpayIpnPostResp = HttpClient.newHttpClient().send(postRequest, HttpResponse.BodyHandlers.ofString());
+        assertEquals(202, vnpayIpnPostResp.statusCode());
     }
 
     @Test void forwardsServiceDocsWithoutServicePrefix() throws Exception {

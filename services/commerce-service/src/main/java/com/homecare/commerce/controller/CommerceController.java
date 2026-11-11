@@ -201,11 +201,13 @@ public class CommerceController {
 
     @GetMapping("/orders/{orderId}/returns")
     public ResponseEntity<ApiResponse<List<OrderReturnResponse>>> listOrderReturns(
+            @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID orderId,
             HttpServletRequest httpRequest) {
+        boolean isPrivileged = SupabaseJwtConverterSupport.hasAnyRole(jwt, "ORGANIZATION", "ADMIN");
         return ResponseEntity.ok(responseFactory.ok(
                 "Order return requests retrieved",
-                service.listOrderReturns(orderId),
+                service.listOrderReturns(jwt.getSubject(), isPrivileged, orderId),
                 httpRequest));
     }
 }
