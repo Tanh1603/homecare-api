@@ -38,6 +38,10 @@ class GatewayRoutingTest {
             if (corrId != null) {
                 exchange.getResponseHeaders().add("X-Upstream-Correlation-Id", corrId);
             }
+            String gwSecret = exchange.getRequestHeaders().getFirst("X-Internal-Gateway-Secret");
+            if (gwSecret != null) {
+                exchange.getResponseHeaders().add("X-Upstream-Gateway-Secret", gwSecret);
+            }
             exchange.sendResponseHeaders(202, bytes.length);
             exchange.getResponseBody().write(bytes);
             exchange.close();
@@ -66,6 +70,15 @@ class GatewayRoutingTest {
         assertEquals("GET /api/v1/services?test=1 ", response.body());
         assertTrue(response.headers().firstValue("X-Correlation-Id").isPresent());
         assertTrue(response.headers().firstValue("X-Upstream-Correlation-Id").isPresent());
+    }
+
+    @Test void forwardsGatewaySecretAndStripsSpoofedClientHeader() throws Exception {
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/services"))
+            .header("X-Internal-Gateway-Secret", "attacker-spoofed-secret")
+            .GET().build();
+        var response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+        assertEquals(202, response.statusCode());
+        assertEquals("homecare-internal-secret-2026", response.headers().firstValue("X-Upstream-Gateway-Secret").orElseThrow());
     }
 
     @Test void missingBearerStillBlocksProtectedResourceBeforeUpstreamWithJsonEnvelope() throws Exception {

@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 import com.homecare.booking.exception.BookingErrorCode;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
+import com.homecare.grpc.interceptor.WorkloadAuthClientInterceptor;
 import com.homecare.household.v1.HouseholdVerificationServiceGrpc;
 import com.homecare.household.v1.VerifyDeviceReferenceRequest;
 import com.homecare.household.v1.VerifyDeviceReferenceResponse;
@@ -25,8 +26,7 @@ import net.devh.boot.grpc.client.inject.GrpcClient;
 public class HouseholdVerificationClient {
 
     private static final Logger log = LoggerFactory.getLogger(HouseholdVerificationClient.class);
-    private static final Metadata.Key<String> WORKLOAD_TOKEN_KEY = Metadata.Key.of("X-Internal-Workload-Token",
-            Metadata.ASCII_STRING_MARSHALLER);
+    private static final Metadata.Key<String> WORKLOAD_TOKEN_KEY = WorkloadAuthClientInterceptor.WORKLOAD_TOKEN_KEY;
 
     @GrpcClient("householdService")
     private HouseholdVerificationServiceGrpc.HouseholdVerificationServiceBlockingStub householdStub;

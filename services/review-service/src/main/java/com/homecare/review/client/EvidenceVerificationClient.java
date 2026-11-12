@@ -14,6 +14,7 @@ import com.homecare.booking.v1.VerifyBookingEligibilityResponse;
 import com.homecare.commerce.v1.CommerceVerificationServiceGrpc;
 import com.homecare.commerce.v1.VerifyOrderLineEligibilityRequest;
 import com.homecare.commerce.v1.VerifyOrderLineEligibilityResponse;
+import com.homecare.grpc.interceptor.WorkloadAuthClientInterceptor;
 
 import io.grpc.Metadata;
 import io.grpc.stub.MetadataUtils;
@@ -24,7 +25,7 @@ public class EvidenceVerificationClient {
 
     private static final Logger log = LoggerFactory.getLogger(EvidenceVerificationClient.class);
     private static final Metadata.Key<String> WORKLOAD_TOKEN_KEY =
-            Metadata.Key.of("X-Internal-Workload-Token", Metadata.ASCII_STRING_MARSHALLER);
+            WorkloadAuthClientInterceptor.WORKLOAD_TOKEN_KEY;
 
     @GrpcClient("bookingService")
     private BookingVerificationServiceGrpc.BookingVerificationServiceBlockingStub bookingStub;

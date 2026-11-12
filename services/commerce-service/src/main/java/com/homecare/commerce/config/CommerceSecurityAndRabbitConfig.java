@@ -1,6 +1,7 @@
 package com.homecare.commerce.config;
 
 import org.springframework.amqp.core.TopicExchange;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -16,6 +17,7 @@ import com.homecare.commerce.service.CommerceDomainService;
 import com.homecare.common.idempotency.IdempotencyService;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.servlet.BaseApiExceptionHandler;
+import com.homecare.common.web.servlet.GatewayOriginFilter;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import com.homecare.common.web.servlet.ServletCorrelationIdFilter;
 
@@ -44,9 +46,18 @@ public class CommerceSecurityAndRabbitConfig {
     }
 
     @Bean
+    public GatewayOriginFilter gatewayOriginFilter(
+            @Value("${homecare.security.enforce-gateway:false}") boolean enforceGateway,
+            @Value("${homecare.security.internal-gateway-secret:homecare-internal-secret-2026}") String gatewaySecret,
+            @Value("${homecare.internal.workload-token:change_me_internal_workload_token}") String workloadToken) {
+        return new GatewayOriginFilter(enforceGateway, gatewaySecret, workloadToken);
+    }
+
+    @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
-            ServletCorrelationIdFilter correlationIdFilter) throws Exception {
+            ServletCorrelationIdFilter correlationIdFilter,
+            GatewayOriginFilter gatewayOriginFilter) throws Exception {
         http.csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
@@ -62,7 +73,8 @@ public class CommerceSecurityAndRabbitConfig {
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(
                                 SupabaseJwtConverterSupport.createJwtAuthenticationConverter())))
-                .addFilterBefore(correlationIdFilter, SecurityContextHolderFilter.class);
+                .addFilterBefore(correlationIdFilter, SecurityContextHolderFilter.class)
+                .addFilterBefore(gatewayOriginFilter, SecurityContextHolderFilter.class);
         return http.build();
     }
 

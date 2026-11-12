@@ -18,6 +18,9 @@ spring:
     gateway:
       server:
         webflux:
+          default-filters:
+            - RemoveRequestHeader=X-Internal-Gateway-Secret
+            - AddRequestHeader=X-Internal-Gateway-Secret, ${INTERNAL_GATEWAY_SECRET:homecare-internal-secret-2026}
           routes:
             - id: household-service-route
               uri: ${HOUSEHOLD_URL:http://localhost:8082}
@@ -34,7 +37,7 @@ spring:
             - id: booking-service-route
               uri: ${BOOKING_URL:http://localhost:8084}
               predicates:
-                - Path=/api/v1/bookings,/api/v1/bookings/**,/api/v1/assignment-operations/**
+                - Path=/api/v1/bookings,/api/v1/bookings/**
             - id: commerce-service-route
               uri: ${COMMERCE_URL:http://localhost:8085}
               predicates:

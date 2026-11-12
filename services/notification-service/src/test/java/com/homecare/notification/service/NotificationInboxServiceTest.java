@@ -56,9 +56,9 @@ class NotificationInboxServiceTest {
         inboxService.registerDevice("cust-1", new RegisterDeviceRequest("ANDROID", "fcm-token-xyz"));
         assertThat(deviceRegistrationRepository.findByRecipientIdAndActiveTrue("cust-1")).hasSize(1);
 
-        // Triggering another event for cust-1 after token is registered exercises RabbitMQ push event enqueueing
+        // Triggering another event for cust-1 after token is registered exercises RabbitMQ push event enqueueing with entity ID
         String event2Json = """
-                {"eventId":"evt-1002","eventType":"booking.completed.v1","data":{"requesterProfileId":"cust-1","serviceName":"Vệ sinh Máy lạnh"}}
+                {"eventId":"evt-1002","eventType":"booking.completed.v1","data":{"bookingId":"bkg-999","requesterProfileId":"cust-1","serviceName":"Vệ sinh Máy lạnh"}}
                 """;
         consumer.onDomainEvent(event2Json);
         assertThat(inboxService.listInbox("cust-1")).hasSize(2);

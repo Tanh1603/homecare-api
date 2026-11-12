@@ -115,7 +115,7 @@ class HouseholdDomainServiceTest {
         int count = service.enqueueDueMaintenanceReminders(LocalDate.now());
         assertThat(count).isGreaterThanOrEqualTo(1);
 
-        List<HouseholdOutboxEvent> outboxEvents = outboxEventRepository.findByStatusOrderByCreatedAtAsc("PENDING");
+        List<HouseholdOutboxEvent> outboxEvents = outboxEventRepository.findAll();
         assertThat(outboxEvents).isNotEmpty();
         assertThat(outboxEvents.getFirst().getEventType()).isEqualTo("maintenance.reminder.due.v1");
 

@@ -1,5 +1,6 @@
 server:
   port: ${SERVER_PORT:8084}
+  forward-headers-strategy: framework
 
 grpc:
   server:
@@ -42,12 +43,15 @@ spring:
 homecare:
   internal:
     workload-token: ${INTERNAL_WORKLOAD_TOKEN:change_me_internal_workload_token}
+  security:
+    enforce-gateway: ${HOMECARE_SECURITY_ENFORCE_GATEWAY:false}
+    internal-gateway-secret: ${INTERNAL_GATEWAY_SECRET:homecare-internal-secret-2026}
 
 springdoc:
   api-docs:
     path: /v3/api-docs
   swagger-ui:
-    enabled: true
+    enabled: false
 
 management:
   endpoints:

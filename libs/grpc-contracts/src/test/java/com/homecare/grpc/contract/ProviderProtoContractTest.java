@@ -62,4 +62,13 @@ class ProviderProtoContractTest {
         validHeaders.put(WorkloadAuthClientInterceptor.WORKLOAD_TOKEN_KEY, "secret-token-123");
         validator.verifyMetadata(validHeaders);
     }
+
+    @Test
+    void workloadHeaderNameCompliesWithHttp2LowercaseSpec() {
+        assertThat(WorkloadAuthClientInterceptor.WORKLOAD_TOKEN_KEY.name())
+                .isEqualTo("x-internal-workload-token");
+        Metadata metadata = new Metadata();
+        metadata.put(WorkloadAuthClientInterceptor.WORKLOAD_TOKEN_KEY, "test-token");
+        assertThat(metadata.get(WorkloadAuthClientInterceptor.WORKLOAD_TOKEN_KEY)).isEqualTo("test-token");
+    }
 }

@@ -50,6 +50,17 @@ public class NotificationInboxService {
             String eventType,
             String title,
             String body) {
+        recordIfAbsent(eventId, recipientId, eventType, title, body, Map.of());
+    }
+
+    @Transactional
+    public void recordIfAbsent(
+            String eventId,
+            String recipientId,
+            String eventType,
+            String title,
+            String body,
+            Map<String, String> extraData) {
         if (recipientId == null || recipientId.isBlank()) {
             return;
         }
@@ -82,13 +93,28 @@ public class NotificationInboxService {
 
         // Enqueue push notification dispatch message to dedicated RabbitMQ queue (decoupled from DB transaction)
         Map<String, String> data = new HashMap<>();
+        if (extraData != null) {
+            data.putAll(extraData);
+        }
         if (eventType != null) {
             data.put("eventType", eventType);
         }
         if (eventId != null) {
             data.put("eventId", eventId);
         }
-        dispatchPushNotificationEvent(recipientId, title, body, data);
+
+        // Only dispatch push to RabbitMQ after database transaction has successfully committed
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            dispatchPushNotificationEvent(recipientId, title, body, data);
+                        }
+                    });
+        } else {
+            dispatchPushNotificationEvent(recipientId, title, body, data);
+        }
     }
 
     private void dispatchPushNotificationEvent(

@@ -1,6 +1,7 @@
 package com.homecare.household.config;
 
 import org.springframework.amqp.core.TopicExchange;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -14,14 +15,22 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.servlet.BaseApiExceptionHandler;
+import com.homecare.common.web.servlet.GatewayOriginFilter;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import com.homecare.common.web.servlet.ServletCorrelationIdFilter;
+import com.homecare.grpc.interceptor.WorkloadAuthServerInterceptor;
 import com.homecare.household.service.MaintenanceReminderWorker;
+
+import io.grpc.ServerInterceptor;
+import net.devh.boot.grpc.server.interceptor.GrpcGlobalServerInterceptor;
 
 @Configuration
 @EnableMethodSecurity
 @EnableScheduling
 public class HouseholdSecurityConfig {
+
+    @Value("${homecare.internal.workload-token:change_me_internal_workload_token}")
+    private String expectedWorkloadToken;
 
     @Bean
     public TopicExchange domainEventsExchange() {
@@ -39,9 +48,23 @@ public class HouseholdSecurityConfig {
     }
 
     @Bean
+    public GatewayOriginFilter gatewayOriginFilter(
+            @Value("${homecare.security.enforce-gateway:false}") boolean enforceGateway,
+            @Value("${homecare.security.internal-gateway-secret:homecare-internal-secret-2026}") String gatewaySecret) {
+        return new GatewayOriginFilter(enforceGateway, gatewaySecret, expectedWorkloadToken);
+    }
+
+    @Bean
+    @GrpcGlobalServerInterceptor
+    public ServerInterceptor internalWorkloadGrpcInterceptor() {
+        return new WorkloadAuthServerInterceptor(expectedWorkloadToken);
+    }
+
+    @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
-            ServletCorrelationIdFilter correlationIdFilter) throws Exception {
+            ServletCorrelationIdFilter correlationIdFilter,
+            GatewayOriginFilter gatewayOriginFilter) throws Exception {
         http.csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
@@ -55,7 +78,8 @@ public class HouseholdSecurityConfig {
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(
                                 SupabaseJwtConverterSupport.createJwtAuthenticationConverter())))
-                .addFilterBefore(correlationIdFilter, SecurityContextHolderFilter.class);
+                .addFilterBefore(correlationIdFilter, SecurityContextHolderFilter.class)
+                .addFilterBefore(gatewayOriginFilter, SecurityContextHolderFilter.class);
         return http.build();
     }
 

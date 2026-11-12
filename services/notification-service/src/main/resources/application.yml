@@ -1,5 +1,6 @@
 server:
     port: ${SERVER_PORT:8087}
+    forward-headers-strategy: framework
 
 spring:
     application:
@@ -29,6 +30,11 @@ spring:
                     jwk-set-uri: ${SUPABASE_JWKS_URI:https://placeholder.supabase.co/auth/v1/.well-known/jwks.json}
 
 homecare:
+    internal:
+        workload-token: ${INTERNAL_WORKLOAD_TOKEN:change_me_internal_workload_token}
+    security:
+        enforce-gateway: ${HOMECARE_SECURITY_ENFORCE_GATEWAY:false}
+        internal-gateway-secret: ${INTERNAL_GATEWAY_SECRET:homecare-internal-secret-2026}
     fcm:
         credentials-json: ${FCM_CREDENTIALS_JSON:}
         credentials-path: ${FCM_CREDENTIALS_PATH:}
@@ -37,7 +43,7 @@ springdoc:
     api-docs:
         path: /v3/api-docs
     swagger-ui:
-        enabled: true
+        enabled: false
 
 management:
     endpoints:
