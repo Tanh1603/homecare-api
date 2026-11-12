@@ -16,7 +16,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Real Gateway HTTP forwarding; the upstream is a transport fixture, not Identity/Keycloak. */
+/** Real Gateway HTTP forwarding; the upstream is a transport fixture, not Supabase/IdP. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class GatewayRoutingTest {
     private static final AtomicInteger calls = new AtomicInteger();
@@ -26,7 +26,7 @@ class GatewayRoutingTest {
     @DynamicPropertySource
     static void upstream(DynamicPropertyRegistry properties) throws Exception {
         properties.add("SERVER_PORT", () -> "0");
-        properties.add("KEYCLOAK_JWK_SET_URI", () -> "http://127.0.0.1:1/unused-test-jwks");
+        properties.add("SUPABASE_JWKS_URI", () -> "http://127.0.0.1:1/unused-test-jwks");
         upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         upstream.createContext("/", exchange -> {
             calls.incrementAndGet();
@@ -37,6 +37,10 @@ class GatewayRoutingTest {
             String corrId = exchange.getRequestHeaders().getFirst("X-Correlation-Id");
             if (corrId != null) {
                 exchange.getResponseHeaders().add("X-Upstream-Correlation-Id", corrId);
+            }
+            String gwSecret = exchange.getRequestHeaders().getFirst("X-Internal-Gateway-Secret");
+            if (gwSecret != null) {
+                exchange.getResponseHeaders().add("X-Upstream-Gateway-Secret", gwSecret);
             }
             exchange.sendResponseHeaders(202, bytes.length);
             exchange.getResponseBody().write(bytes);
@@ -57,21 +61,29 @@ class GatewayRoutingTest {
         if (upstream != null) upstream.stop(0);
     }
 
-    @Test void forwardsAuthPostWithoutChangingPathQueryOrBody() throws Exception {
-        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/auth/login?test=1"))
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString("{\"probe\":true}")).build();
+    @Test void forwardsServicesGetWithoutChangingPathOrQuery() throws Exception {
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/services?test=1"))
+            .GET().build();
         var response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
         assertEquals(202, response.statusCode());
         assertEquals("identity", response.headers().firstValue("X-Upstream-Fixture").orElseThrow());
-        assertEquals("POST /api/v1/auth/login?test=1 {\"probe\":true}", response.body());
+        assertEquals("GET /api/v1/services?test=1 ", response.body());
         assertTrue(response.headers().firstValue("X-Correlation-Id").isPresent());
         assertTrue(response.headers().firstValue("X-Upstream-Correlation-Id").isPresent());
     }
 
-    @Test void missingBearerStillBlocksProtectedProfileBeforeUpstreamWithJsonEnvelope() throws Exception {
+    @Test void forwardsGatewaySecretAndStripsSpoofedClientHeader() throws Exception {
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/services"))
+            .header("X-Internal-Gateway-Secret", "attacker-spoofed-secret")
+            .GET().build();
+        var response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+        assertEquals(202, response.statusCode());
+        assertEquals("homecare-internal-secret-2026", response.headers().firstValue("X-Upstream-Gateway-Secret").orElseThrow());
+    }
+
+    @Test void missingBearerStillBlocksProtectedResourceBeforeUpstreamWithJsonEnvelope() throws Exception {
         int before = calls.get();
-        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/users/me"))
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/households"))
             .header("X-Correlation-Id", "corr-401-test")
             .GET().build();
         var response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
@@ -101,19 +113,39 @@ class GatewayRoutingTest {
 
         var vnpayIpnResp = get("/api/v1/payments/vnpay/ipn?vnp_TxnRef=ord1");
         assertEquals(202, vnpayIpnResp.statusCode());
+
+        var postRequest = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/payments/vnpay/ipn"))
+                .POST(HttpRequest.BodyPublishers.ofString("vnp_TxnRef=ord1"))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .build();
+        var vnpayIpnPostResp = HttpClient.newHttpClient().send(postRequest, HttpResponse.BodyHandlers.ofString());
+        assertEquals(202, vnpayIpnPostResp.statusCode());
     }
 
     @Test void forwardsServiceDocsWithoutServicePrefix() throws Exception {
-        var response = get("/identity-service/v3/api-docs");
-        assertEquals(202, response.statusCode());
-        assertEquals("GET /v3/api-docs ", response.body());
-        assertEquals("identity", response.headers().firstValue("X-Upstream-Fixture").orElseThrow());
+        for (String serviceName : java.util.List.of(
+                "household-service",
+                "provider-service",
+                "booking-service",
+                "commerce-service",
+                "review-service",
+                "notification-service")) {
+            var response = get("/" + serviceName + "/v3/api-docs");
+            assertEquals(202, response.statusCode(), "Failed forwarding docs for " + serviceName);
+            assertEquals("GET /v3/api-docs ", response.body());
+            assertEquals("identity", response.headers().firstValue("X-Upstream-Fixture").orElseThrow());
+        }
     }
 
-    @Test void swaggerConfigListsIdentityAndUiIsAccessible() throws Exception {
+    @Test void swaggerConfigListsAllServicesAndUiIsAccessible() throws Exception {
         var config = get("/v3/api-docs/swagger-config");
         assertEquals(200, config.statusCode());
-        assertTrue(config.body().contains("/identity-service/v3/api-docs"));
+        assertTrue(config.body().contains("/household-service/v3/api-docs"));
+        assertTrue(config.body().contains("/provider-service/v3/api-docs"));
+        assertTrue(config.body().contains("/booking-service/v3/api-docs"));
+        assertTrue(config.body().contains("/commerce-service/v3/api-docs"));
+        assertTrue(config.body().contains("/review-service/v3/api-docs"));
+        assertTrue(config.body().contains("/notification-service/v3/api-docs"));
         var redirect = get("/swagger-ui.html");
         assertTrue(redirect.statusCode() >= 300 && redirect.statusCode() < 400);
         var page = get(redirect.headers().firstValue("Location").orElseThrow());

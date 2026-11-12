@@ -19,8 +19,20 @@ public class ServletApiResponseFactory {
 
     private final MessageSource messageSource;
 
+    public ServletApiResponseFactory() {
+        this(null);
+    }
+
     public ServletApiResponseFactory(MessageSource messageSource) {
         this.messageSource = messageSource;
+    }
+
+    public <T> ApiResponse<T> ok(String messageKey, T data, HttpServletRequest request) {
+        return success(HttpStatus.OK, messageKey, data, request);
+    }
+
+    public <T> ApiResponse<T> created(String messageKey, T data, HttpServletRequest request) {
+        return success(HttpStatus.CREATED, messageKey, data, request);
     }
 
     public <T> ApiResponse<T> success(

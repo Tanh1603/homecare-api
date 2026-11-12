@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package homecare.commerce.v1;
+
+option java_multiple_files = true;
+option java_package = "com.homecare.commerce.v1";
+option java_outer_classname = "CommerceServiceProto";
+
+service CommerceVerificationService {
+  rpc VerifyOrderLineEligibility (VerifyOrderLineEligibilityRequest) returns (VerifyOrderLineEligibilityResponse);
+}
+
+message VerifyOrderLineEligibilityRequest {
+  string order_line_id = 1;
+  string requester_profile_id = 2;
+}
+
+message VerifyOrderLineEligibilityResponse {
+  bool eligible = 1;
+  string order_line_id = 2;
+  string order_id = 3;
+  string product_id = 4;
+  string fulfillment_status = 5;
+}

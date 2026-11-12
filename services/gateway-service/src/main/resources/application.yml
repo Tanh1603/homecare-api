@@ -12,17 +12,16 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI}
+          jwk-set-uri: ${SUPABASE_JWKS_URI:https://placeholder.supabase.co/auth/v1/.well-known/jwks.json}
 
   cloud:
     gateway:
       server:
         webflux:
+          default-filters:
+            - RemoveRequestHeader=X-Internal-Gateway-Secret
+            - AddRequestHeader=X-Internal-Gateway-Secret, ${INTERNAL_GATEWAY_SECRET:homecare-internal-secret-2026}
           routes:
-            - id: identity-service-route
-              uri: ${IDENTITY_URL:http://localhost:8081}
-              predicates:
-                - Path=/api/v1/auth/**,/api/v1/users/**,/api/v1/admin/users/**
             - id: household-service-route
               uri: ${HOUSEHOLD_URL:http://localhost:8082}
               predicates:
@@ -38,7 +37,7 @@ spring:
             - id: booking-service-route
               uri: ${BOOKING_URL:http://localhost:8084}
               predicates:
-                - Path=/api/v1/bookings,/api/v1/bookings/**,/api/v1/assignment-operations/**
+                - Path=/api/v1/bookings,/api/v1/bookings/**
             - id: commerce-service-route
               uri: ${COMMERCE_URL:http://localhost:8085}
               predicates:
@@ -47,16 +46,48 @@ spring:
               uri: ${NOTIFICATION_URL:http://localhost:8087}
               predicates:
                 - Path=/api/v1/notifications,/api/v1/notifications/**,/api/v1/notification-devices,/api/v1/notification-devices/**
-            - id: identity-service-v3-docs
-              uri: ${IDENTITY_URL:http://localhost:8081}
+            - id: household-service-v3-docs
+              uri: ${HOUSEHOLD_URL:http://localhost:8082}
               predicates:
-                - Path=/identity-service/v3/api-docs,/identity-service/v3/api-docs/**
+                - Path=/household-service/v3/api-docs,/household-service/v3/api-docs/**
+              filters:
+                - StripPrefix=1
+            - id: provider-service-v3-docs
+              uri: ${PROVIDER_URL:http://localhost:8083}
+              predicates:
+                - Path=/provider-service/v3/api-docs,/provider-service/v3/api-docs/**
+              filters:
+                - StripPrefix=1
+            - id: booking-service-v3-docs
+              uri: ${BOOKING_URL:http://localhost:8084}
+              predicates:
+                - Path=/booking-service/v3/api-docs,/booking-service/v3/api-docs/**
+              filters:
+                - StripPrefix=1
+            - id: commerce-service-v3-docs
+              uri: ${COMMERCE_URL:http://localhost:8085}
+              predicates:
+                - Path=/commerce-service/v3/api-docs,/commerce-service/v3/api-docs/**
+              filters:
+                - StripPrefix=1
+            - id: review-service-v3-docs
+              uri: ${REVIEW_URL:http://localhost:8086}
+              predicates:
+                - Path=/review-service/v3/api-docs,/review-service/v3/api-docs/**
+              filters:
+                - StripPrefix=1
+            - id: notification-service-v3-docs
+              uri: ${NOTIFICATION_URL:http://localhost:8087}
+              predicates:
+                - Path=/notification-service/v3/api-docs,/notification-service/v3/api-docs/**
               filters:
                 - StripPrefix=1
           globalcors:
             cors-configurations:
               '[/**]':
-                allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+                allowed-origins:
+                  - http://localhost:3000
+                  - http://localhost:5173
                 allowed-methods:
                   - GET
                   - POST
@@ -87,5 +118,15 @@ springdoc:
     enabled: true
     path: /swagger-ui.html
     urls:
-      - name: Identity Service
-        url: /identity-service/v3/api-docs
+      - name: Household Service
+        url: /household-service/v3/api-docs
+      - name: Provider Service
+        url: /provider-service/v3/api-docs
+      - name: Booking Service
+        url: /booking-service/v3/api-docs
+      - name: Commerce Service
+        url: /commerce-service/v3/api-docs
+      - name: Review Service
+        url: /review-service/v3/api-docs
+      - name: Notification Service
+        url: /notification-service/v3/api-docs

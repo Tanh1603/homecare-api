@@ -19,6 +19,7 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import com.homecare.common.error.ApiErrorCodeContract;
 import com.homecare.common.error.CommonErrorCode;
+import com.homecare.common.error.DomainException;
 import com.homecare.common.idempotency.IdempotencyService;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.CorrelationIdSupport;
@@ -36,6 +37,21 @@ public abstract class BaseApiExceptionHandler {
 
     protected BaseApiExceptionHandler(ServletApiResponseFactory responseFactory) {
         this.responseFactory = responseFactory;
+    }
+
+    @ExceptionHandler(DomainException.class)
+    public ResponseEntity<ApiResponse<Void>> handleDomainException(
+            DomainException exception,
+            HttpServletRequest request) {
+        log.warn("Domain exception code={} status={} traceId={}",
+                exception.errorCode(), exception.status().value(), traceId(request));
+        return ResponseEntity.status(exception.status())
+                .body(responseFactory.error(
+                        exception.status(),
+                        exception.errorCode(),
+                        exception.getMessage(),
+                        null,
+                        request));
     }
 
     @ExceptionHandler(EtagSupport.PreconditionException.class)

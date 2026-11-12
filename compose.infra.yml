@@ -1,4 +1,4 @@
-name: homecare-ifra
+name: homecare-infra
 services:
   redis:
     container_name: redis
@@ -9,6 +9,14 @@ services:
       - redis_data:/data
     command: redis-server --appendonly yes
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
+        reservations:
+          cpus: '0.10'
+          memory: 64M
     networks:
       - shared
 
@@ -18,26 +26,34 @@ services:
     env_file:
       - .env
     environment:
-      POSTGRES_MULTIPLE_DATABASES: ${POSTGRES_MULTIPLE_DATABASES:-identity_db,household_db,provider_db,booking_db,commerce_db,review_db,notification_db}
+      POSTGRES_MULTIPLE_DATABASES: ${POSTGRES_MULTIPLE_DATABASES:-household_db,provider_db,booking_db,commerce_db,review_db,notification_db}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-keycloak}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.00'
+          memory: 768M
+        reservations:
+          cpus: '0.20'
+          memory: 256M
     networks:
       - shared
 
   rabbitmq:
     container_name: rabbitmq
     image: rabbitmq:4.0-management-alpine
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-homecare}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-homecare}
+    env_file:
+      - .env
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -49,24 +65,14 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
-    networks:
-      - shared
-
-  keycloak:
-    container_name: keycloak
-    image: quay.io/keycloak/keycloak:26.8.1
-    command:
-      - start-dev
-      - --import-realm
-    env_file:
-      - .env
-    ports:
-      - "9090:8080"
-    volumes:
-      - ./keycloak/import:/opt/keycloak/data/import:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 512M
+        reservations:
+          cpus: '0.15'
+          memory: 256M
     networks:
       - shared
 

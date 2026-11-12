@@ -1,0 +1,58 @@
+server:
+    port: ${SERVER_PORT:8086}
+    forward-headers-strategy: framework
+
+grpc:
+    client:
+        bookingService:
+            address: ${BOOKING_GRPC_ADDRESS:static://localhost:9084}
+            negotiationType: PLAINTEXT
+        commerceService:
+            address: ${COMMERCE_GRPC_ADDRESS:static://localhost:9085}
+            negotiationType: PLAINTEXT
+
+spring:
+    application:
+        name: review-service
+    datasource:
+        url: ${DB_URL:jdbc:postgresql://localhost:5432/review_db}
+        username: ${DB_USER:postgres}
+        password: ${DB_PASSWORD:change_me_local_pg_password}
+        driver-class-name: org.postgresql.Driver
+    jpa:
+        hibernate:
+            ddl-auto: update
+        open-in-view: false
+    data:
+        redis:
+            host: ${REDIS_HOST:localhost}
+            port: ${REDIS_PORT:6379}
+    rabbitmq:
+        host: ${RABBITMQ_HOST:localhost}
+        port: ${RABBITMQ_PORT:5672}
+        username: ${RABBITMQ_DEFAULT_USER:homecare}
+        password: ${RABBITMQ_DEFAULT_PASS:123456}
+    security:
+        oauth2:
+            resourceserver:
+                jwt:
+                    jwk-set-uri: ${SUPABASE_JWKS_URI:https://placeholder.supabase.co/auth/v1/.well-known/jwks.json}
+
+homecare:
+    internal:
+        workload-token: ${INTERNAL_WORKLOAD_TOKEN:change_me_internal_workload_token}
+    security:
+        enforce-gateway: ${HOMECARE_SECURITY_ENFORCE_GATEWAY:false}
+        internal-gateway-secret: ${INTERNAL_GATEWAY_SECRET:homecare-internal-secret-2026}
+
+springdoc:
+    api-docs:
+        path: /v3/api-docs
+    swagger-ui:
+        enabled: false
+
+management:
+    endpoints:
+        web:
+            exposure:
+                include: health,info

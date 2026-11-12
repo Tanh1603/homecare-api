@@ -50,7 +50,7 @@ class TokenBlacklistFilterTest {
                 Instant.now(),
                 Instant.now().plusSeconds(300),
                 Map.of("alg", "none"),
-                Map.of("sub", "user-123", "sid", "blacklisted-session-456"));
+                Map.of("sub", "user-123", "session_id", "blacklisted-session-456"));
         JwtAuthenticationToken auth = new JwtAuthenticationToken(jwt, Collections.emptyList());
         SecurityContext securityContext = new SecurityContextImpl(auth);
 
@@ -82,7 +82,7 @@ class TokenBlacklistFilterTest {
                 Instant.now(),
                 Instant.now().plusSeconds(300),
                 Map.of("alg", "none"),
-                Map.of("sub", "user-123", "sid", "valid-session-789"));
+                Map.of("sub", "user-123", "session_id", "valid-session-789"));
         JwtAuthenticationToken auth = new JwtAuthenticationToken(jwt, Collections.emptyList());
         SecurityContext securityContext = new SecurityContextImpl(auth);
 
@@ -118,7 +118,7 @@ class TokenBlacklistFilterTest {
                 Instant.now(),
                 Instant.now().plusSeconds(300),
                 Map.of("alg", "none"),
-                Map.of("sub", "user-123", "sid", "some-session"));
+                Map.of("sub", "user-123", "session_id", "some-session"));
         JwtAuthenticationToken auth = new JwtAuthenticationToken(jwt, Collections.emptyList());
         SecurityContext securityContext = new SecurityContextImpl(auth);
 

@@ -1,0 +1,12 @@
+{"properties": [
+  {
+    "name": "homecare.fcm.credentials-json",
+    "type": "java.lang.String",
+    "description": "Raw Google Service Account JSON string for Firebase Cloud Messaging"
+  },
+  {
+    "name": "homecare.fcm.credentials-path",
+    "type": "java.lang.String",
+    "description": "File path to Google Service Account JSON file for Firebase Cloud Messaging"
+  }
+]}

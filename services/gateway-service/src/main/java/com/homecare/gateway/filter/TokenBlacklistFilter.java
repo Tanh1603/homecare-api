@@ -55,10 +55,7 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
                         return chain.filter(exchange);
                     }
                     Jwt jwt = optionalAuth.get().getToken();
-                    String sid = jwt.getClaimAsString("sid");
-                    if (sid == null || sid.isBlank()) {
-                        sid = jwt.getClaimAsString("session_state");
-                    }
+                    String sid = jwt.getClaimAsString("session_id");
 
                     if (sid == null || sid.isBlank()) {
                         return chain.filter(exchange);

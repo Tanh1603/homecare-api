@@ -1,0 +1,26 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:review_test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+grpc:
+  client:
+    bookingService:
+      address: in-process:review-test-grpc
+      negotiationType: PLAINTEXT
+    commerceService:
+      address: in-process:review-test-grpc
+      negotiationType: PLAINTEXT
+
+homecare:
+  internal:
+    workload-token: test-internal-token
+  booking:
+    base-url: http://localhost:18084
+  commerce:
+    base-url: http://localhost:18085
