@@ -19,7 +19,7 @@ public class GatewaySecurityConfig {
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .authorizeExchange(exchanges -> exchanges
                         .pathMatchers("/internal/**").denyAll()
-                        .pathMatchers("/api/v1/auth/**").permitAll()
+                        .pathMatchers("/api/v1/payments/vnpay/ipn").permitAll()
                         .pathMatchers(
                                 HttpMethod.GET,
                                 "/api/v1/services",
@@ -29,8 +29,7 @@ public class GatewaySecurityConfig {
                                 "/api/v1/technicians",
                                 "/api/v1/technicians/**",
                                 "/api/v1/products",
-                                "/api/v1/products/**",
-                                "/api/v1/payments/vnpay/ipn")
+                                "/api/v1/products/**")
                         .permitAll()
                         .pathMatchers(
                                 "/swagger-ui.html",
@@ -38,7 +37,6 @@ public class GatewaySecurityConfig {
                                 "/v3/api-docs/**",
                                 "/webjars/**",
                                 "/*-service/v3/api-docs/**",
-                                "/identity-service/v3/api-docs/**",
                                 "/household-service/v3/api-docs/**",
                                 "/provider-service/v3/api-docs/**",
                                 "/booking-service/v3/api-docs/**",

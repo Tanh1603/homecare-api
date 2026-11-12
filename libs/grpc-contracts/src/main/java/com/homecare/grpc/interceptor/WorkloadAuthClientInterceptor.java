@@ -11,7 +11,7 @@ import io.grpc.MethodDescriptor;
 public class WorkloadAuthClientInterceptor implements ClientInterceptor {
 
     public static final Metadata.Key<String> WORKLOAD_TOKEN_KEY =
-            Metadata.Key.of("X-Internal-Workload-Token", Metadata.ASCII_STRING_MARSHALLER);
+            Metadata.Key.of("x-internal-workload-token", Metadata.ASCII_STRING_MARSHALLER);
 
     private final String workloadToken;
 

@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import com.homecare.grpc.interceptor.WorkloadAuthClientInterceptor;
 import com.homecare.provider.v1.AllocateTechnicianRequest;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.ProviderAllocationServiceGrpc;
@@ -21,7 +22,7 @@ import net.devh.boot.grpc.client.inject.GrpcClient;
 public class ProviderGrpcClientAdapter {
 
     private static final Metadata.Key<String> WORKLOAD_TOKEN_KEY =
-            Metadata.Key.of("X-Internal-Workload-Token", Metadata.ASCII_STRING_MARSHALLER);
+            WorkloadAuthClientInterceptor.WORKLOAD_TOKEN_KEY;
 
     @GrpcClient("providerService")
     private ProviderAllocationServiceGrpc.ProviderAllocationServiceBlockingStub providerStub;

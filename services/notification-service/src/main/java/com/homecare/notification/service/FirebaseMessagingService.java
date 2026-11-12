@@ -5,9 +5,15 @@ import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import com.google.firebase.FirebaseApp;
+import com.google.firebase.messaging.AndroidConfig;
+import com.google.firebase.messaging.AndroidNotification;
+import com.google.firebase.messaging.FirebaseMessaging;
+import com.google.firebase.messaging.FirebaseMessagingException;
+import com.google.firebase.messaging.Message;
+import com.google.firebase.messaging.Notification;
 import com.homecare.notification.entity.DeviceRegistrationEntity;
 import com.homecare.notification.repository.DeviceRegistrationRepository;
 
@@ -20,12 +26,6 @@ public class FirebaseMessagingService {
     private static final Logger log = LoggerFactory.getLogger(FirebaseMessagingService.class);
 
     private final DeviceRegistrationRepository deviceRegistrationRepository;
-
-    @Value("${homecare.fcm.project-id:homecare-sandbox}")
-    private String fcmProjectId;
-
-    @Value("${homecare.fcm.sandbox-mode:true}")
-    private boolean sandboxMode;
 
     public int sendPushToUser(
             String recipientId,
@@ -63,18 +63,59 @@ public class FirebaseMessagingService {
             String title,
             String body,
             Map<String, String> data) {
-        if (sandboxMode) {
-            log.info("[FCM-SANDBOX] Dispatched push to platform={}, token={}... [title='{}', body='{}', data={}]",
-                    platform,
-                    fcmToken.length() > 10 ? fcmToken.substring(0, 10) + "***" : fcmToken,
-                    title,
-                    body,
-                    data);
-            return true;
+
+        if (FirebaseApp.getApps().isEmpty()) {
+            log.debug("FirebaseApp not initialized (no credentials). Skipping push dispatch to token={}",
+                    fcmToken.length() > 10 ? fcmToken.substring(0, 10) + "***" : fcmToken);
+            return false;
         }
 
-        // Production FCM HTTP v1 dispatch
-        log.info("[FCM-PRODUCTION] Project '{}' sending to token={}...", fcmProjectId, fcmToken);
-        return true;
+        try {
+            Notification notification = Notification.builder()
+                    .setTitle(title)
+                    .setBody(body)
+                    .build();
+
+            Message.Builder messageBuilder = Message.builder()
+                    .setToken(fcmToken)
+                    .setNotification(notification);
+
+            if (data != null && !data.isEmpty()) {
+                messageBuilder.putAllData(data);
+            }
+
+            AndroidConfig androidConfig = AndroidConfig.builder()
+                    .setPriority(AndroidConfig.Priority.HIGH)
+                    .setNotification(AndroidNotification.builder()
+                            .setChannelId("homecare_notifications")
+                            .setSound("default")
+                            .build())
+                    .build();
+            messageBuilder.setAndroidConfig(androidConfig);
+
+            String response = FirebaseMessaging.getInstance().send(messageBuilder.build());
+            log.info("[FCM-REAL] Dispatched push to token={}, messageId={}",
+                    fcmToken.length() > 10 ? fcmToken.substring(0, 10) + "***" : fcmToken, response);
+            return true;
+        } catch (FirebaseMessagingException e) {
+            log.error("[FCM-ERROR] Failed to send push to token={}: {} (code: {})",
+                    fcmToken.length() > 10 ? fcmToken.substring(0, 10) + "***" : fcmToken,
+                    e.getMessage(), e.getMessagingErrorCode());
+
+            if (e.getMessagingErrorCode() != null) {
+                String code = e.getMessagingErrorCode().name();
+                if ("UNREGISTERED".equals(code) || "INVALID_ARGUMENT".equals(code)) {
+                    log.warn("Deactivating dead FCM device token={}", fcmToken);
+                    deviceRegistrationRepository.findByPushToken(fcmToken).ifPresent(dev -> {
+                        dev.setActive(false);
+                        deviceRegistrationRepository.save(dev);
+                    });
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            log.error("[FCM-ERROR] Unexpected error sending FCM push: {}", e.getMessage(), e);
+            return false;
+        }
     }
 }

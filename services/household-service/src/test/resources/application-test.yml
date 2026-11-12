@@ -16,3 +16,5 @@ grpc:
 homecare:
   internal:
     workload-token: test-internal-token
+  maintenance:
+    poll-ms: 3600000

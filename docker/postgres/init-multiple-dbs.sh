@@ -10,7 +10,7 @@ create_database_if_missing() {
 EOSQL
 }
 
-DEFAULT_DATABASES="identity_db household_db provider_db booking_db commerce_db review_db notification_db"
+DEFAULT_DATABASES="household_db provider_db booking_db commerce_db review_db notification_db"
 DATABASES="${POSTGRES_MULTIPLE_DATABASES:-$DEFAULT_DATABASES}"
 
 for db in $(echo "$DATABASES" | tr ',' ' '); do

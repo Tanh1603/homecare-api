@@ -4,7 +4,6 @@ include(
     'libs:common-web',
     'libs:grpc-contracts',
     'services:gateway-service',
-    'services:identity-service',
     'services:household-service',
     'services:provider-service',
     'services:booking-service',

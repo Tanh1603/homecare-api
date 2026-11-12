@@ -12,24 +12,19 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-import com.homecare.common.security.KeycloakJwtConverterSupport;
+import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.servlet.BaseApiExceptionHandler;
+import com.homecare.common.web.servlet.GatewayOriginFilter;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import com.homecare.common.web.servlet.ServletCorrelationIdFilter;
+import com.homecare.grpc.interceptor.WorkloadAuthServerInterceptor;
 
-import io.grpc.Metadata;
-import io.grpc.ServerCall;
-import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
-import io.grpc.Status;
 import net.devh.boot.grpc.server.interceptor.GrpcGlobalServerInterceptor;
 
 @Configuration
 @EnableMethodSecurity
 public class ProviderSecurityAndGrpcConfig {
-
-    private static final Metadata.Key<String> WORKLOAD_TOKEN_KEY = Metadata.Key.of("X-Internal-Workload-Token",
-            Metadata.ASCII_STRING_MARSHALLER);
 
     @Value("${homecare.internal.workload-token}")
     private String expectedWorkloadToken;
@@ -45,30 +40,23 @@ public class ProviderSecurityAndGrpcConfig {
     }
 
     @Bean
+    public GatewayOriginFilter gatewayOriginFilter(
+            @Value("${homecare.security.enforce-gateway:false}") boolean enforceGateway,
+            @Value("${homecare.security.internal-gateway-secret:homecare-internal-secret-2026}") String gatewaySecret) {
+        return new GatewayOriginFilter(enforceGateway, gatewaySecret, expectedWorkloadToken);
+    }
+
+    @Bean
     @GrpcGlobalServerInterceptor
     public ServerInterceptor internalWorkloadGrpcInterceptor() {
-        return new ServerInterceptor() {
-            @Override
-            public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
-                    ServerCall<ReqT, RespT> call,
-                    Metadata headers,
-                    ServerCallHandler<ReqT, RespT> next) {
-                String token = headers.get(WORKLOAD_TOKEN_KEY);
-                if (token == null || !expectedWorkloadToken.equals(token)) {
-                    call.close(Status.UNAUTHENTICATED.withDescription("Invalid internal workload token"),
-                            new Metadata());
-                    return new ServerCall.Listener<>() {
-                    };
-                }
-                return next.startCall(call, headers);
-            }
-        };
+        return new WorkloadAuthServerInterceptor(expectedWorkloadToken);
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
-            ServletCorrelationIdFilter correlationIdFilter) throws Exception {
+            ServletCorrelationIdFilter correlationIdFilter,
+            GatewayOriginFilter gatewayOriginFilter) throws Exception {
         http.csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
@@ -87,8 +75,9 @@ public class ProviderSecurityAndGrpcConfig {
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(
-                                KeycloakJwtConverterSupport.createJwtAuthenticationConverter())))
-                .addFilterBefore(correlationIdFilter, SecurityContextHolderFilter.class);
+                                SupabaseJwtConverterSupport.createJwtAuthenticationConverter())))
+                .addFilterBefore(correlationIdFilter, SecurityContextHolderFilter.class)
+                .addFilterBefore(gatewayOriginFilter, SecurityContextHolderFilter.class);
         return http.build();
     }
 

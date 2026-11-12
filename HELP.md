@@ -18,16 +18,14 @@ Tài liệu này cung cấp toàn bộ hướng dẫn cho lập trình viên đ�
 
 ## 2. Bản đồ kiến trúc & Cổng kết nối (Port & Protocol Map)
 
-Toàn bộ hệ thống Backend gồm 4 container hạ tầng và 8 container dịch vụ ứng dụng, kết nối qua Docker bridge network `homecare-shared`:
+Toàn bộ hệ thống Backend gồm 3 container hạ tầng và 7 container dịch vụ ứng dụng, kết nối qua Docker bridge network `homecare-shared`:
 
 | Thành phần | Loại | Cổng Host (Exposed) | Cổng Nội bộ | Giao thức / Vai trò |
 | :--- | :--- | :---: | :---: | :--- |
-| **`postgres`** | Hạ tầng | `5432` | `5432` | PostgreSQL 17 (7 DBs riêng biệt) |
+| **`postgres`** | Hạ tầng | `5432` | `5432` | PostgreSQL 17 (6 DBs riêng biệt) |
 | **`redis`** | Hạ tầng | `6379` | `6379` | Redis 7 (Cache, Session, Rate Limiter) |
 | **`rabbitmq`** | Hạ tầng | `5672` / `15672` | `5672` / `15672` | AMQP 0-9-1 & Web Management UI |
-| **`keycloak`** | Hạ tầng | `9090` | `8080` | IAM / OIDC Provider (Quarkus 26.8.1) |
 | **`gateway-service`** | Ứng dụng | `8080` | `8080` | Spring Cloud Gateway WebFlux & Swagger Aggregator |
-| **`identity-service`** | Ứng dụng | `8081` | `8081` | Quản lý Profile, Đồng bộ Keycloak, RBAC |
 | **`household-service`** | Ứng dụng | `8082` / `9082` | `8082` / `9082` | HTTP REST & gRPC Server (Thiết bị, Bảo hành) |
 | **`provider-service`** | Ứng dụng | `8083` / `9083` | `8083` / `9083` | HTTP REST & gRPC Server (Đơn vị sửa chữa, AI Dispatch) |
 | **`booking-service`** | Ứng dụng | `8084` / `9084` | `8084` / `9084` | HTTP REST & gRPC Server (Đặt lịch, Saga Orchestrator) |
@@ -92,19 +90,19 @@ Toàn bộ hệ thống được chia thành 2 file compose: `compose.infra.yml`
 # Tạo network dùng chung nếu chưa có
 docker network create homecare-shared 2>$null
 
-# Khởi chạy PostgreSQL, Redis, RabbitMQ và Keycloak
+# Khởi chạy PostgreSQL, Redis và RabbitMQ
 docker-compose -f compose.infra.yml up -d
 ```
 
-Kiểm tra trạng thái sẵn sàng (chờ PostgreSQL và Keycloak khởi động hoàn tất):
+Kiểm tra trạng thái sẵn sàng:
 ```powershell
 docker-compose -f compose.infra.yml ps
 ```
 Khi thấy container `postgres` và `rabbitmq` báo `(healthy)`, chuyển sang Bước 2.
 
-#### Bước 2: Build & Khởi động 8 Microservices ứng dụng
+#### Bước 2: Build & Khởi động 7 Microservices ứng dụng
 ```powershell
-# Khởi chạy toàn bộ 8 services ứng dụng
+# Khởi chạy toàn bộ 7 services ứng dụng
 docker-compose -f compose.app.yml up -d --build
 ```
 
@@ -134,7 +132,7 @@ Khi bạn đang phát triển hoặc debug mã nguồn của 1 hoặc 2 service 
    ```powershell
    docker-compose -f compose.infra.yml up -d
    ```
-2. **Chạy các service phụ trợ** (ví dụ chạy trước `identity-service`, `gateway-service` trong docker hoặc gradle):
+2. **Chạy các service phụ trợ** (ví dụ chạy trước `gateway-service` trong gradle hoặc docker):
    ```powershell
    .\gradlew.bat :services:gateway-service:bootRun
    ```
@@ -149,14 +147,14 @@ Khi bạn đang phát triển hoặc debug mã nguồn của 1 hoặc 2 service 
 
 ## 5. Dữ liệu mẫu khởi tạo sẵn (Seed Data)
 
-Hệ thống đã tích hợp sẵn cơ chế tự động nạp dữ liệu mẫu (Seed Data) ngay khi khởi động:
+Hệ thống đã tích hợp sẵn cơ chế nạp dữ liệu mẫu (Seed Data) ngay khi khởi tạo:
 
-### 5.1. Tài khoản Keycloak mẫu (Pre-imported Realm `homecare`)
-Được tự động nạp từ `keycloak/import/homecare-realm.json`:
-- **Quản trị viên (Admin)**: `admin` / mật khẩu: `password` (Realm Keycloak Admin).
-- **Khách hàng (Customer)**: `demo-customer` / mật khẩu: `password` (Roles: `CUSTOMER`).
-- **Kỹ thuật viên (Technician)**: `demo-technician` / mật khẩu: `password` (Roles: `TECHNICIAN`).
-- **Cửa hàng / Tổ chức (Organization)**: `demo-organization` / mật khẩu: `password` (Roles: `ORGANIZATION`).
+### 5.1. Tài khoản Supabase Cloud mẫu (Tạo qua `docs/source/supabase_init.sql`)
+Được định nghĩa hoàn chỉnh trong [`docs/source/supabase_init.sql`](../docs/source/supabase_init.sql) bao gồm schema `profiles`, `roles`, `permissions`, trigger hook và seed users:
+- **Quản trị viên (Admin)**: `admin@homecare.com` / Mật khẩu: `Homecare@2026` (Roles: `ADMIN`).
+- **Khách hàng (Customer)**: `customer@homecare.com` / Mật khẩu: `Homecare@2026` (Roles: `CUSTOMER`).
+- **Kỹ thuật viên (Technician)**: `technician@homecare.com` / Mật khẩu: `Homecare@2026` (Roles: `TECHNICIAN`).
+- **Cửa hàng / Đối tác (Organization)**: `org@homecare.com` / Mật khẩu: `Homecare@2026` (Roles: `ORGANIZATION`).
 
 ### 5.2. Cửa hàng & Kỹ thuật viên mẫu (`provider-service` & `commerce-service`)
 - **Tổ chức 1**: `Điện máy & Dịch vụ Gia dụng Xanh` (ID: `11111111-1111-1111-1111-111111111111`)
@@ -176,21 +174,17 @@ Hệ thống đã tích hợp sẵn cơ chế tự động nạp dữ liệu m�
 
 Dưới đây là kịch bản cURL hoàn chỉnh kiểm thử qua **API Gateway (`http://localhost:8080`)**:
 
-### Bước 1: Lấy JWT Token từ Keycloak
-Thực hiện đăng nhập bằng tài khoản `demo-customer`:
+### Bước 1: Lấy JWT Token từ Supabase Auth
+Thực hiện đăng nhập bằng tài khoản test `customer@homecare.com`:
 
 ```powershell
 $tokenResponse = Invoke-RestMethod -Method Post `
-  -Uri "http://localhost:9090/realms/homecare/protocol/openid-connect/token" `
-  -ContentType "application/x-www-form-urlencoded" `
-  -Body @{
-    grant_type    = "password"
-    client_id     = "homecare-auth"
-    client_secret = "change_me_local_client_secret"
-    username      = "demo-customer"
-    password      = "password"
-    scope         = "openid profile email roles"
-  }
+  -Uri "$env:SUPABASE_URL/auth/v1/token?grant_type=password" `
+  -Headers @{ "apikey" = "$env:SUPABASE_PUBLISHABLE_KEY"; "Content-Type" = "application/json" } `
+  -Body (@{
+    email    = "customer@homecare.com"
+    password = "Homecare@2026"
+  } | ConvertTo-Json)
 
 $TOKEN = $tokenResponse.access_token
 Write-Host "Access Token retrieved successfully!" -ForegroundColor Green
@@ -288,10 +282,10 @@ Nhận thông báo push đồng bộ từ hệ thống (kèm trigger FCM wake-up
 
 ## 7. Các địa chỉ UI Quản trị & Công cụ hữu ích
 
-- **Swagger UI Tập trung (Tất cả 7 Services)**: [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
-  *(Có thanh dropdown góc trên cùng bên phải để chuyển đổi giữa Identity, Household, Provider, Booking, Commerce, Review, Notification).*
-- **Keycloak Admin Console**: [http://localhost:9090](http://localhost:9090)
-  *(Tài khoản: `admin` / Mật khẩu: `password`).*
+- **Swagger UI Tập trung (Tất cả 6 Domain Services)**: [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
+  *(Có thanh dropdown góc trên cùng bên phải để chuyển đổi giữa Household, Provider, Booking, Commerce, Review, Notification).*
+- **Supabase Cloud Dashboard**: [https://supabase.com/dashboard](https://supabase.com/dashboard)
+  *(Quản trị người dùng, bảng RBAC, RLS policies và custom token hooks).*
 - **RabbitMQ Management Dashboard**: [http://localhost:15672](http://localhost:15672)
   *(Tài khoản: `homecare` / Mật khẩu: `homecare`).*
 - **Health check endpoint**:
@@ -304,15 +298,15 @@ Nhận thông báo push đồng bộ từ hệ thống (kèm trigger FCM wake-up
 ## 8. Khắc phục sự cố thường gặp (Troubleshooting)
 
 1. **Lỗi `port is already allocated`**:
-   - Kiểm tra xem máy host có đang chạy sẵn PostgreSQL (port 5432), Redis (6379), hoặc ứng dụng nào chiếm port 8080/9090 không bằng lệnh:
+   - Kiểm tra xem máy host có đang chạy sẵn PostgreSQL (port 5432), Redis (6379), hoặc ứng dụng nào chiếm port 8080 không bằng lệnh:
      ```powershell
-     Get-NetTCPConnection -LocalPort 5432,6379,8080,9090 -ErrorAction SilentlyContinue
+     Get-NetTCPConnection -LocalPort 5432,6379,8080 -ErrorAction SilentlyContinue
      ```
    - Tắt ứng dụng xung đột hoặc đổi port mapping trong `compose.infra.yml` / `compose.app.yml`.
 
-2. **Lỗi `Could not connect to Keycloak` khi chạy local ngoài Docker**:
-   - Khi chạy service trên máy host (Gradle `bootRun`), Keycloak nằm ở `http://localhost:9090` (do cổng 8080 của container được map ra 9090 host để nhường 8080 cho API Gateway). Đảm bảo biến `KEYCLOAK_URL=http://localhost:9090` trong file `.env` local của bạn.
-   - Khi chạy toàn bộ trong Docker Compose, các container liên lạc qua tên service `http://keycloak:8080`.
+2. **Lỗi xác thực JWT với Supabase Cloud**:
+   - Đảm bảo biến `SUPABASE_JWKS_URI` trỏ đúng định dạng: `https://<your-project-ref>.supabase.co/auth/v1/.well-known/jwks.json`.
+   - Nếu chạy unit test hoặc offline, services mặc định fallback sang `https://placeholder.supabase.co/auth/v1/.well-known/jwks.json` và sử dụng mock JWT token.
 
 3. **Lỗi `OutOfMemoryError` hoặc máy đơ khi build**:
    - Sử dụng lệnh build có giới hạn bộ nhớ:

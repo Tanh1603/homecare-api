@@ -1,29 +1,5 @@
 name: homecare-backend
 services:
-  identity-service:
-    container_name: identity-service
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        SERVICE: identity-service
-    image: homecare/identity-service:dev
-    env_file:
-      - ./services/identity-service/.env
-    ports:
-      - "8081:8081"
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '0.75'
-          memory: 512M
-        reservations:
-          cpus: '0.15'
-          memory: 256M
-    networks:
-      - shared
-
   household-service:
     container_name: household-service
     build:
@@ -34,9 +10,12 @@ services:
     image: homecare/household-service:dev
     env_file:
       - ./services/household-service/.env
-    ports:
-      - "8082:8082"
-      - "9082:9082"
+    environment:
+      HOMECARE_SECURITY_ENFORCE_GATEWAY: "true"
+      INTERNAL_GATEWAY_SECRET: "homecare-internal-secret-2026"
+    expose:
+      - "8082"
+      - "9082"
     restart: unless-stopped
     deploy:
       resources:
@@ -59,8 +38,12 @@ services:
     image: homecare/provider-service:dev
     env_file:
       - ./services/provider-service/.env
+    environment:
+      HOMECARE_SECURITY_ENFORCE_GATEWAY: "true"
+      INTERNAL_GATEWAY_SECRET: "homecare-internal-secret-2026"
+    expose:
+      - "8083"
     ports:
-      - "8083:8083"
       - "9083:9083"
     restart: unless-stopped
     deploy:
@@ -84,9 +67,12 @@ services:
     image: homecare/booking-service:dev
     env_file:
       - ./services/booking-service/.env
-    ports:
-      - "8084:8084"
-      - "9084:9084"
+    environment:
+      HOMECARE_SECURITY_ENFORCE_GATEWAY: "true"
+      INTERNAL_GATEWAY_SECRET: "homecare-internal-secret-2026"
+    expose:
+      - "8084"
+      - "9084"
     depends_on:
       - provider-service
       - household-service
@@ -112,9 +98,12 @@ services:
     image: homecare/commerce-service:dev
     env_file:
       - ./services/commerce-service/.env
-    ports:
-      - "8085:8085"
-      - "9085:9085"
+    environment:
+      HOMECARE_SECURITY_ENFORCE_GATEWAY: "true"
+      INTERNAL_GATEWAY_SECRET: "homecare-internal-secret-2026"
+    expose:
+      - "8085"
+      - "9085"
     restart: unless-stopped
     deploy:
       resources:
@@ -137,8 +126,11 @@ services:
     image: homecare/review-service:dev
     env_file:
       - ./services/review-service/.env
-    ports:
-      - "8086:8086"
+    environment:
+      HOMECARE_SECURITY_ENFORCE_GATEWAY: "true"
+      INTERNAL_GATEWAY_SECRET: "homecare-internal-secret-2026"
+    expose:
+      - "8086"
     depends_on:
       - booking-service
       - commerce-service
@@ -164,8 +156,11 @@ services:
     image: homecare/notification-service:dev
     env_file:
       - ./services/notification-service/.env
-    ports:
-      - "8087:8087"
+    environment:
+      HOMECARE_SECURITY_ENFORCE_GATEWAY: "true"
+      INTERNAL_GATEWAY_SECRET: "homecare-internal-secret-2026"
+    expose:
+      - "8087"
     restart: unless-stopped
     deploy:
       resources:
@@ -188,10 +183,11 @@ services:
     image: homecare/gateway-service:dev
     env_file:
       - ./services/gateway-service/.env
+    environment:
+      INTERNAL_GATEWAY_SECRET: "homecare-internal-secret-2026"
     ports:
       - "8080:8080"
     depends_on:
-      - identity-service
       - household-service
       - provider-service
       - booking-service
