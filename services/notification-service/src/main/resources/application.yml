@@ -30,8 +30,8 @@ spring:
 
 homecare:
     fcm:
-        project-id: ${FCM_PROJECT_ID:homecare-sandbox}
-        sandbox-mode: ${FCM_SANDBOX_MODE:true}
+        credentials-json: ${FCM_CREDENTIALS_JSON:}
+        credentials-path: ${FCM_CREDENTIALS_PATH:}
 
 springdoc:
     api-docs:

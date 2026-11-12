@@ -47,3 +47,7 @@ out/
 !.vscode/
 .vscode/*
 !.vscode/settings.json
+
+# Firebase Service Account Credentials
+*service-account*.json
+secrets/

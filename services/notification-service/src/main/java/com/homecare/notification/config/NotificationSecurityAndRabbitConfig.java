@@ -50,6 +50,16 @@ public class NotificationSecurityAndRabbitConfig {
     }
 
     @Bean
+    public Queue notificationPushDispatchQueue() {
+        return new Queue(com.homecare.notification.service.FcmPushConsumer.QUEUE, true);
+    }
+
+    @Bean
+    public Binding notificationPushDispatchBinding(Queue notificationPushDispatchQueue, TopicExchange domainEventsExchange) {
+        return BindingBuilder.bind(notificationPushDispatchQueue).to(domainEventsExchange).with("notification.push.#");
+    }
+
+    @Bean
     public ServletCorrelationIdFilter servletCorrelationIdFilter() {
         return new ServletCorrelationIdFilter();
     }

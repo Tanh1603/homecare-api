@@ -1,7 +1,6 @@
 package com.homecare.notification.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 
@@ -10,9 +9,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 
-import com.homecare.common.error.DomainException;
+import com.homecare.notification.dto.NotificationDtos.DeviceRegistrationResponse;
 import com.homecare.notification.dto.NotificationDtos.NotificationResponse;
 import com.homecare.notification.dto.NotificationDtos.RegisterDeviceRequest;
+import com.homecare.notification.repository.DeviceRegistrationRepository;
 import com.homecare.notification.repository.ProcessedEventRepository;
 
 @SpringBootTest
@@ -26,10 +26,16 @@ class NotificationInboxServiceTest {
     private DomainEventConsumer consumer;
 
     @Autowired
+    private FcmPushConsumer fcmPushConsumer;
+
+    @Autowired
     private ProcessedEventRepository processedEventRepository;
 
+    @Autowired
+    private DeviceRegistrationRepository deviceRegistrationRepository;
+
     @Test
-    void deduplicatesDomainEventsPersistsProcessedEventsAndEnforcesIdempotentMarkAsReadAndTokenOwnership() {
+    void deduplicatesDomainEventsPersistsProcessedEventsAndEnforcesIdempotentMarkAsReadAndTokenOwnershipTransfer() {
         String eventJson = """
                 {"eventId":"evt-1001","eventType":"booking.assigned.v1","data":{"requesterProfileId":"cust-1","technicianProfileId":"tech-1","serviceName":"Vệ sinh Máy lạnh"}}
                 """;
@@ -48,18 +54,27 @@ class NotificationInboxServiceTest {
         assertThat(readTwice.readAt()).isEqualTo(readOnce.readAt());
 
         inboxService.registerDevice("cust-1", new RegisterDeviceRequest("ANDROID", "fcm-token-xyz"));
+        assertThat(deviceRegistrationRepository.findByRecipientIdAndActiveTrue("cust-1")).hasSize(1);
 
-        // Triggering another event for cust-1 after token is registered exercises FirebaseMessagingService push
+        // Triggering another event for cust-1 after token is registered exercises RabbitMQ push event enqueueing
         String event2Json = """
                 {"eventId":"evt-1002","eventType":"booking.completed.v1","data":{"requesterProfileId":"cust-1","serviceName":"Vệ sinh Máy lạnh"}}
                 """;
         consumer.onDomainEvent(event2Json);
         assertThat(inboxService.listInbox("cust-1")).hasSize(2);
 
-        assertThatThrownBy(() -> inboxService.registerDevice(
-                "cust-2", new RegisterDeviceRequest("ANDROID", "fcm-token-xyz")))
-                .isInstanceOf(DomainException.class)
-                .extracting("errorCode")
-                .isEqualTo("TOKEN_ALREADY_REGISTERED");
+        // Verify account switching on same device transfers token ownership to cust-2
+        DeviceRegistrationResponse transferred = inboxService.registerDevice(
+                "cust-2", new RegisterDeviceRequest("ANDROID", "fcm-token-xyz"));
+        assertThat(transferred.recipientId()).isEqualTo("cust-2");
+        assertThat(transferred.active()).isTrue();
+        assertThat(deviceRegistrationRepository.findByRecipientIdAndActiveTrue("cust-1")).isEmpty();
+        assertThat(deviceRegistrationRepository.findByRecipientIdAndActiveTrue("cust-2")).hasSize(1);
+
+        // Verify FcmPushConsumer processes push dispatch message safely
+        String pushDispatchJson = """
+                {"recipientId":"cust-2","title":"Thông báo mới","body":"Kỹ thuật viên đã đến","data":{"bookingId":"b-123"}}
+                """;
+        fcmPushConsumer.onPushDispatch(pushDispatchJson);
     }
 }

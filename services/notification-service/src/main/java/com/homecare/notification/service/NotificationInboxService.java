@@ -2,10 +2,15 @@ package com.homecare.notification.service;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,17 +28,20 @@ import com.homecare.notification.repository.NotificationRepository;
 import com.homecare.notification.repository.ProcessedEventRepository;
 
 import lombok.RequiredArgsConstructor;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 @RequiredArgsConstructor
 public class NotificationInboxService {
 
+    private static final Logger log = LoggerFactory.getLogger(NotificationInboxService.class);
     public static final String CONSUMER_NAME = "notification-inbox-consumer";
 
     private final NotificationRepository notificationRepository;
     private final ProcessedEventRepository processedEventRepository;
     private final DeviceRegistrationRepository deviceRegistrationRepository;
-    private final FirebaseMessagingService firebaseMessagingService;
+    private final RabbitTemplate rabbitTemplate;
+    private final ObjectMapper objectMapper;
 
     @Transactional
     public void recordIfAbsent(
@@ -72,16 +80,34 @@ public class NotificationInboxService {
                 .createdAt(now)
                 .build());
 
-        // Trigger FCM push notification to user's registered devices (wake-up ping for
-        // inbox synchronization)
-        java.util.Map<String, String> data = new java.util.HashMap<>();
+        // Enqueue push notification dispatch message to dedicated RabbitMQ queue (decoupled from DB transaction)
+        Map<String, String> data = new HashMap<>();
         if (eventType != null) {
             data.put("eventType", eventType);
         }
         if (eventId != null) {
             data.put("eventId", eventId);
         }
-        firebaseMessagingService.sendPushToUser(recipientId, title, body, data);
+        dispatchPushNotificationEvent(recipientId, title, body, data);
+    }
+
+    private void dispatchPushNotificationEvent(
+            String recipientId,
+            String title,
+            String body,
+            Map<String, String> data) {
+        try {
+            Map<String, Object> pushPayload = new HashMap<>();
+            pushPayload.put("recipientId", recipientId);
+            pushPayload.put("title", title);
+            pushPayload.put("body", body);
+            pushPayload.put("data", data != null ? data : Map.of());
+            String json = objectMapper.writeValueAsString(pushPayload);
+            rabbitTemplate.convertAndSend(DomainEventConsumer.EXCHANGE, "notification.push.dispatch", json);
+            log.debug("Enqueued push notification event to RabbitMQ for recipient={}", recipientId);
+        } catch (Exception e) {
+            log.warn("Could not enqueue push event to RabbitMQ for recipient={}: {}", recipientId, e.getMessage());
+        }
     }
 
     @Transactional(readOnly = true)
@@ -113,9 +139,9 @@ public class NotificationInboxService {
                 .findByPushToken(request.pushToken().trim());
         if (existing.isPresent()) {
             DeviceRegistrationEntity d = existing.get();
-            if (!d.getRecipientId().equals(recipientId)) {
-                throw new DomainException(NotificationErrorCode.TOKEN_ALREADY_REGISTERED);
-            }
+            // Transfer ownership to new user on shared devices / account switching
+            d.setRecipientId(recipientId);
+            d.setPlatform(request.platform().trim().toUpperCase());
             d.setActive(true);
             return toDeviceResponse(deviceRegistrationRepository.save(d));
         }
