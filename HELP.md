@@ -180,7 +180,7 @@ Thực hiện đăng nhập bằng tài khoản test `customer@homecare.com`:
 ```powershell
 $tokenResponse = Invoke-RestMethod -Method Post `
   -Uri "$env:SUPABASE_URL/auth/v1/token?grant_type=password" `
-  -Headers @{ "apikey" = "$env:SUPABASE_ANON_KEY"; "Content-Type" = "application/json" } `
+  -Headers @{ "apikey" = "$env:SUPABASE_PUBLISHABLE_KEY"; "Content-Type" = "application/json" } `
   -Body (@{
     email    = "customer@homecare.com"
     password = "Homecare@2026"
