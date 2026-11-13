@@ -136,6 +136,10 @@ public class OrganizationDomainService {
         if (org.getStatus() == OrganizationStatus.APPROVED) {
             return toOrgResponse(org);
         }
+        if (org.getStatus() == OrganizationStatus.REJECTED) {
+            throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE,
+                    "Rejected organizations cannot be approved directly.");
+        }
 
         Instant now = Instant.now();
         org.setStatus(OrganizationStatus.APPROVED);
@@ -272,18 +276,14 @@ public class OrganizationDomainService {
 
     @Transactional
     public OrganizationMemberResponse updateMemberRole(UUID orgId, String targetUserId, OrgRole newRole) {
-        OrganizationMemberEntity member = memberRepository.findByOrganizationIdAndUserId(orgId, targetUserId)
-                .filter(m -> "ACTIVE".equalsIgnoreCase(m.getStatus()))
-                .orElseThrow(() -> new DomainException(ProviderErrorCode.ORG_MEMBERSHIP_REQUIRED));
+        OrganizationMemberEntity member = requireActiveModifiableMember(orgId, targetUserId);
         member.setRole(newRole);
         return toMemberResponse(memberRepository.save(member));
     }
 
     @Transactional
     public void removeMember(UUID orgId, String targetUserId) {
-        OrganizationMemberEntity member = memberRepository.findByOrganizationIdAndUserId(orgId, targetUserId)
-                .filter(m -> "ACTIVE".equalsIgnoreCase(m.getStatus()))
-                .orElseThrow(() -> new DomainException(ProviderErrorCode.ORG_MEMBERSHIP_REQUIRED));
+        OrganizationMemberEntity member = requireActiveModifiableMember(orgId, targetUserId);
         member.setStatus("INACTIVE");
         memberRepository.save(member);
 
@@ -291,6 +291,19 @@ public class OrganizationDomainService {
                 "organizationId", orgId.toString(),
                 "affectedUserIds", List.of(targetUserId));
         enqueueOutbox(orgId, EVT_MEMBER_CHANGED, data, Instant.now());
+    }
+
+    private OrganizationMemberEntity requireActiveModifiableMember(UUID orgId, String targetUserId) {
+        OrganizationEntity org = organizationRepository.findById(orgId)
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
+        OrganizationMemberEntity member = memberRepository.findByOrganizationIdAndUserId(orgId, targetUserId)
+                .filter(m -> "ACTIVE".equalsIgnoreCase(m.getStatus()))
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.ORG_MEMBERSHIP_REQUIRED));
+        if (org.getOwnerUserId().equals(targetUserId) || member.getRole() == OrgRole.ORG_OWNER) {
+            throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN,
+                    "Cannot modify or remove the organization owner.");
+        }
+        return member;
     }
 
     private void enqueueOutbox(UUID aggregateId, String eventType, Map<String, Object> data, Instant now) {

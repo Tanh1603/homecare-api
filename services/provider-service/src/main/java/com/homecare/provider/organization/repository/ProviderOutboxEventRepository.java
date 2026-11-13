@@ -12,11 +12,13 @@ import com.homecare.provider.organization.entity.ProviderOutboxEventEntity;
 
 public interface ProviderOutboxEventRepository extends JpaRepository<ProviderOutboxEventEntity, UUID> {
 
-    @Query("""
-            SELECT e FROM ProviderOutboxEventEntity e
-            WHERE e.status = 'PENDING'
-              AND (e.nextAttemptAt IS NULL OR e.nextAttemptAt <= :now)
-            ORDER BY e.createdAt ASC
-            """)
+    @Query(value = """
+            SELECT * FROM provider_outbox_events
+            WHERE status = 'PENDING'
+              AND (next_attempt_at IS NULL OR next_attempt_at <= :now)
+            ORDER BY created_at ASC
+            LIMIT 50
+            FOR UPDATE SKIP LOCKED
+            """, nativeQuery = true)
     List<ProviderOutboxEventEntity> findPendingDueEvents(@Param("now") Instant now);
 }

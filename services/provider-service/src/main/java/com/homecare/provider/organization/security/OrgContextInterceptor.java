@@ -11,6 +11,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
+import com.homecare.common.security.RbacConstants;
 import com.homecare.provider.exception.ProviderErrorCode;
 import com.homecare.provider.organization.entity.OrganizationEntity;
 import com.homecare.provider.organization.entity.OrganizationMemberEntity;
@@ -26,7 +27,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class OrgContextInterceptor implements HandlerInterceptor {
 
-    public static final String ORG_ID_HEADER = "X-Organization-Id";
+    public static final String ORG_ID_HEADER = RbacConstants.HEADER_ORGANIZATION_ID;
 
     private final OrganizationRepository organizationRepository;
     private final OrganizationMemberRepository memberRepository;

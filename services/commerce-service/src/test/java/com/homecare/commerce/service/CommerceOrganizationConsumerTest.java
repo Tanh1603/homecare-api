@@ -1,16 +1,22 @@
 package com.homecare.commerce.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Instant;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.context.ActiveProfiles;
 
 import com.homecare.commerce.entity.MerchantEntity;
+import com.homecare.commerce.entity.OrderEntity;
 import com.homecare.commerce.repository.MerchantRepository;
+import com.homecare.commerce.repository.OrderRepository;
+import com.homecare.common.error.DomainException;
 
 @SpringBootTest
 @ActiveProfiles("test")
@@ -21,6 +27,12 @@ class CommerceOrganizationConsumerTest {
 
     @Autowired
     private MerchantRepository merchantRepository;
+
+    @Autowired
+    private OrderRepository orderRepository;
+
+    @Autowired
+    private CommerceDomainService commerceDomainService;
 
     @Test
     void createsMerchantIdempotentlyOnApproveAndDeactivatesOnSuspend() {
@@ -63,5 +75,46 @@ class CommerceOrganizationConsumerTest {
 
         consumer.onOrganizationEvent(json);
         assertThat(merchantRepository.existsByOrganizationId(serviceOrgId)).isFalse();
+    }
+
+    @Test
+    void fulfillOrderLineRejectsInactiveMerchantAndMismatchedOrgHeader() {
+        UUID orgId = UUID.randomUUID();
+        MerchantEntity merchant = merchantRepository.save(MerchantEntity.builder()
+                .id(orgId)
+                .organizationId(orgId)
+                .ownerProfileId("owner-1")
+                .name("Suspended Shop")
+                .city("HCM")
+                .ratingAvg(0.0)
+                .status("INACTIVE")
+                .createdAt(Instant.now())
+                .build());
+        OrderEntity order = orderRepository.save(OrderEntity.builder()
+                .id(UUID.randomUUID())
+                .buyerProfileId("buyer-1")
+                .merchantId(merchant.getId())
+                .status("CONFIRMED")
+                .paymentStatus("PAID")
+                .totalAmount(100000L)
+                .shippingAddress("HCM")
+                .quoteExpiresAt(Instant.now().plusSeconds(3600))
+                .createdAt(Instant.now())
+                .updatedAt(Instant.now())
+                .build());
+
+        assertThatThrownBy(() -> commerceDomainService.fulfillOrderLine("actor-1", order.getId(), UUID.randomUUID(), orgId))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).status())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+
+        merchant.setStatus("ACTIVE");
+        merchantRepository.save(merchant);
+
+        UUID otherOrgId = UUID.randomUUID();
+        assertThatThrownBy(() -> commerceDomainService.fulfillOrderLine("actor-1", order.getId(), UUID.randomUUID(), otherOrgId))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).status())
+                .isEqualTo(HttpStatus.FORBIDDEN);
     }
 }

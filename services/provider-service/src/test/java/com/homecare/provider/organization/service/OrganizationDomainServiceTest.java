@@ -1,6 +1,7 @@
 package com.homecare.provider.organization.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -13,7 +14,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 
+import com.homecare.common.error.DomainException;
 import com.homecare.provider.entity.ProviderEntity;
+import com.homecare.provider.exception.ProviderErrorCode;
 import com.homecare.provider.organization.dto.OrganizationDtos.AddMemberRequest;
 import com.homecare.provider.organization.dto.OrganizationDtos.MyOrganizationMembershipResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationResponse;
@@ -135,5 +138,29 @@ class OrganizationDomainServiceTest {
         organizationService.suspendOrganization(orgA.id());
         syncConsumer.syncUserGlobalOrganizationRole(multiOrgUser, "test");
         verify(mockRoleClient, times(1)).revokeOrganizationRole(multiOrgUser);
+    }
+
+    @Test
+    void cannotDemoteOrRemoveOrganizationOwnerAndCannotApproveRejectedOrg() {
+        String ownerId = "supabase-owner-" + UUID.randomUUID();
+        OrganizationResponse org = organizationService.registerOrganization(
+                ownerId,
+                new RegisterOrganizationRequest("Protected Org", OrganizationType.SERVICE, null, "0903", "HCM", null, null));
+
+        assertThatThrownBy(() -> organizationService.updateMemberRole(org.id(), ownerId, OrgRole.ORG_STAFF))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).errorCode())
+                .isEqualTo(ProviderErrorCode.ORG_ROLE_FORBIDDEN.name());
+
+        assertThatThrownBy(() -> organizationService.removeMember(org.id(), ownerId))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).errorCode())
+                .isEqualTo(ProviderErrorCode.ORG_ROLE_FORBIDDEN.name());
+
+        organizationService.rejectOrganization(org.id(), "Invalid docs");
+        assertThatThrownBy(() -> organizationService.approveOrganization(org.id(), "admin-1"))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).errorCode())
+                .isEqualTo(ProviderErrorCode.INVALID_ORGANIZATION_STATE.name());
     }
 }

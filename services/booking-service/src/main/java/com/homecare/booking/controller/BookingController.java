@@ -73,11 +73,14 @@ public class BookingController {
     @GetMapping
     public ResponseEntity<ApiResponse<PageResponse<BookingResponse>>> listBookings(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<BookingResponse> items = service.listBookings(jwt.getSubject(),
-                isPrivilegedBookingReader(jwt));
+        List<BookingResponse> items = service.listBookings(
+                jwt.getSubject(),
+                isPrivilegedBookingReader(jwt),
+                isGlobalAdmin(jwt) ? null : orgIdHeader);
         return ResponseEntity.ok(responseFactory.ok(
                 "Bookings retrieved",
                 PageResponse.of(items, page, size, items.size()),
@@ -87,12 +90,14 @@ public class BookingController {
     @GetMapping("/{bookingId}")
     public ResponseEntity<ApiResponse<BookingResponse>> getBooking(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
             @PathVariable UUID bookingId,
             HttpServletRequest httpRequest) {
         BookingResponse booking = service.getBooking(
                 jwt.getSubject(),
                 isPrivilegedBookingReader(jwt),
-                bookingId);
+                bookingId,
+                isGlobalAdmin(jwt) ? null : orgIdHeader);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(booking.version()))
                 .body(responseFactory.ok("Booking retrieved", booking, httpRequest));
@@ -101,6 +106,7 @@ public class BookingController {
     @PostMapping("/{bookingId}/cancel")
     public ResponseEntity<ApiResponse<BookingResponse>> cancelBooking(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
             @PathVariable UUID bookingId,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @RequestBody(required = false) CancelBookingRequest request,
@@ -113,7 +119,8 @@ public class BookingController {
                         RbacConstants.PERM_BOOKING_DISPATCH, RbacConstants.PERM_ADMIN_ALL),
                 bookingId,
                 ifMatch,
-                request);
+                request,
+                isGlobalAdmin(jwt) ? null : orgIdHeader);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
                 .body(responseFactory.ok("Booking cancelled", updated, httpRequest));
@@ -130,6 +137,11 @@ public class BookingController {
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
                 .body(responseFactory.ok("Work update recorded", updated, httpRequest));
+    }
+
+    private boolean isGlobalAdmin(Jwt jwt) {
+        return SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ADMIN_ALL);
     }
 
     private boolean isPrivilegedBookingReader(Jwt jwt) {

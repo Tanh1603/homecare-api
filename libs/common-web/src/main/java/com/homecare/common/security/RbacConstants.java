@@ -25,6 +25,8 @@ public final class RbacConstants {
     public static final String PERM_ORDER_FULFILL = "order:fulfill";
     public static final String PERM_ORDER_RETURN_RESOLVE = "order:return_resolve";
 
+    public static final String HEADER_ORGANIZATION_ID = "X-Organization-Id";
+
     public static final String EXPR_ORG_REVIEW =
             "hasAnyAuthority('" + PERM_ORGANIZATION_REVIEW + "', '" + PERM_ADMIN_ALL + "') or hasRole('" + ROLE_ADMIN + "')";
 }

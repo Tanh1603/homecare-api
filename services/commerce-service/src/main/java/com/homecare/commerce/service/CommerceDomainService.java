@@ -278,8 +278,14 @@ public class CommerceDomainService {
 
     @Transactional
     public OrderResponse fulfillOrderLine(String actorProfileId, UUID orderId, UUID lineId) {
+        return fulfillOrderLine(actorProfileId, orderId, lineId, null);
+    }
+
+    @Transactional
+    public OrderResponse fulfillOrderLine(String actorProfileId, UUID orderId, UUID lineId, UUID orgIdHeader) {
         OrderEntity order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
+        verifyActiveMerchantScope(order, orgIdHeader);
         OrderLineEntity line = orderLineRepository.findById(lineId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_LINE_NOT_FOUND));
         if (!line.getOrderId().equals(orderId)) {
@@ -357,14 +363,38 @@ public class CommerceDomainService {
         return toOrderReturnResponse(saved);
     }
 
+    private void verifyActiveMerchantScope(OrderEntity order, UUID orgIdHeader) {
+        MerchantEntity merchant = merchantRepository.findById(order.getMerchantId()).orElse(null);
+        if (merchant != null && "INACTIVE".equalsIgnoreCase(merchant.getStatus())) {
+            throw new DomainException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN",
+                    "Merchant organization is currently inactive or suspended.");
+        }
+        if (orgIdHeader != null && merchant != null && merchant.getOrganizationId() != null
+                && !orgIdHeader.equals(merchant.getOrganizationId())) {
+            throw new DomainException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN",
+                    "Order does not belong to the active organization.");
+        }
+    }
+
     @Transactional
     public OrderReturnResponse resolveOrderReturnRequest(
             String actorProfileId,
             UUID orderId,
             UUID returnId,
             ResolveOrderReturnRequest request) {
+        return resolveOrderReturnRequest(actorProfileId, orderId, returnId, request, null);
+    }
+
+    @Transactional
+    public OrderReturnResponse resolveOrderReturnRequest(
+            String actorProfileId,
+            UUID orderId,
+            UUID returnId,
+            ResolveOrderReturnRequest request,
+            UUID orgIdHeader) {
         OrderEntity order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
+        verifyActiveMerchantScope(order, orgIdHeader);
         OrderReturnRequestEntity ret = returnRequestRepository.findById(returnId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.RETURN_REQUEST_NOT_FOUND));
         if (!ret.getOrderId().equals(orderId)) {

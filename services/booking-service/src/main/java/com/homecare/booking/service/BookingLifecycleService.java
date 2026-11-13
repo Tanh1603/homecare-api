@@ -271,17 +271,33 @@ public class BookingLifecycleService {
 
     @Transactional(readOnly = true)
     public List<BookingResponse> listBookings(String actorProfileId, boolean isTechOrAdmin) {
+        return listBookings(actorProfileId, isTechOrAdmin, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<BookingResponse> listBookings(String actorProfileId, boolean isTechOrAdmin, UUID orgScopeId) {
         List<BookingEntity> list = isTechOrAdmin
                 ? bookingRepository.findAllByOrderByCreatedAtDesc()
                 : bookingRepository.findByRequesterProfileIdOrderByCreatedAtDesc(actorProfileId);
+        if (orgScopeId != null && isTechOrAdmin) {
+            list = list.stream().filter(b -> orgScopeId.equals(b.getProviderId())).toList();
+        }
         return list.stream().map(this::toBookingResponse).toList();
     }
 
     @Transactional(readOnly = true)
     public BookingResponse getBooking(String actorProfileId, boolean isTechOrAdmin, UUID bookingId) {
+        return getBooking(actorProfileId, isTechOrAdmin, bookingId, null);
+    }
+
+    @Transactional(readOnly = true)
+    public BookingResponse getBooking(String actorProfileId, boolean isTechOrAdmin, UUID bookingId, UUID orgScopeId) {
         BookingEntity booking = requireBooking(bookingId);
         if (!isTechOrAdmin && !booking.getRequesterProfileId().equals(actorProfileId)) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not allowed to view this booking.");
+        }
+        if (orgScopeId != null && isTechOrAdmin && !orgScopeId.equals(booking.getProviderId())) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Booking does not belong to active organization.");
         }
         return toBookingResponse(booking);
     }
@@ -293,9 +309,23 @@ public class BookingLifecycleService {
             UUID bookingId,
             String ifMatchHeader,
             CancelBookingRequest request) {
+        return cancelBooking(actorProfileId, isAdmin, bookingId, ifMatchHeader, request, null);
+    }
+
+    @Transactional
+    public BookingResponse cancelBooking(
+            String actorProfileId,
+            boolean isAdmin,
+            UUID bookingId,
+            String ifMatchHeader,
+            CancelBookingRequest request,
+            UUID orgScopeId) {
         BookingEntity booking = requireBooking(bookingId);
         if (!isAdmin && !booking.getRequesterProfileId().equals(actorProfileId)) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not allowed to cancel this booking.");
+        }
+        if (orgScopeId != null && isAdmin && !orgScopeId.equals(booking.getProviderId())) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Booking does not belong to active organization.");
         }
         EtagSupport.verifyIfMatch(ifMatchHeader, booking.getVersion());
         if ("IN_PROGRESS".equals(booking.getStatus())

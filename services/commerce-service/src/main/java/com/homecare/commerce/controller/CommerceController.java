@@ -160,11 +160,12 @@ public class CommerceController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID orderId,
             @PathVariable UUID lineId,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
             HttpServletRequest httpRequest) {
         verifyOrganizationOrAdmin(jwt, "Only organization or admin can fulfill order lines.", RbacConstants.PERM_ORDER_FULFILL);
         return ResponseEntity.ok(responseFactory.ok(
                 "Order line fulfilled",
-                service.fulfillOrderLine(jwt.getSubject(), orderId, lineId),
+                service.fulfillOrderLine(jwt.getSubject(), orderId, lineId, orgIdHeader),
                 httpRequest));
     }
 
@@ -186,11 +187,12 @@ public class CommerceController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID orderId,
             @PathVariable UUID returnId,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
             @Valid @RequestBody ResolveOrderReturnRequest request,
             HttpServletRequest httpRequest) {
         verifyOrganizationOrAdmin(jwt, "Only organization or admin can resolve order returns.", RbacConstants.PERM_ORDER_RETURN_RESOLVE);
         OrderReturnResponse resolved = service.resolveOrderReturnRequest(
-                jwt.getSubject(), orderId, returnId, request);
+                jwt.getSubject(), orderId, returnId, request, orgIdHeader);
         return ResponseEntity.ok(responseFactory.ok("Order return request resolved", resolved, httpRequest));
     }
 
