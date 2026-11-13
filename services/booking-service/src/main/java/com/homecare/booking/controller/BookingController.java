@@ -24,6 +24,7 @@ import com.homecare.booking.dto.BookingDtos.CreateBookingRequest;
 import com.homecare.booking.dto.BookingDtos.CreateWorkUpdateRequest;
 import com.homecare.booking.service.BookingLifecycleService;
 import com.homecare.common.idempotency.IdempotencyService;
+import com.homecare.common.security.RbacConstants;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
@@ -35,7 +36,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
 @RestController
-@RequestMapping("/api/v1")
+@RequestMapping("/api/v1/bookings")
 @Validated
 @RequiredArgsConstructor
 public class BookingController {
@@ -44,7 +45,7 @@ public class BookingController {
     private final IdempotencyService idempotencyService;
     private final ServletApiResponseFactory responseFactory;
 
-    @PostMapping("/bookings")
+    @PostMapping
     public ResponseEntity<ApiResponse<BookingResponse>> createBooking(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
@@ -69,35 +70,35 @@ public class BookingController {
                 .body(responseFactory.created("Booking created", created, httpRequest));
     }
 
-    @GetMapping("/bookings")
+    @GetMapping
     public ResponseEntity<ApiResponse<PageResponse<BookingResponse>>> listBookings(
             @AuthenticationPrincipal Jwt jwt,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
         List<BookingResponse> items = service.listBookings(jwt.getSubject(),
-                hasAnyRole(jwt, "TECHNICIAN", "ORGANIZATION", "ADMIN"));
+                isPrivilegedBookingReader(jwt));
         return ResponseEntity.ok(responseFactory.ok(
                 "Bookings retrieved",
                 PageResponse.of(items, page, size, items.size()),
                 httpRequest));
     }
 
-    @GetMapping("/bookings/{bookingId}")
+    @GetMapping("/{bookingId}")
     public ResponseEntity<ApiResponse<BookingResponse>> getBooking(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID bookingId,
             HttpServletRequest httpRequest) {
         BookingResponse booking = service.getBooking(
                 jwt.getSubject(),
-                hasAnyRole(jwt, "TECHNICIAN", "ORGANIZATION", "ADMIN"),
+                isPrivilegedBookingReader(jwt),
                 bookingId);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(booking.version()))
                 .body(responseFactory.ok("Booking retrieved", booking, httpRequest));
     }
 
-    @PostMapping("/bookings/{bookingId}/cancel")
+    @PostMapping("/{bookingId}/cancel")
     public ResponseEntity<ApiResponse<BookingResponse>> cancelBooking(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID bookingId,
@@ -106,7 +107,10 @@ public class BookingController {
             HttpServletRequest httpRequest) {
         BookingResponse updated = service.cancelBooking(
                 jwt.getSubject(),
-                hasAnyRole(jwt, "ADMIN", "ORGANIZATION"),
+                SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                        jwt,
+                        new String[]{RbacConstants.ROLE_ADMIN, RbacConstants.ROLE_ORGANIZATION},
+                        RbacConstants.PERM_BOOKING_DISPATCH, RbacConstants.PERM_ADMIN_ALL),
                 bookingId,
                 ifMatch,
                 request);
@@ -115,7 +119,7 @@ public class BookingController {
                 .body(responseFactory.ok("Booking cancelled", updated, httpRequest));
     }
 
-    @PostMapping("/bookings/{bookingId}/work-updates")
+    @PostMapping("/{bookingId}/work-updates")
     public ResponseEntity<ApiResponse<BookingResponse>> addWorkUpdate(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID bookingId,
@@ -128,7 +132,10 @@ public class BookingController {
                 .body(responseFactory.ok("Work update recorded", updated, httpRequest));
     }
 
-    private boolean hasAnyRole(Jwt jwt, String... roles) {
-        return SupabaseJwtConverterSupport.hasAnyRole(jwt, roles);
+    private boolean isPrivilegedBookingReader(Jwt jwt) {
+        return SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt,
+                new String[]{RbacConstants.ROLE_TECHNICIAN, RbacConstants.ROLE_ORGANIZATION, RbacConstants.ROLE_ADMIN},
+                RbacConstants.PERM_BOOKING_DISPATCH, RbacConstants.PERM_BOOKING_UPDATE_STATUS, RbacConstants.PERM_ADMIN_ALL);
     }
 }

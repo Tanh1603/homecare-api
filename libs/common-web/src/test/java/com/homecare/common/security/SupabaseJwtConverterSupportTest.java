@@ -92,5 +92,22 @@ class SupabaseJwtConverterSupportTest {
         assertThat(SupabaseJwtConverterSupport.extractPermissions(emptyJwt)).isEmpty();
         assertThat(SupabaseJwtConverterSupport.extractAuthorities(emptyJwt)).isEmpty();
         assertThat(SupabaseJwtConverterSupport.hasAnyRole(emptyJwt, "ADMIN")).isFalse();
+        assertThat(SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                emptyJwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ORGANIZATION_REVIEW)).isFalse();
+    }
+
+    @Test
+    void hasAnyRoleOrPermissionMatchesEitherRoleOrPermission() {
+        Jwt permOnlyJwt = new Jwt(
+                "perm-only",
+                Instant.now(),
+                Instant.now().plusSeconds(3600),
+                Map.of("alg", "HS256"),
+                Map.of("sub", "u1", "permissions", List.of(RbacConstants.PERM_ORGANIZATION_REVIEW)));
+
+        assertThat(SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                permOnlyJwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ORGANIZATION_REVIEW)).isTrue();
+        assertThat(SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                permOnlyJwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ORDER_FULFILL)).isFalse();
     }
 }

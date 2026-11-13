@@ -30,6 +30,7 @@ import com.homecare.commerce.dto.CommerceDtos.ResolveOrderReturnRequest;
 import com.homecare.commerce.service.CommerceDomainService;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.idempotency.IdempotencyService;
+import com.homecare.common.security.RbacConstants;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
@@ -160,7 +161,7 @@ public class CommerceController {
             @PathVariable UUID orderId,
             @PathVariable UUID lineId,
             HttpServletRequest httpRequest) {
-        verifyOrganizationOrAdmin(jwt, "Only organization or admin can fulfill order lines.");
+        verifyOrganizationOrAdmin(jwt, "Only organization or admin can fulfill order lines.", RbacConstants.PERM_ORDER_FULFILL);
         return ResponseEntity.ok(responseFactory.ok(
                 "Order line fulfilled",
                 service.fulfillOrderLine(jwt.getSubject(), orderId, lineId),
@@ -187,14 +188,17 @@ public class CommerceController {
             @PathVariable UUID returnId,
             @Valid @RequestBody ResolveOrderReturnRequest request,
             HttpServletRequest httpRequest) {
-        verifyOrganizationOrAdmin(jwt, "Only organization or admin can resolve order returns.");
+        verifyOrganizationOrAdmin(jwt, "Only organization or admin can resolve order returns.", RbacConstants.PERM_ORDER_RETURN_RESOLVE);
         OrderReturnResponse resolved = service.resolveOrderReturnRequest(
                 jwt.getSubject(), orderId, returnId, request);
         return ResponseEntity.ok(responseFactory.ok("Order return request resolved", resolved, httpRequest));
     }
 
-    private void verifyOrganizationOrAdmin(Jwt jwt, String message) {
-        if (!SupabaseJwtConverterSupport.hasAnyRole(jwt, "ORGANIZATION", "ADMIN")) {
+    private void verifyOrganizationOrAdmin(Jwt jwt, String message, String requiredPermission) {
+        if (!SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt,
+                new String[]{RbacConstants.ROLE_ORGANIZATION, RbacConstants.ROLE_ADMIN},
+                requiredPermission, RbacConstants.PERM_ADMIN_ALL)) {
             throw new DomainException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", message);
         }
     }
@@ -204,7 +208,10 @@ public class CommerceController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID orderId,
             HttpServletRequest httpRequest) {
-        boolean isPrivileged = SupabaseJwtConverterSupport.hasAnyRole(jwt, "ORGANIZATION", "ADMIN");
+        boolean isPrivileged = SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt,
+                new String[]{RbacConstants.ROLE_ORGANIZATION, RbacConstants.ROLE_ADMIN},
+                RbacConstants.PERM_ORDER_FULFILL, RbacConstants.PERM_ORDER_RETURN_RESOLVE, RbacConstants.PERM_ADMIN_ALL);
         return ResponseEntity.ok(responseFactory.ok(
                 "Order return requests retrieved",
                 service.listOrderReturns(jwt.getSubject(), isPrivileged, orderId),

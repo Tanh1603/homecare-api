@@ -39,6 +39,13 @@ homecare:
     security:
         enforce-gateway: ${HOMECARE_SECURITY_ENFORCE_GATEWAY:false}
         internal-gateway-secret: ${INTERNAL_GATEWAY_SECRET:homecare-internal-secret-2026}
+    organization:
+        outbox-poll-ms: ${ORGANIZATION_OUTBOX_POLL_MS:5000}
+
+supabase:
+    url: ${SUPABASE_URL:https://placeholder.supabase.co}
+    secret-key: ${SUPABASE_SECRET_KEY:placeholder-secret-key}
+    organization-role-id: ${SUPABASE_ORGANIZATION_ROLE_ID:00000000-0000-0000-0001-000000000002}
 
 springdoc:
     api-docs:

@@ -102,6 +102,10 @@ public final class SupabaseJwtConverterSupport {
         return false;
     }
 
+    public static boolean hasAnyRoleOrPermission(Jwt jwt, String[] targetRoles, String... targetPermissions) {
+        return hasAnyRole(jwt, targetRoles) || hasAnyPermission(jwt, targetPermissions);
+    }
+
     private static void extractStringsFromClaim(Object claim, Set<String> accumulator) {
         if (claim instanceof Collection<?> list) {
             for (Object item : list) {

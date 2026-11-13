@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.homecare.common.error.DomainException;
+import com.homecare.common.security.RbacConstants;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
@@ -157,7 +158,10 @@ public class ProviderPublicAndTechController {
     }
 
     private void verifyScheduleManager(Jwt jwt) {
-        if (!SupabaseJwtConverterSupport.hasAnyRole(jwt, "TECHNICIAN", "ORGANIZATION", "ADMIN")) {
+        if (!SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt,
+                new String[]{RbacConstants.ROLE_TECHNICIAN, RbacConstants.ROLE_ORGANIZATION, RbacConstants.ROLE_ADMIN},
+                RbacConstants.PERM_SCHEDULE_MANAGE, RbacConstants.PERM_ADMIN_ALL)) {
             throw new DomainException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN",
                     "Only technician, organization, or admin can manage schedules.");
         }

@@ -33,7 +33,7 @@ spring:
             - id: provider-service-route
               uri: ${PROVIDER_URL:http://localhost:8083}
               predicates:
-                - Path=/api/v1/services,/api/v1/services/**,/api/v1/providers,/api/v1/providers/**,/api/v1/technicians,/api/v1/technicians/**,/api/v1/admin/providers/**,/api/v1/admin/technicians/**,/api/v1/admin/service-categories/**
+                - Path=/api/v1/services,/api/v1/services/**,/api/v1/providers,/api/v1/providers/**,/api/v1/technicians,/api/v1/technicians/**,/api/v1/organizations,/api/v1/organizations/**,/api/v1/admin/organizations,/api/v1/admin/organizations/**,/api/v1/admin/providers/**,/api/v1/admin/technicians/**,/api/v1/admin/service-categories/**
             - id: booking-service-route
               uri: ${BOOKING_URL:http://localhost:8084}
               predicates:
