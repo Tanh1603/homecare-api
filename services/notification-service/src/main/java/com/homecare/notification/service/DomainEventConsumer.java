@@ -7,6 +7,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
+import com.homecare.common.event.DomainEventContracts;
+
 import lombok.RequiredArgsConstructor;
 import tools.jackson.databind.ObjectMapper;
 
@@ -16,7 +18,7 @@ public class DomainEventConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(DomainEventConsumer.class);
     public static final String QUEUE = "notification.inbox.q";
-    public static final String EXCHANGE = "homecare.domain.events";
+    public static final String EXCHANGE = DomainEventContracts.EXCHANGE;
 
     private final NotificationInboxService inboxService;
     private final ObjectMapper objectMapper;

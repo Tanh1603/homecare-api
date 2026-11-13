@@ -19,6 +19,8 @@ import com.homecare.commerce.entity.CommerceProcessedEventEntity;
 import com.homecare.commerce.entity.MerchantEntity;
 import com.homecare.commerce.repository.CommerceProcessedEventRepository;
 import com.homecare.commerce.repository.MerchantRepository;
+import com.homecare.common.domain.EntityStatus;
+import com.homecare.common.event.DomainEventContracts;
 
 import lombok.RequiredArgsConstructor;
 import tools.jackson.databind.ObjectMapper;
@@ -43,14 +45,14 @@ public class CommerceOrganizationConsumer {
     public Binding bindCommerceOrgApproved(Queue commerceOrganizationQueue, TopicExchange domainEventsExchange) {
         return BindingBuilder.bind(commerceOrganizationQueue)
                 .to(domainEventsExchange)
-                .with("organization.approved.v1");
+                .with(DomainEventContracts.ORG_APPROVED);
     }
 
     @Bean
     public Binding bindCommerceOrgSuspended(Queue commerceOrganizationQueue, TopicExchange domainEventsExchange) {
         return BindingBuilder.bind(commerceOrganizationQueue)
                 .to(domainEventsExchange)
-                .with("organization.suspended.v1");
+                .with(DomainEventContracts.ORG_SUSPENDED);
     }
 
     @RabbitListener(queues = QUEUE)
@@ -59,8 +61,8 @@ public class CommerceOrganizationConsumer {
     public void onOrganizationEvent(String payloadJson) {
         try {
             Map<String, Object> envelope = objectMapper.readValue(payloadJson, Map.class);
-            String eventIdStr = str(envelope.get("eventId"));
-            String eventType = str(envelope.get("eventType"));
+            String eventIdStr = str(envelope.get(DomainEventContracts.FIELD_EVENT_ID));
+            String eventType = str(envelope.get(DomainEventContracts.FIELD_EVENT_TYPE));
             if (eventIdStr == null || eventType == null) {
                 return;
             }
@@ -70,7 +72,7 @@ public class CommerceOrganizationConsumer {
                 return;
             }
 
-            Object dataObj = envelope.get("data");
+            Object dataObj = envelope.get(DomainEventContracts.FIELD_DATA);
             if (!(dataObj instanceof Map<?, ?> data)) {
                 return;
             }
@@ -80,9 +82,9 @@ public class CommerceOrganizationConsumer {
             }
             UUID orgId = UUID.fromString(orgIdStr);
 
-            if ("organization.approved.v1".equals(eventType)) {
+            if (DomainEventContracts.ORG_APPROVED.equals(eventType)) {
                 handleApproved(orgId, data);
-            } else if ("organization.suspended.v1".equals(eventType)) {
+            } else if (DomainEventContracts.ORG_SUSPENDED.equals(eventType)) {
                 handleSuspended(orgId);
             }
 
@@ -116,7 +118,7 @@ public class CommerceOrganizationConsumer {
                 .name(name != null ? name : "HomeCare Merchant")
                 .city(city != null ? city : "TP. Hồ Chí Minh")
                 .ratingAvg(0.0)
-                .status("INACTIVE")
+                .status(EntityStatus.INACTIVE.name())
                 .createdAt(Instant.now())
                 .build());
         log.info("Initialized INACTIVE MerchantEntity for approved organizationId={} type={}", orgId, type);
@@ -124,7 +126,7 @@ public class CommerceOrganizationConsumer {
 
     private void handleSuspended(UUID orgId) {
         merchantRepository.findByOrganizationId(orgId).ifPresent(merchant -> {
-            merchant.setStatus("INACTIVE");
+            merchant.setStatus(EntityStatus.INACTIVE.name());
             merchantRepository.save(merchant);
             log.info("Set MerchantEntity status=INACTIVE for suspended organizationId={}", orgId);
         });

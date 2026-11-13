@@ -19,9 +19,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.security.RbacConstants;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
+import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
@@ -138,7 +140,7 @@ public class ProviderPublicAndTechController {
         ScheduleWindowResponse created = service.createScheduleWindow(technicianId, sub, request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .header(HttpHeaders.ETAG, EtagSupport.format(created.version()))
-                .body(responseFactory.created("Schedule window created", created, httpRequest));
+                .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
     }
 
     @PatchMapping("/technicians/{technicianId}/schedules/{windowId}")
@@ -154,7 +156,7 @@ public class ProviderPublicAndTechController {
         ScheduleWindowResponse updated = service.updateScheduleWindow(technicianId, sub, windowId, ifMatch, request);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
-                .body(responseFactory.ok("Schedule window updated", updated, httpRequest));
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
     }
 
     private void verifyScheduleManager(Jwt jwt) {
@@ -162,8 +164,7 @@ public class ProviderPublicAndTechController {
                 jwt,
                 new String[]{RbacConstants.ROLE_TECHNICIAN, RbacConstants.ROLE_ORGANIZATION, RbacConstants.ROLE_ADMIN},
                 RbacConstants.PERM_SCHEDULE_MANAGE, RbacConstants.PERM_ADMIN_ALL)) {
-            throw new DomainException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN",
-                    "Only technician, organization, or admin can manage schedules.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
     }
 }

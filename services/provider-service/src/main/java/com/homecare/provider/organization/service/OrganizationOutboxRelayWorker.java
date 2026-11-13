@@ -10,6 +10,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.homecare.common.domain.EntityStatus;
+import com.homecare.common.event.DomainEventContracts;
 import com.homecare.provider.organization.entity.ProviderOutboxEventEntity;
 import com.homecare.provider.organization.repository.ProviderOutboxEventRepository;
 
@@ -32,10 +34,10 @@ public class OrganizationOutboxRelayWorker {
         for (ProviderOutboxEventEntity event : pending) {
             try {
                 rabbitTemplate.convertAndSend(
-                        OrganizationDomainService.EXCHANGE,
+                        DomainEventContracts.EXCHANGE,
                         event.getRoutingKey(),
                         event.getPayloadJson());
-                event.setStatus("PUBLISHED");
+                event.setStatus(EntityStatus.PUBLISHED.name());
                 event.setPublishedAt(Instant.now());
                 outboxRepository.save(event);
             } catch (Exception ex) {

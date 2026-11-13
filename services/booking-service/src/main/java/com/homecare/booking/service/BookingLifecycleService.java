@@ -34,6 +34,7 @@ import com.homecare.booking.repository.BookingRepository;
 import com.homecare.booking.repository.WorkUpdateRepository;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
+import com.homecare.common.event.DomainEventContracts;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.VerifyOfferingResponse;
@@ -45,7 +46,7 @@ import lombok.RequiredArgsConstructor;
 public class BookingLifecycleService {
 
     private static final Logger log = LoggerFactory.getLogger(BookingLifecycleService.class);
-    public static final String EXCHANGE = "homecare.domain.events";
+    public static final String EXCHANGE = DomainEventContracts.EXCHANGE;
 
     private final BookingRepository bookingRepository;
     private final BookingHistoryRepository historyRepository;

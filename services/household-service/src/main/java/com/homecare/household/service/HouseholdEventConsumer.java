@@ -13,6 +13,8 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
 
+import com.homecare.common.event.DomainEventContracts;
+
 import lombok.RequiredArgsConstructor;
 import tools.jackson.databind.ObjectMapper;
 
@@ -22,7 +24,7 @@ public class HouseholdEventConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(HouseholdEventConsumer.class);
     public static final String QUEUE = "household.events.q";
-    public static final String EXCHANGE = "homecare.domain.events";
+    public static final String EXCHANGE = DomainEventContracts.EXCHANGE;
 
     private final HouseholdDomainService domainService;
     private final ObjectMapper objectMapper;

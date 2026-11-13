@@ -45,8 +45,10 @@ import com.homecare.commerce.repository.OrderReturnRequestRepository;
 import com.homecare.commerce.repository.PaymentAttemptRepository;
 import com.homecare.commerce.repository.ProductRepository;
 import com.homecare.commerce.exception.CommerceErrorCode;
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
+import com.homecare.common.event.DomainEventContracts;
 
 import lombok.RequiredArgsConstructor;
 
@@ -55,7 +57,7 @@ import lombok.RequiredArgsConstructor;
 public class CommerceDomainService {
 
     private static final Logger log = LoggerFactory.getLogger(CommerceDomainService.class);
-    public static final String EXCHANGE = "homecare.domain.events";
+    public static final String EXCHANGE = DomainEventContracts.EXCHANGE;
 
     private final MerchantRepository merchantRepository;
     private final ProductRepository productRepository;
@@ -365,14 +367,12 @@ public class CommerceDomainService {
 
     private void verifyActiveMerchantScope(OrderEntity order, UUID orgIdHeader) {
         MerchantEntity merchant = merchantRepository.findById(order.getMerchantId()).orElse(null);
-        if (merchant != null && "INACTIVE".equalsIgnoreCase(merchant.getStatus())) {
-            throw new DomainException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN",
-                    "Merchant organization is currently inactive or suspended.");
+        if (merchant != null && EntityStatus.INACTIVE.name().equalsIgnoreCase(merchant.getStatus())) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
         if (orgIdHeader != null && merchant != null && merchant.getOrganizationId() != null
                 && !orgIdHeader.equals(merchant.getOrganizationId())) {
-            throw new DomainException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN",
-                    "Order does not belong to the active organization.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
     }
 
@@ -439,8 +439,7 @@ public class CommerceDomainService {
         OrderEntity order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND, "Order not found: " + orderId));
         if (!isPrivileged && !order.getBuyerProfileId().equals(callerProfileId)) {
-            throw new DomainException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN",
-                    "You do not have permission to view returns for this order.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
         return returnRequestRepository.findByOrderIdOrderByCreatedAtDesc(orderId)
                 .stream()

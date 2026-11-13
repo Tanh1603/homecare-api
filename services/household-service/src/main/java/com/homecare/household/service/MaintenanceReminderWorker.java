@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.homecare.household.entity.HouseholdOutboxEvent;
+import com.homecare.common.event.DomainEventContracts;
 import com.homecare.household.repository.HouseholdOutboxEventRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -21,7 +22,7 @@ import lombok.RequiredArgsConstructor;
 public class MaintenanceReminderWorker {
 
     private static final Logger log = LoggerFactory.getLogger(MaintenanceReminderWorker.class);
-    public static final String EXCHANGE = "homecare.domain.events";
+    public static final String EXCHANGE = DomainEventContracts.EXCHANGE;
     public static final String ROUTING_KEY = "maintenance.reminder.due.v1";
 
     private final HouseholdDomainService domainService;

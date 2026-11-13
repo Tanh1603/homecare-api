@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.homecare.common.security.RbacConstants;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
+import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import com.homecare.provider.organization.dto.OrganizationDtos.AddMemberRequest;
@@ -52,7 +53,7 @@ public class OrganizationController {
             HttpServletRequest httpRequest) {
         OrganizationResponse created = organizationService.registerOrganization(jwt.getSubject(), request);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(responseFactory.created("Organization registered successfully.", created, httpRequest));
+                .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
     }
 
     @GetMapping("/my")
@@ -60,7 +61,7 @@ public class OrganizationController {
             @AuthenticationPrincipal Jwt jwt,
             HttpServletRequest httpRequest) {
         List<MyOrganizationMembershipResponse> list = organizationService.listMyOrganizations(jwt.getSubject());
-        return ResponseEntity.ok(responseFactory.ok("My organizations fetched.", list, httpRequest));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.RETRIEVED, list, httpRequest));
     }
 
     @GetMapping("/{id}")
@@ -71,7 +72,7 @@ public class OrganizationController {
         boolean isAdmin = SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
                 jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ORGANIZATION_REVIEW, RbacConstants.PERM_ADMIN_ALL);
         OrganizationResponse detail = organizationService.getOrganizationDetail(id, jwt.getSubject(), isAdmin);
-        return ResponseEntity.ok(responseFactory.ok("Organization details fetched.", detail, httpRequest));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.RETRIEVED, detail, httpRequest));
     }
 
     @GetMapping("/current/members")
@@ -79,7 +80,7 @@ public class OrganizationController {
     public ResponseEntity<ApiResponse<List<OrganizationMemberResponse>>> listCurrentOrgMembers(
             HttpServletRequest httpRequest) {
         UUID orgId = OrgContext.get().organizationId();
-        return ResponseEntity.ok(responseFactory.ok("Organization members fetched.", organizationService.listMembers(orgId), httpRequest));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.RETRIEVED, organizationService.listMembers(orgId), httpRequest));
     }
 
     @PostMapping("/current/members")
@@ -90,7 +91,7 @@ public class OrganizationController {
         UUID orgId = OrgContext.get().organizationId();
         OrganizationMemberResponse member = organizationService.addMember(orgId, request);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(responseFactory.created("Member added successfully.", member, httpRequest));
+                .body(responseFactory.created(ApiMessages.CREATED, member, httpRequest));
     }
 
     @PatchMapping("/current/members/{userId}")
@@ -101,7 +102,7 @@ public class OrganizationController {
             HttpServletRequest httpRequest) {
         UUID orgId = OrgContext.get().organizationId();
         return ResponseEntity.ok(responseFactory.ok(
-                "Member role updated.",
+                ApiMessages.UPDATED,
                 organizationService.updateMemberRole(orgId, userId, request.role()),
                 httpRequest));
     }
@@ -113,6 +114,6 @@ public class OrganizationController {
             HttpServletRequest httpRequest) {
         UUID orgId = OrgContext.get().organizationId();
         organizationService.removeMember(orgId, userId);
-        return ResponseEntity.ok(responseFactory.ok("Member removed.", null, httpRequest));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.DELETED, null, httpRequest));
     }
 }

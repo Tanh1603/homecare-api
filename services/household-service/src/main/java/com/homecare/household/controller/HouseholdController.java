@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
@@ -61,7 +62,7 @@ public class HouseholdController {
             HttpServletRequest httpRequest) {
         HouseholdResponse created = service.createHousehold(jwt.getSubject(), request);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(responseFactory.created("Household created", created, httpRequest));
+                .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
     }
 
     @GetMapping("/households")
@@ -72,7 +73,7 @@ public class HouseholdController {
             HttpServletRequest httpRequest) {
         List<HouseholdResponse> items = service.listHouseholds(jwt.getSubject());
         return ResponseEntity.ok(responseFactory.ok(
-                "Households retrieved",
+                ApiMessages.RETRIEVED,
                 PageResponse.of(items, page, size, items.size()),
                 httpRequest));
     }
@@ -83,7 +84,7 @@ public class HouseholdController {
             @PathVariable UUID householdId,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
-                "Household retrieved",
+                ApiMessages.RETRIEVED,
                 service.getHousehold(jwt.getSubject(), householdId),
                 httpRequest));
     }
@@ -95,7 +96,7 @@ public class HouseholdController {
             @RequestBody UpdateHouseholdRequest request,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
-                "Household updated",
+                ApiMessages.UPDATED,
                 service.updateHousehold(jwt.getSubject(), householdId, request),
                 httpRequest));
     }
@@ -106,7 +107,7 @@ public class HouseholdController {
             @PathVariable UUID householdId,
             HttpServletRequest httpRequest) {
         service.deleteHousehold(jwt.getSubject(), householdId);
-        return ResponseEntity.ok(responseFactory.ok("Household deleted", null, httpRequest));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.DELETED, null, httpRequest));
     }
 
     @PostMapping("/devices")
@@ -117,7 +118,7 @@ public class HouseholdController {
         DeviceResponse created = service.createDevice(jwt.getSubject(), request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .header(HttpHeaders.ETAG, EtagSupport.format(created.version()))
-                .body(responseFactory.created("Device created", created, httpRequest));
+                .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
     }
 
     @GetMapping("/devices")
@@ -129,7 +130,7 @@ public class HouseholdController {
             HttpServletRequest httpRequest) {
         List<DeviceResponse> items = service.listDevices(jwt.getSubject(), householdId);
         return ResponseEntity.ok(responseFactory.ok(
-                "Devices retrieved",
+                ApiMessages.RETRIEVED,
                 PageResponse.of(items, page, size, items.size()),
                 httpRequest));
     }
@@ -142,7 +143,7 @@ public class HouseholdController {
         DeviceResponse device = service.getDevice(jwt.getSubject(), deviceId);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(device.version()))
-                .body(responseFactory.ok("Device retrieved", device, httpRequest));
+                .body(responseFactory.ok(ApiMessages.RETRIEVED, device, httpRequest));
     }
 
     @PatchMapping("/devices/{deviceId}")
@@ -155,7 +156,7 @@ public class HouseholdController {
         DeviceResponse updated = service.updateDevice(jwt.getSubject(), deviceId, ifMatch, request);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
-                .body(responseFactory.ok("Device updated", updated, httpRequest));
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
     }
 
     @DeleteMapping("/devices/{deviceId}")
@@ -164,7 +165,7 @@ public class HouseholdController {
             @PathVariable UUID deviceId,
             HttpServletRequest httpRequest) {
         service.deleteDevice(jwt.getSubject(), deviceId);
-        return ResponseEntity.ok(responseFactory.ok("Device deleted", null, httpRequest));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.DELETED, null, httpRequest));
     }
 
     @PostMapping("/devices/{deviceId}/warranties")
@@ -175,7 +176,7 @@ public class HouseholdController {
             HttpServletRequest httpRequest) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(
-                        "Warranty created",
+                        ApiMessages.CREATED,
                         service.createWarranty(jwt.getSubject(), deviceId, request),
                         httpRequest));
     }
@@ -186,7 +187,7 @@ public class HouseholdController {
             @PathVariable UUID deviceId,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
-                "Warranties retrieved",
+                ApiMessages.RETRIEVED,
                 service.listWarranties(jwt.getSubject(), deviceId),
                 httpRequest));
     }
@@ -198,7 +199,7 @@ public class HouseholdController {
             @RequestBody UpdateWarrantyRequest request,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
-                "Warranty updated",
+                ApiMessages.UPDATED,
                 service.updateWarranty(jwt.getSubject(), warrantyId, request),
                 httpRequest));
     }
@@ -209,7 +210,7 @@ public class HouseholdController {
             @PathVariable UUID warrantyId,
             HttpServletRequest httpRequest) {
         service.deleteWarranty(jwt.getSubject(), warrantyId);
-        return ResponseEntity.ok(responseFactory.ok("Warranty deleted", null, httpRequest));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.DELETED, null, httpRequest));
     }
 
     @PostMapping("/devices/{deviceId}/maintenance-schedules")
@@ -220,7 +221,7 @@ public class HouseholdController {
             HttpServletRequest httpRequest) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(
-                        "Maintenance schedule created",
+                        ApiMessages.CREATED,
                         service.createSchedule(jwt.getSubject(), deviceId, request),
                         httpRequest));
     }
@@ -231,7 +232,7 @@ public class HouseholdController {
             @PathVariable UUID deviceId,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
-                "Maintenance schedules retrieved",
+                ApiMessages.RETRIEVED,
                 service.listSchedules(jwt.getSubject(), deviceId),
                 httpRequest));
     }
@@ -243,7 +244,7 @@ public class HouseholdController {
             @RequestBody UpdateMaintenanceScheduleRequest request,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
-                "Maintenance schedule updated",
+                ApiMessages.UPDATED,
                 service.updateSchedule(jwt.getSubject(), scheduleId, request),
                 httpRequest));
     }
@@ -254,7 +255,7 @@ public class HouseholdController {
             @PathVariable UUID scheduleId,
             HttpServletRequest httpRequest) {
         service.deleteSchedule(jwt.getSubject(), scheduleId);
-        return ResponseEntity.ok(responseFactory.ok("Maintenance schedule deleted", null, httpRequest));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.DELETED, null, httpRequest));
     }
 
     @PostMapping("/devices/{deviceId}/care-history")
@@ -265,7 +266,7 @@ public class HouseholdController {
             HttpServletRequest httpRequest) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(
-                        "Care record created",
+                        ApiMessages.CREATED,
                         service.createCareRecord(jwt.getSubject(), deviceId, request),
                         httpRequest));
     }
@@ -276,7 +277,7 @@ public class HouseholdController {
             @PathVariable UUID deviceId,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
-                "Care records retrieved",
+                ApiMessages.RETRIEVED,
                 service.listCareRecords(jwt.getSubject(), deviceId),
                 httpRequest));
     }
@@ -288,7 +289,7 @@ public class HouseholdController {
             @RequestBody UpdateCareRecordRequest request,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
-                "Care record updated",
+                ApiMessages.UPDATED,
                 service.updateCareRecord(jwt.getSubject(), recordId, request),
                 httpRequest));
     }
@@ -299,6 +300,6 @@ public class HouseholdController {
             @PathVariable UUID recordId,
             HttpServletRequest httpRequest) {
         service.deleteCareRecord(jwt.getSubject(), recordId);
-        return ResponseEntity.ok(responseFactory.ok("Care record deleted", null, httpRequest));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.DELETED, null, httpRequest));
     }
 }

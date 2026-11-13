@@ -28,10 +28,12 @@ import com.homecare.commerce.dto.CommerceDtos.PaymentAttemptResponse;
 import com.homecare.commerce.dto.CommerceDtos.ProductResponse;
 import com.homecare.commerce.dto.CommerceDtos.ResolveOrderReturnRequest;
 import com.homecare.commerce.service.CommerceDomainService;
+import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.idempotency.IdempotencyService;
 import com.homecare.common.security.RbacConstants;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
+import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
@@ -94,7 +96,7 @@ public class CommerceController {
         }
         return ResponseEntity.status(HttpStatus.CREATED)
                 .header(HttpHeaders.ETAG, EtagSupport.format(created.version()))
-                .body(responseFactory.created("Order created", created, httpRequest));
+                .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
     }
 
     @GetMapping("/orders")
@@ -105,7 +107,7 @@ public class CommerceController {
             HttpServletRequest httpRequest) {
         List<OrderResponse> items = service.listOrders(jwt.getSubject());
         return ResponseEntity.ok(responseFactory.ok(
-                "Orders retrieved",
+                ApiMessages.RETRIEVED,
                 PageResponse.of(items, page, size, items.size()),
                 httpRequest));
     }
@@ -118,7 +120,7 @@ public class CommerceController {
         OrderResponse order = service.getOrder(jwt.getSubject(), orderId);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(order.version()))
-                .body(responseFactory.ok("Order retrieved", order, httpRequest));
+                .body(responseFactory.ok(ApiMessages.RETRIEVED, order, httpRequest));
     }
 
     @PostMapping("/orders/{orderId}/payment-attempts")
@@ -142,7 +144,7 @@ public class CommerceController {
             attempt = service.createPaymentAttempt(sub, orderId, returnUrl);
         }
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(responseFactory.created("Payment attempt created", attempt, httpRequest));
+                .body(responseFactory.created(ApiMessages.CREATED, attempt, httpRequest));
     }
 
     @GetMapping("/payments/vnpay/ipn")
@@ -162,9 +164,9 @@ public class CommerceController {
             @PathVariable UUID lineId,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
             HttpServletRequest httpRequest) {
-        verifyOrganizationOrAdmin(jwt, "Only organization or admin can fulfill order lines.", RbacConstants.PERM_ORDER_FULFILL);
+        verifyOrganizationOrAdmin(jwt, RbacConstants.PERM_ORDER_FULFILL);
         return ResponseEntity.ok(responseFactory.ok(
-                "Order line fulfilled",
+                ApiMessages.PROCESSED,
                 service.fulfillOrderLine(jwt.getSubject(), orderId, lineId, orgIdHeader),
                 httpRequest));
     }
@@ -179,7 +181,7 @@ public class CommerceController {
         OrderReturnResponse created = service.createOrderReturnRequest(
                 jwt.getSubject(), orderId, lineId, request);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(responseFactory.created("Order return request created", created, httpRequest));
+                .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
     }
 
     @PostMapping("/orders/{orderId}/returns/{returnId}/resolve")
@@ -190,18 +192,18 @@ public class CommerceController {
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
             @Valid @RequestBody ResolveOrderReturnRequest request,
             HttpServletRequest httpRequest) {
-        verifyOrganizationOrAdmin(jwt, "Only organization or admin can resolve order returns.", RbacConstants.PERM_ORDER_RETURN_RESOLVE);
+        verifyOrganizationOrAdmin(jwt, RbacConstants.PERM_ORDER_RETURN_RESOLVE);
         OrderReturnResponse resolved = service.resolveOrderReturnRequest(
                 jwt.getSubject(), orderId, returnId, request, orgIdHeader);
-        return ResponseEntity.ok(responseFactory.ok("Order return request resolved", resolved, httpRequest));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.PROCESSED, resolved, httpRequest));
     }
 
-    private void verifyOrganizationOrAdmin(Jwt jwt, String message, String requiredPermission) {
+    private void verifyOrganizationOrAdmin(Jwt jwt, String requiredPermission) {
         if (!SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
                 jwt,
                 new String[]{RbacConstants.ROLE_ORGANIZATION, RbacConstants.ROLE_ADMIN},
                 requiredPermission, RbacConstants.PERM_ADMIN_ALL)) {
-            throw new DomainException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", message);
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
     }
 
@@ -215,7 +217,7 @@ public class CommerceController {
                 new String[]{RbacConstants.ROLE_ORGANIZATION, RbacConstants.ROLE_ADMIN},
                 RbacConstants.PERM_ORDER_FULFILL, RbacConstants.PERM_ORDER_RETURN_RESOLVE, RbacConstants.PERM_ADMIN_ALL);
         return ResponseEntity.ok(responseFactory.ok(
-                "Order return requests retrieved",
+                ApiMessages.RETRIEVED,
                 service.listOrderReturns(jwt.getSubject(), isPrivileged, orderId),
                 httpRequest));
     }

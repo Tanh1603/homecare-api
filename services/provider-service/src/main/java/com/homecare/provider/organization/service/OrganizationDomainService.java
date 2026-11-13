@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.homecare.common.error.DomainException;
+import com.homecare.common.event.DomainEventContracts;
 import com.homecare.provider.entity.ProviderEntity;
 import com.homecare.provider.exception.ProviderErrorCode;
 import com.homecare.provider.organization.dto.OrganizationDtos.AddMemberRequest;
@@ -35,10 +36,10 @@ import tools.jackson.databind.ObjectMapper;
 @RequiredArgsConstructor
 public class OrganizationDomainService {
 
-    public static final String EXCHANGE = "homecare.domain.events";
-    public static final String EVT_APPROVED = "organization.approved.v1";
-    public static final String EVT_SUSPENDED = "organization.suspended.v1";
-    public static final String EVT_MEMBER_CHANGED = "organization.member.changed.v1";
+    public static final String EXCHANGE = DomainEventContracts.EXCHANGE;
+    public static final String EVT_APPROVED = DomainEventContracts.ORG_APPROVED;
+    public static final String EVT_SUSPENDED = DomainEventContracts.ORG_SUSPENDED;
+    public static final String EVT_MEMBER_CHANGED = DomainEventContracts.ORG_MEMBER_CHANGED;
 
     private final OrganizationRepository organizationRepository;
     private final OrganizationMemberRepository memberRepository;
@@ -137,8 +138,7 @@ public class OrganizationDomainService {
             return toOrgResponse(org);
         }
         if (org.getStatus() == OrganizationStatus.REJECTED) {
-            throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE,
-                    "Rejected organizations cannot be approved directly.");
+            throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE);
         }
 
         Instant now = Instant.now();
@@ -300,8 +300,7 @@ public class OrganizationDomainService {
                 .filter(m -> "ACTIVE".equalsIgnoreCase(m.getStatus()))
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.ORG_MEMBERSHIP_REQUIRED));
         if (org.getOwnerUserId().equals(targetUserId) || member.getRole() == OrgRole.ORG_OWNER) {
-            throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN,
-                    "Cannot modify or remove the organization owner.");
+            throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN);
         }
         return member;
     }
@@ -309,11 +308,11 @@ public class OrganizationDomainService {
     private void enqueueOutbox(UUID aggregateId, String eventType, Map<String, Object> data, Instant now) {
         UUID eventId = UUID.randomUUID();
         Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("eventId", eventId.toString());
-        envelope.put("eventType", eventType);
-        envelope.put("occurredAt", now.toString());
-        envelope.put("producer", "provider-service");
-        envelope.put("data", data);
+        envelope.put(DomainEventContracts.FIELD_EVENT_ID, eventId.toString());
+        envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, eventType);
+        envelope.put(DomainEventContracts.FIELD_OCCURRED_AT, now.toString());
+        envelope.put(DomainEventContracts.FIELD_PRODUCER, "provider-service");
+        envelope.put(DomainEventContracts.FIELD_DATA, data);
 
         String json;
         try {

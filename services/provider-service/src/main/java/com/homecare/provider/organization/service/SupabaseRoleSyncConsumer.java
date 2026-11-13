@@ -13,6 +13,7 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
 
+import com.homecare.common.event.DomainEventContracts;
 import com.homecare.provider.organization.repository.OrganizationMemberRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -31,7 +32,7 @@ public class SupabaseRoleSyncConsumer {
 
     @Bean
     public TopicExchange organizationDomainExchange() {
-        return new TopicExchange(OrganizationDomainService.EXCHANGE, true, false);
+        return new TopicExchange(DomainEventContracts.EXCHANGE, true, false);
     }
 
     @Bean
@@ -43,21 +44,21 @@ public class SupabaseRoleSyncConsumer {
     public Binding bindOrgApprovedForRoleSync(Queue supabaseRoleSyncQueue, TopicExchange organizationDomainExchange) {
         return BindingBuilder.bind(supabaseRoleSyncQueue)
                 .to(organizationDomainExchange)
-                .with(OrganizationDomainService.EVT_APPROVED);
+                .with(DomainEventContracts.ORG_APPROVED);
     }
 
     @Bean
     public Binding bindOrgSuspendedForRoleSync(Queue supabaseRoleSyncQueue, TopicExchange organizationDomainExchange) {
         return BindingBuilder.bind(supabaseRoleSyncQueue)
                 .to(organizationDomainExchange)
-                .with(OrganizationDomainService.EVT_SUSPENDED);
+                .with(DomainEventContracts.ORG_SUSPENDED);
     }
 
     @Bean
     public Binding bindOrgMemberChangedForRoleSync(Queue supabaseRoleSyncQueue, TopicExchange organizationDomainExchange) {
         return BindingBuilder.bind(supabaseRoleSyncQueue)
                 .to(organizationDomainExchange)
-                .with(OrganizationDomainService.EVT_MEMBER_CHANGED);
+                .with(DomainEventContracts.ORG_MEMBER_CHANGED);
     }
 
     @RabbitListener(queues = QUEUE)
@@ -65,8 +66,8 @@ public class SupabaseRoleSyncConsumer {
     public void onOrganizationEvent(String payloadJson) {
         try {
             Map<String, Object> envelope = objectMapper.readValue(payloadJson, Map.class);
-            String eventType = String.valueOf(envelope.get("eventType"));
-            Object dataObj = envelope.get("data");
+            String eventType = String.valueOf(envelope.get(DomainEventContracts.FIELD_EVENT_TYPE));
+            Object dataObj = envelope.get(DomainEventContracts.FIELD_DATA);
             if (!(dataObj instanceof Map<?, ?> dataMap)) {
                 return;
             }

@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.PageResponse;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
@@ -69,7 +70,7 @@ public class NotificationController {
             HttpServletRequest httpRequest) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(
-                        "Notification device registered",
+                        ApiMessages.CREATED,
                         service.registerDevice(jwt.getSubject(), request),
                         httpRequest));
     }
@@ -80,6 +81,6 @@ public class NotificationController {
             @PathVariable UUID deviceId,
             HttpServletRequest httpRequest) {
         service.deactivateDevice(jwt.getSubject(), deviceId);
-        return ResponseEntity.ok(responseFactory.ok("Notification device deactivated", null, httpRequest));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.DELETED, null, httpRequest));
     }
 }

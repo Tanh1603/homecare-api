@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.PageResponse;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
@@ -46,7 +47,7 @@ public class ReviewController {
             HttpServletRequest httpRequest) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(
-                        "Service review created",
+                        ApiMessages.CREATED,
                         service.createServiceReview(jwt.getSubject(), request),
                         httpRequest));
     }
@@ -58,7 +59,7 @@ public class ReviewController {
             @Valid @RequestBody UpdateReviewRequest request,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
-                "Service review updated",
+                ApiMessages.UPDATED,
                 service.updateServiceReview(jwt.getSubject(), reviewId, request),
                 httpRequest));
     }
@@ -71,7 +72,7 @@ public class ReviewController {
             HttpServletRequest httpRequest) {
         List<ReviewResponse> items = service.listProviderReviews(providerId);
         return ResponseEntity.ok(responseFactory.ok(
-                "Provider reviews retrieved",
+                ApiMessages.RETRIEVED,
                 PageResponse.of(items, page, size, items.size()),
                 httpRequest));
     }
@@ -84,7 +85,7 @@ public class ReviewController {
             HttpServletRequest httpRequest) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(
-                        "Product review created",
+                        ApiMessages.CREATED,
                         service.createProductReview(jwt.getSubject(), productId, request),
                         httpRequest));
     }
@@ -97,7 +98,7 @@ public class ReviewController {
             HttpServletRequest httpRequest) {
         List<ReviewResponse> items = service.listProductReviews(productId);
         return ResponseEntity.ok(responseFactory.ok(
-                "Product reviews retrieved",
+                ApiMessages.RETRIEVED,
                 PageResponse.of(items, page, size, items.size()),
                 httpRequest));
     }

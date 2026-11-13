@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.homecare.common.security.RbacConstants;
+import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationResponse;
@@ -42,7 +43,7 @@ public class AdminOrganizationController {
     public ResponseEntity<ApiResponse<List<OrganizationResponse>>> listOrganizations(
             @RequestParam(required = false) OrganizationStatus status,
             HttpServletRequest httpRequest) {
-        return ResponseEntity.ok(responseFactory.ok("Organizations fetched.", organizationService.listAllForAdmin(status), httpRequest));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.RETRIEVED, organizationService.listAllForAdmin(status), httpRequest));
     }
 
     @PostMapping("/{id}/approve")
@@ -51,7 +52,7 @@ public class AdminOrganizationController {
             @AuthenticationPrincipal Jwt jwt,
             HttpServletRequest httpRequest) {
         OrganizationResponse approved = organizationService.approveOrganization(id, jwt.getSubject());
-        return ResponseEntity.ok(responseFactory.ok("Organization approved.", approved, httpRequest));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.APPROVED, approved, httpRequest));
     }
 
     @PostMapping("/{id}/reject")
@@ -60,7 +61,7 @@ public class AdminOrganizationController {
             @Valid @RequestBody RejectOrganizationRequest request,
             HttpServletRequest httpRequest) {
         OrganizationResponse rejected = organizationService.rejectOrganization(id, request.reason());
-        return ResponseEntity.ok(responseFactory.ok("Organization rejected.", rejected, httpRequest));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.REJECTED, rejected, httpRequest));
     }
 
     @PostMapping("/{id}/suspend")
@@ -68,6 +69,6 @@ public class AdminOrganizationController {
             @PathVariable UUID id,
             HttpServletRequest httpRequest) {
         OrganizationResponse suspended = organizationService.suspendOrganization(id);
-        return ResponseEntity.ok(responseFactory.ok("Organization suspended.", suspended, httpRequest));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.SUSPENDED, suspended, httpRequest));
     }
 }

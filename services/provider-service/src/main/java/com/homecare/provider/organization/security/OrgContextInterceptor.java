@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerInterceptor;
 
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.security.RbacConstants;
@@ -47,7 +48,7 @@ public class OrgContextInterceptor implements HandlerInterceptor {
 
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) {
-            throw new DomainException(CommonErrorCode.UNAUTHENTICATED, "Authentication required.");
+            throw new DomainException(CommonErrorCode.UNAUTHENTICATED);
         }
         String userId = auth.getName();
 
@@ -66,16 +67,14 @@ public class OrgContextInterceptor implements HandlerInterceptor {
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
 
         if (org.getStatus() != OrganizationStatus.APPROVED) {
-            throw new DomainException(
-                    ProviderErrorCode.ORGANIZATION_NOT_APPROVED,
-                    "Organization is currently " + org.getStatus() + " and cannot perform business operations.");
+            throw new DomainException(ProviderErrorCode.ORGANIZATION_NOT_APPROVED);
         }
 
         OrganizationMemberEntity member = memberRepository.findByOrganizationIdAndUserId(orgId, userId)
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.ORG_MEMBERSHIP_REQUIRED));
 
-        if (!"ACTIVE".equalsIgnoreCase(member.getStatus())) {
-            throw new DomainException(ProviderErrorCode.ORG_MEMBERSHIP_REQUIRED, "Organization membership is inactive.");
+        if (!EntityStatus.ACTIVE.name().equalsIgnoreCase(member.getStatus())) {
+            throw new DomainException(ProviderErrorCode.ORG_MEMBERSHIP_REQUIRED);
         }
 
         boolean roleAllowed = annotation.value().length == 0

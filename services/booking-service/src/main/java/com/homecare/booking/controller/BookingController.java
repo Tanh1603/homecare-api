@@ -26,6 +26,7 @@ import com.homecare.booking.service.BookingLifecycleService;
 import com.homecare.common.idempotency.IdempotencyService;
 import com.homecare.common.security.RbacConstants;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
+import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
@@ -67,7 +68,7 @@ public class BookingController {
         }
         return ResponseEntity.status(HttpStatus.CREATED)
                 .header(HttpHeaders.ETAG, EtagSupport.format(created.version()))
-                .body(responseFactory.created("Booking created", created, httpRequest));
+                .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
     }
 
     @GetMapping
@@ -82,7 +83,7 @@ public class BookingController {
                 isPrivilegedBookingReader(jwt),
                 isGlobalAdmin(jwt) ? null : orgIdHeader);
         return ResponseEntity.ok(responseFactory.ok(
-                "Bookings retrieved",
+                ApiMessages.RETRIEVED,
                 PageResponse.of(items, page, size, items.size()),
                 httpRequest));
     }
@@ -100,7 +101,7 @@ public class BookingController {
                 isGlobalAdmin(jwt) ? null : orgIdHeader);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(booking.version()))
-                .body(responseFactory.ok("Booking retrieved", booking, httpRequest));
+                .body(responseFactory.ok(ApiMessages.RETRIEVED, booking, httpRequest));
     }
 
     @PostMapping("/{bookingId}/cancel")
@@ -123,7 +124,7 @@ public class BookingController {
                 isGlobalAdmin(jwt) ? null : orgIdHeader);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
-                .body(responseFactory.ok("Booking cancelled", updated, httpRequest));
+                .body(responseFactory.ok(ApiMessages.CANCELLED, updated, httpRequest));
     }
 
     @PostMapping("/{bookingId}/work-updates")
@@ -136,7 +137,7 @@ public class BookingController {
         BookingResponse updated = service.appendWorkUpdate(jwt.getSubject(), bookingId, ifMatch, request);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
-                .body(responseFactory.ok("Work update recorded", updated, httpRequest));
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
     }
 
     private boolean isGlobalAdmin(Jwt jwt) {
