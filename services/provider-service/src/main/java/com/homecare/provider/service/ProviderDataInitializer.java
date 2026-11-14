@@ -9,6 +9,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.provider.entity.ProviderEntity;
 import com.homecare.provider.entity.ScheduleWindow;
 import com.homecare.provider.entity.ServiceOffering;
@@ -67,7 +68,7 @@ public class ProviderDataInitializer implements CommandLineRunner {
                 .city("TP. Hồ Chí Minh")
                 .phone("0901234567")
                 .ratingAvg(4.9)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(now)
                 .build());
 
@@ -80,7 +81,7 @@ public class ProviderDataInitializer implements CommandLineRunner {
                 .city("TP. Hồ Chí Minh")
                 .phone("0909888777")
                 .ratingAvg(4.8)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(now)
                 .build());
 
@@ -161,7 +162,7 @@ public class ProviderDataInitializer implements CommandLineRunner {
                 .experienceYears(7)
                 .ratingAvg(4.95)
                 .activeAllocations(0)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(now)
                 .build());
 
@@ -174,7 +175,7 @@ public class ProviderDataInitializer implements CommandLineRunner {
                 .experienceYears(4)
                 .ratingAvg(4.7)
                 .activeAllocations(1)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(now)
                 .build());
 
@@ -187,7 +188,7 @@ public class ProviderDataInitializer implements CommandLineRunner {
                 .experienceYears(6)
                 .ratingAvg(4.85)
                 .activeAllocations(0)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(now)
                 .build());
 
@@ -246,7 +247,7 @@ public class ProviderDataInitializer implements CommandLineRunner {
                 .organizationId(PROVIDER_1_ID)
                 .userId(supabaseOrgOwnerId)
                 .role(OrgRole.ORG_OWNER)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .joinedAt(now)
                 .createdAt(now)
                 .build());
@@ -256,7 +257,7 @@ public class ProviderDataInitializer implements CommandLineRunner {
                 .organizationId(PROVIDER_2_ID)
                 .userId(supabaseOrgOwnerId)
                 .role(OrgRole.ORG_ADMIN)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .joinedAt(now)
                 .createdAt(now)
                 .build());

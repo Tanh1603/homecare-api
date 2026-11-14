@@ -11,8 +11,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.homecare.household.entity.HouseholdOutboxEvent;
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.event.DomainEventContracts;
+import com.homecare.household.entity.HouseholdOutboxEvent;
 import com.homecare.household.repository.HouseholdOutboxEventRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -33,11 +34,11 @@ public class MaintenanceReminderWorker {
     @Transactional
     public void emitDueMaintenanceReminders() {
         domainService.enqueueDueMaintenanceReminders(LocalDate.now());
-        List<HouseholdOutboxEvent> pending = outboxEventRepository.findByStatusOrderByCreatedAtAsc("PENDING");
+        List<HouseholdOutboxEvent> pending = outboxEventRepository.findPendingDueEvents(Instant.now());
         for (HouseholdOutboxEvent event : pending) {
             try {
                 rabbitTemplate.convertAndSend(EXCHANGE, event.getRoutingKey(), event.getPayloadJson());
-                event.setStatus("PUBLISHED");
+                event.setStatus(EntityStatus.PUBLISHED.name());
                 event.setPublishedAt(Instant.now());
                 outboxEventRepository.save(event);
             } catch (Exception e) {

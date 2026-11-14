@@ -54,8 +54,8 @@ public class HouseholdEventConsumer {
     public void onDomainEvent(String payloadJson) {
         try {
             Map<String, Object> root = objectMapper.readValue(payloadJson, Map.class);
-            String eventType = String.valueOf(root.getOrDefault("eventType", ""));
-            Map<String, Object> data = root.get("data") instanceof Map<?, ?> m
+            String eventType = String.valueOf(root.getOrDefault(DomainEventContracts.FIELD_EVENT_TYPE, ""));
+            Map<String, Object> data = root.get(DomainEventContracts.FIELD_DATA) instanceof Map<?, ?> m
                     ? (Map<String, Object>) m
                     : Map.of();
 
@@ -93,6 +93,7 @@ public class HouseholdEventConsumer {
             }
         } catch (Exception e) {
             log.warn("HouseholdEventConsumer failed to process event: {}", e.getMessage());
+            throw new IllegalStateException("Failed to process household event", e);
         }
     }
 

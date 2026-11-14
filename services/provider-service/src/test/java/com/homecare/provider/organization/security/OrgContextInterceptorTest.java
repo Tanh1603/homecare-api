@@ -18,6 +18,7 @@ import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.method.HandlerMethod;
 
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.DomainException;
 import com.homecare.provider.organization.entity.OrgRole;
 import com.homecare.provider.organization.entity.OrganizationEntity;
@@ -131,7 +132,7 @@ class OrgContextInterceptorTest {
                         .organizationId(orgId)
                         .userId("user-123")
                         .role(OrgRole.ORG_STAFF)
-                        .status("ACTIVE")
+                        .status(EntityStatus.ACTIVE.name())
                         .build()));
 
         MockHttpServletRequest req = new MockHttpServletRequest();
@@ -158,7 +159,7 @@ class OrgContextInterceptorTest {
                         .organizationId(orgId)
                         .userId("user-123")
                         .role(OrgRole.ORG_OWNER)
-                        .status("ACTIVE")
+                        .status(EntityStatus.ACTIVE.name())
                         .build()));
 
         MockHttpServletRequest req = new MockHttpServletRequest();

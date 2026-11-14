@@ -3,6 +3,8 @@ package com.homecare.provider.organization.entity;
 import java.time.Instant;
 import java.util.UUID;
 
+import com.homecare.common.domain.EntityStatus;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -42,7 +44,7 @@ public class ProviderOutboxEventEntity {
 
     @Column(nullable = false, length = 30)
     @Builder.Default
-    private String status = "PENDING";
+    private String status = EntityStatus.PENDING.name();
 
     @Column(name = "retry_count", nullable = false)
     @Builder.Default

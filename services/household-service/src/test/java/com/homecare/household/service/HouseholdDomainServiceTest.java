@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.household.dto.HouseholdDtos.CareRecordResponse;
@@ -153,7 +154,7 @@ class HouseholdDomainServiceTest {
         WarrantyResponse autoWarranty = warranties.getFirst();
         assertThat(autoWarranty.source()).isEqualTo("ORDER_AUTO_ACTIVATED");
         assertThat(autoWarranty.organizationId()).isEqualTo(orgId);
-        assertThat(autoWarranty.status()).isEqualTo("ACTIVE");
+        assertThat(autoWarranty.status()).isEqualTo(EntityStatus.ACTIVE.name());
 
         VerifyWarrantyResponse verifyOk = service.verifyWarrantyEligibility(autoWarranty.id(), buyer);
         assertThat(verifyOk.valid()).isTrue();

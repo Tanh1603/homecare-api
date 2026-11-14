@@ -23,6 +23,7 @@ import com.homecare.commerce.dto.CommerceDtos.ResolveOrderReturnRequest;
 import com.homecare.commerce.entity.InventoryReservationEntity;
 import com.homecare.commerce.repository.CommerceOutboxEventRepository;
 import com.homecare.commerce.repository.InventoryReservationRepository;
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.DomainException;
 
 @SpringBootTest
@@ -68,7 +69,7 @@ class CommerceAndVnpayTest {
 
         List<InventoryReservationEntity> activeRes = reservationRepository.findByOrderId(order.id());
         assertThat(activeRes).hasSize(1);
-        assertThat(activeRes.getFirst().getStatus()).isEqualTo("ACTIVE");
+        assertThat(activeRes.getFirst().getStatus()).isEqualTo(EntityStatus.ACTIVE.name());
 
         PaymentAttemptResponse attempt = service.createPaymentAttempt(
                 "buyer-1", order.id(), "homecare://payment-result");

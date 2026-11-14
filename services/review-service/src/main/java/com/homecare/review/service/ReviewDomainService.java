@@ -7,6 +7,7 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.review.client.EvidenceVerificationClient;
@@ -31,15 +32,12 @@ public class ReviewDomainService {
     @Transactional
     public ReviewResponse createServiceReview(String authorProfileId, CreateServiceReviewRequest request) {
         if (reviewRepository.findBySourceId(request.bookingId()).isPresent()) {
-            throw new DomainException(ReviewErrorCode.REVIEW_ALREADY_EXISTS,
-                    "A review for this booking already exists.");
+            throw new DomainException(ReviewErrorCode.REVIEW_ALREADY_EXISTS);
         }
         BookingEligibility eligibility = verificationClient.verifyBookingEligible(
                 request.bookingId(), authorProfileId);
         if (!eligibility.eligible()) {
-            throw new DomainException(
-                    ReviewErrorCode.REVIEW_NOT_ELIGIBLE,
-                    "Booking must be COMPLETED by the requester before submitting a review.");
+            throw new DomainException(ReviewErrorCode.REVIEW_NOT_ELIGIBLE);
         }
         UUID providerId = request.providerId() != null
                 ? request.providerId()
@@ -55,7 +53,7 @@ public class ReviewDomainService {
                 .targetId(providerId)
                 .rating(request.rating())
                 .comment(request.comment().trim())
-                .status("PUBLISHED")
+                .status(EntityStatus.PUBLISHED.name())
                 .createdAt(now)
                 .updatedAt(now)
                 .build());
@@ -68,13 +66,10 @@ public class ReviewDomainService {
             UUID productId,
             CreateProductReviewRequest request) {
         if (reviewRepository.findBySourceId(request.orderLineId()).isPresent()) {
-            throw new DomainException(ReviewErrorCode.REVIEW_ALREADY_EXISTS,
-                    "A review for this order line already exists.");
+            throw new DomainException(ReviewErrorCode.REVIEW_ALREADY_EXISTS);
         }
         if (!verificationClient.verifyOrderLineEligible(request.orderLineId(), authorProfileId)) {
-            throw new DomainException(
-                    ReviewErrorCode.REVIEW_NOT_ELIGIBLE,
-                    "Order line must be DELIVERED to the requester before submitting a review.");
+            throw new DomainException(ReviewErrorCode.REVIEW_NOT_ELIGIBLE);
         }
         Instant now = Instant.now();
         ReviewEntity saved = reviewRepository.save(ReviewEntity.builder()
@@ -85,7 +80,7 @@ public class ReviewDomainService {
                 .targetId(productId)
                 .rating(request.rating())
                 .comment(request.comment().trim())
-                .status("PUBLISHED")
+                .status(EntityStatus.PUBLISHED.name())
                 .createdAt(now)
                 .updatedAt(now)
                 .build());
@@ -100,7 +95,7 @@ public class ReviewDomainService {
         ReviewEntity r = reviewRepository.findById(reviewId)
                 .orElseThrow(() -> new DomainException(ReviewErrorCode.REVIEW_NOT_FOUND));
         if (!r.getAuthorProfileId().equals(authorProfileId)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the author of this review.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
         if (request.rating() != null) {
             r.setRating(request.rating());
@@ -115,7 +110,7 @@ public class ReviewDomainService {
     @Transactional(readOnly = true)
     public List<ReviewResponse> listProviderReviews(UUID providerId) {
         return reviewRepository.findByTargetTypeAndTargetIdAndStatusOrderByCreatedAtDesc(
-                "SERVICE_BOOKING", providerId, "PUBLISHED")
+                "SERVICE_BOOKING", providerId, EntityStatus.PUBLISHED.name())
                 .stream()
                 .map(this::toResponse)
                 .toList();
@@ -124,7 +119,7 @@ public class ReviewDomainService {
     @Transactional(readOnly = true)
     public List<ReviewResponse> listProductReviews(UUID productId) {
         return reviewRepository.findByTargetTypeAndTargetIdAndStatusOrderByCreatedAtDesc(
-                "PRODUCT_ORDER_LINE", productId, "PUBLISHED")
+                "PRODUCT_ORDER_LINE", productId, EntityStatus.PUBLISHED.name())
                 .stream()
                 .map(this::toResponse)
                 .toList();

@@ -102,6 +102,21 @@ class BookingLifecycleServiceTest {
         assertThat(saga.getCurrentStep()).isEqualTo("COMPLETED");
         assertThat(outboxEventRepository.findAll()).isNotEmpty();
 
+        assertThatThrownBy(() -> service.appendWorkUpdate(
+                "other-customer-sub",
+                created.id(),
+                EtagSupport.format(created.version()),
+                new CreateWorkUpdateRequest("COMPLETED", "Attempted hijack")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
+
+        assertThatThrownBy(() -> service.listBookingsPage(
+                "org-operator-sub", false, true, false, null, 1, 20))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
+
         BookingResponse inProgress = service.appendWorkUpdate(
                 "demo-technician",
                 created.id(),

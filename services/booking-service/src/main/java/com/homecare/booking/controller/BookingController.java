@@ -23,6 +23,8 @@ import com.homecare.booking.dto.BookingDtos.CancelBookingRequest;
 import com.homecare.booking.dto.BookingDtos.CreateBookingRequest;
 import com.homecare.booking.dto.BookingDtos.CreateWorkUpdateRequest;
 import com.homecare.booking.service.BookingLifecycleService;
+import com.homecare.common.error.CommonErrorCode;
+import com.homecare.common.error.DomainException;
 import com.homecare.common.idempotency.IdempotencyService;
 import com.homecare.common.security.RbacConstants;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
@@ -78,13 +80,23 @@ public class BookingController {
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<BookingResponse> items = service.listBookings(
+        boolean globalAdmin = isGlobalAdmin(jwt);
+        boolean orgOperator = isOrgOperator(jwt);
+        boolean technician = isTechnician(jwt);
+        if (!globalAdmin && orgOperator && orgIdHeader == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        PageResponse<BookingResponse> result = service.listBookingsPage(
                 jwt.getSubject(),
-                isPrivilegedBookingReader(jwt),
-                isGlobalAdmin(jwt) ? null : orgIdHeader);
+                globalAdmin,
+                orgOperator,
+                technician,
+                globalAdmin ? orgIdHeader : orgIdHeader,
+                page,
+                size);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                PageResponse.of(items, page, size, items.size()),
+                result,
                 httpRequest));
     }
 
@@ -94,11 +106,18 @@ public class BookingController {
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
             @PathVariable UUID bookingId,
             HttpServletRequest httpRequest) {
+        boolean globalAdmin = isGlobalAdmin(jwt);
+        boolean orgOperator = isOrgOperator(jwt);
+        if (!globalAdmin && orgOperator && orgIdHeader == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
         BookingResponse booking = service.getBooking(
                 jwt.getSubject(),
-                isPrivilegedBookingReader(jwt),
+                globalAdmin,
+                orgOperator,
+                isTechnician(jwt),
                 bookingId,
-                isGlobalAdmin(jwt) ? null : orgIdHeader);
+                globalAdmin ? null : orgIdHeader);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(booking.version()))
                 .body(responseFactory.ok(ApiMessages.RETRIEVED, booking, httpRequest));
@@ -112,16 +131,18 @@ public class BookingController {
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @RequestBody(required = false) CancelBookingRequest request,
             HttpServletRequest httpRequest) {
+        boolean globalAdmin = isGlobalAdmin(jwt);
+        boolean orgOperator = isOrgOperator(jwt);
+        if (!globalAdmin && orgOperator && orgIdHeader == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
         BookingResponse updated = service.cancelBooking(
                 jwt.getSubject(),
-                SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
-                        jwt,
-                        new String[]{RbacConstants.ROLE_ADMIN, RbacConstants.ROLE_ORGANIZATION},
-                        RbacConstants.PERM_BOOKING_DISPATCH, RbacConstants.PERM_ADMIN_ALL),
+                globalAdmin || orgOperator,
                 bookingId,
                 ifMatch,
                 request,
-                isGlobalAdmin(jwt) ? null : orgIdHeader);
+                globalAdmin ? null : orgIdHeader);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
                 .body(responseFactory.ok(ApiMessages.CANCELLED, updated, httpRequest));
@@ -130,11 +151,26 @@ public class BookingController {
     @PostMapping("/{bookingId}/work-updates")
     public ResponseEntity<ApiResponse<BookingResponse>> addWorkUpdate(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
             @PathVariable UUID bookingId,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @Valid @RequestBody CreateWorkUpdateRequest request,
             HttpServletRequest httpRequest) {
-        BookingResponse updated = service.appendWorkUpdate(jwt.getSubject(), bookingId, ifMatch, request);
+        if (!isWorkUpdater(jwt)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        boolean globalAdmin = isGlobalAdmin(jwt);
+        boolean orgOperator = isOrgOperator(jwt);
+        if (!globalAdmin && orgOperator && orgIdHeader == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        BookingResponse updated = service.appendWorkUpdate(
+                jwt.getSubject(),
+                globalAdmin || orgOperator,
+                globalAdmin ? null : orgIdHeader,
+                bookingId,
+                ifMatch,
+                request);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
                 .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
@@ -145,10 +181,24 @@ public class BookingController {
                 jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ADMIN_ALL);
     }
 
-    private boolean isPrivilegedBookingReader(Jwt jwt) {
+    private boolean isOrgOperator(Jwt jwt) {
+        return SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt,
+                new String[]{RbacConstants.ROLE_ORGANIZATION},
+                RbacConstants.PERM_BOOKING_DISPATCH, RbacConstants.PERM_BOOKING_READ);
+    }
+
+    private boolean isTechnician(Jwt jwt) {
+        return SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt,
+                new String[]{RbacConstants.ROLE_TECHNICIAN},
+                RbacConstants.PERM_BOOKING_UPDATE_STATUS);
+    }
+
+    private boolean isWorkUpdater(Jwt jwt) {
         return SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
                 jwt,
                 new String[]{RbacConstants.ROLE_TECHNICIAN, RbacConstants.ROLE_ORGANIZATION, RbacConstants.ROLE_ADMIN},
-                RbacConstants.PERM_BOOKING_DISPATCH, RbacConstants.PERM_BOOKING_UPDATE_STATUS, RbacConstants.PERM_ADMIN_ALL);
+                RbacConstants.PERM_BOOKING_UPDATE_STATUS, RbacConstants.PERM_BOOKING_DISPATCH, RbacConstants.PERM_ADMIN_ALL);
     }
 }

@@ -28,9 +28,9 @@ public class DomainEventConsumer {
     public void onDomainEvent(String payloadJson) {
         try {
             Map<String, Object> root = objectMapper.readValue(payloadJson, Map.class);
-            String eventId = String.valueOf(root.getOrDefault("eventId", "evt-unknown"));
-            String eventType = String.valueOf(root.getOrDefault("eventType", "domain.event"));
-            Map<String, Object> data = root.get("data") instanceof Map<?, ?> m
+            String eventId = String.valueOf(root.getOrDefault(DomainEventContracts.FIELD_EVENT_ID, "evt-unknown"));
+            String eventType = String.valueOf(root.getOrDefault(DomainEventContracts.FIELD_EVENT_TYPE, "domain.event"));
+            Map<String, Object> data = root.get(DomainEventContracts.FIELD_DATA) instanceof Map<?, ?> m
                     ? (Map<String, Object>) m
                     : Map.of();
 
@@ -121,7 +121,8 @@ public class DomainEventConsumer {
                 default -> log.debug("Ignored domain event type {}", eventType);
             }
         } catch (Exception e) {
-            log.warn("Failed to parse domain event payload: {}", e.getMessage());
+            log.warn("Failed to parse/process domain event payload: {}", e.getMessage());
+            throw new IllegalStateException("Failed to process domain event", e);
         }
     }
 

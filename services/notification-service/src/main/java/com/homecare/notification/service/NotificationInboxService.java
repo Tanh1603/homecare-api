@@ -73,23 +73,28 @@ public class NotificationInboxService {
             return;
         }
         Instant now = Instant.now().truncatedTo(ChronoUnit.MILLIS);
-        processedEventRepository.save(ProcessedEventEntity.builder()
-                .id(UUID.randomUUID())
-                .consumerName(consumerKey)
-                .eventId(eventId)
-                .eventType(eventType)
-                .processedAt(now)
-                .build());
-        notificationRepository.save(NotificationEntity.builder()
-                .id(UUID.randomUUID())
-                .recipientId(recipientId)
-                .dedupeKey(dedupeKey)
-                .eventType(eventType)
-                .title(title)
-                .body(body)
-                .read(false)
-                .createdAt(now)
-                .build());
+        try {
+            processedEventRepository.save(ProcessedEventEntity.builder()
+                    .id(UUID.randomUUID())
+                    .consumerName(consumerKey)
+                    .eventId(eventId)
+                    .eventType(eventType)
+                    .processedAt(now)
+                    .build());
+            notificationRepository.save(NotificationEntity.builder()
+                    .id(UUID.randomUUID())
+                    .recipientId(recipientId)
+                    .dedupeKey(dedupeKey)
+                    .eventType(eventType)
+                    .title(title)
+                    .body(body)
+                    .read(false)
+                    .createdAt(now)
+                    .build());
+        } catch (org.springframework.dao.DataIntegrityViolationException ex) {
+            log.debug("Duplicate notification ignored for dedupeKey={}", dedupeKey);
+            return;
+        }
 
         // Enqueue push notification dispatch message to dedicated RabbitMQ queue (decoupled from DB transaction)
         Map<String, String> data = new HashMap<>();
@@ -97,10 +102,10 @@ public class NotificationInboxService {
             data.putAll(extraData);
         }
         if (eventType != null) {
-            data.put("eventType", eventType);
+            data.put(com.homecare.common.event.DomainEventContracts.FIELD_EVENT_TYPE, eventType);
         }
         if (eventId != null) {
-            data.put("eventId", eventId);
+            data.put(com.homecare.common.event.DomainEventContracts.FIELD_EVENT_ID, eventId);
         }
 
         // Only dispatch push to RabbitMQ after database transaction has successfully committed

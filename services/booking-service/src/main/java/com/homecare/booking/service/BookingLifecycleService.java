@@ -2,14 +2,20 @@ package com.homecare.booking.service;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import tools.jackson.databind.ObjectMapper;
 
 import com.homecare.booking.client.HouseholdVerificationClient;
 import com.homecare.booking.client.HouseholdVerificationClient.WarrantyVerificationResult;
@@ -32,10 +38,12 @@ import com.homecare.booking.repository.BookingHistoryRepository;
 import com.homecare.booking.repository.BookingOutboxEventRepository;
 import com.homecare.booking.repository.BookingRepository;
 import com.homecare.booking.repository.WorkUpdateRepository;
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.event.DomainEventContracts;
 import com.homecare.common.web.EtagSupport;
+import com.homecare.common.web.PageResponse;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.VerifyOfferingResponse;
 
@@ -55,7 +63,7 @@ public class BookingLifecycleService {
     private final BookingOutboxEventRepository outboxEventRepository;
     private final ProviderGrpcClientAdapter providerGrpcClient;
     private final HouseholdVerificationClient householdVerificationClient;
-    private final RabbitTemplate rabbitTemplate;
+    private final ObjectMapper objectMapper;
 
     @Transactional
     public BookingResponse createBooking(String requesterProfileId, CreateBookingRequest request) {
@@ -271,6 +279,39 @@ public class BookingLifecycleService {
     }
 
     @Transactional(readOnly = true)
+    public PageResponse<BookingResponse> listBookingsPage(
+            String actorProfileId,
+            boolean isGlobalAdmin,
+            boolean isOrgOperator,
+            boolean isTechnician,
+            UUID orgScopeId,
+            int page,
+            int size) {
+        int safePage = Math.max(1, page);
+        int safeSize = Math.max(1, Math.min(size, PageResponse.MAX_PAGE_SIZE));
+        Pageable pageable = PageRequest.of(safePage - 1, safeSize);
+        Page<BookingEntity> result;
+        if (isGlobalAdmin) {
+            result = orgScopeId != null
+                    ? bookingRepository.findByProviderIdOrderByCreatedAtDesc(orgScopeId, pageable)
+                    : bookingRepository.findAllByOrderByCreatedAtDesc(pageable);
+        } else if (isOrgOperator) {
+            if (orgScopeId == null) {
+                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            }
+            result = bookingRepository.findByProviderIdOrderByCreatedAtDesc(orgScopeId, pageable);
+        } else if (isTechnician) {
+            result = orgScopeId != null
+                    ? bookingRepository.findByProviderIdOrderByCreatedAtDesc(orgScopeId, pageable)
+                    : bookingRepository.findByAssignedTechnicianProfileIdOrderByCreatedAtDesc(actorProfileId, pageable);
+        } else {
+            result = bookingRepository.findByRequesterProfileIdOrderByCreatedAtDesc(actorProfileId, pageable);
+        }
+        List<BookingResponse> items = result.getContent().stream().map(this::toBookingResponse).toList();
+        return PageResponse.of(items, safePage, safeSize, result.getTotalElements());
+    }
+
+    @Transactional(readOnly = true)
     public List<BookingResponse> listBookings(String actorProfileId, boolean isTechOrAdmin) {
         return listBookings(actorProfileId, isTechOrAdmin, null);
     }
@@ -293,12 +334,37 @@ public class BookingLifecycleService {
 
     @Transactional(readOnly = true)
     public BookingResponse getBooking(String actorProfileId, boolean isTechOrAdmin, UUID bookingId, UUID orgScopeId) {
+        return getBooking(actorProfileId, false, isTechOrAdmin && orgScopeId != null, isTechOrAdmin && orgScopeId == null, bookingId, orgScopeId);
+    }
+
+    @Transactional(readOnly = true)
+    public BookingResponse getBooking(
+            String actorProfileId,
+            boolean isGlobalAdmin,
+            boolean isOrgOperator,
+            boolean isTechnician,
+            UUID bookingId,
+            UUID orgScopeId) {
         BookingEntity booking = requireBooking(bookingId);
-        if (!isTechOrAdmin && !booking.getRequesterProfileId().equals(actorProfileId)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not allowed to view this booking.");
+        if (isGlobalAdmin) {
+            return toBookingResponse(booking);
         }
-        if (orgScopeId != null && isTechOrAdmin && !orgScopeId.equals(booking.getProviderId())) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Booking does not belong to active organization.");
+        if (isOrgOperator) {
+            if (orgScopeId == null || !orgScopeId.equals(booking.getProviderId())) {
+                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            }
+            return toBookingResponse(booking);
+        }
+        if (isTechnician) {
+            boolean matchesOrg = orgScopeId != null && orgScopeId.equals(booking.getProviderId());
+            boolean matchesTech = actorProfileId.equals(booking.getAssignedTechnicianProfileId());
+            if (!matchesOrg && !matchesTech && !booking.getRequesterProfileId().equals(actorProfileId)) {
+                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            }
+            return toBookingResponse(booking);
+        }
+        if (!booking.getRequesterProfileId().equals(actorProfileId)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
         return toBookingResponse(booking);
     }
@@ -323,18 +389,16 @@ public class BookingLifecycleService {
             UUID orgScopeId) {
         BookingEntity booking = requireBooking(bookingId);
         if (!isAdmin && !booking.getRequesterProfileId().equals(actorProfileId)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not allowed to cancel this booking.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
         if (orgScopeId != null && isAdmin && !orgScopeId.equals(booking.getProviderId())) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Booking does not belong to active organization.");
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
         EtagSupport.verifyIfMatch(ifMatchHeader, booking.getVersion());
         if ("IN_PROGRESS".equals(booking.getStatus())
                 || "COMPLETED".equals(booking.getStatus())
                 || "CANCELLED".equals(booking.getStatus())) {
-            throw new DomainException(
-                    BookingErrorCode.BOOKING_INVALID_STATE,
-                    "Cannot cancel a booking in status " + booking.getStatus());
+            throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
         }
         String previous = booking.getStatus();
         booking.setStatus("CANCELLED");
@@ -356,7 +420,25 @@ public class BookingLifecycleService {
             UUID bookingId,
             String ifMatchHeader,
             CreateWorkUpdateRequest request) {
+        return appendWorkUpdate(technicianProfileId, false, null, bookingId, ifMatchHeader, request);
+    }
+
+    @Transactional
+    public BookingResponse appendWorkUpdate(
+            String actorProfileId,
+            boolean isOrgOrAdmin,
+            UUID orgScopeId,
+            UUID bookingId,
+            String ifMatchHeader,
+            CreateWorkUpdateRequest request) {
         BookingEntity booking = requireBooking(bookingId);
+        if (isOrgOrAdmin) {
+            if (orgScopeId != null && !orgScopeId.equals(booking.getProviderId())) {
+                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            }
+        } else if (!actorProfileId.equals(booking.getAssignedTechnicianProfileId())) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
         if (ifMatchHeader != null && !ifMatchHeader.isBlank()) {
             EtagSupport.verifyIfMatch(ifMatchHeader, booking.getVersion());
         }
@@ -366,39 +448,31 @@ public class BookingLifecycleService {
         switch (kind) {
             case "ARRIVED", "DIAGNOSED", "STARTED", "IN_PROGRESS" -> {
                 if (!"ASSIGNED".equals(previous) && !"REQUESTED".equals(previous) && !"IN_PROGRESS".equals(previous)) {
-                    throw new DomainException(
-                            BookingErrorCode.BOOKING_INVALID_STATE,
-                            "Cannot update work progress (" + kind + ") from status " + previous);
+                    throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
                 }
                 booking.setStatus("IN_PROGRESS");
-                recordHistory(bookingId, previous, "IN_PROGRESS", technicianProfileId,
+                recordHistory(bookingId, previous, "IN_PROGRESS", actorProfileId,
                         "[" + kind + "] " + (request.note() != null ? request.note() : ""));
             }
             case "NOTE" -> {
                 if (!"ASSIGNED".equals(previous) && !"IN_PROGRESS".equals(previous)) {
-                    throw new DomainException(
-                            BookingErrorCode.BOOKING_INVALID_STATE,
-                            "Cannot add work note in status " + previous);
+                    throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
                 }
             }
             case "COMPLETED" -> {
                 if (!"IN_PROGRESS".equals(previous) && !"ASSIGNED".equals(previous)) {
-                    throw new DomainException(
-                            BookingErrorCode.BOOKING_INVALID_STATE,
-                            "Cannot complete booking from status " + previous);
+                    throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
                 }
                 booking.setStatus("COMPLETED");
-                recordHistory(bookingId, previous, "COMPLETED", technicianProfileId, request.note());
+                recordHistory(bookingId, previous, "COMPLETED", actorProfileId, request.note());
             }
-            default -> throw new DomainException(
-                    CommonErrorCode.VALIDATION_FAILED,
-                    "Unsupported work update kind: " + kind);
+            default -> throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         }
 
         workUpdateRepository.save(WorkUpdateEntity.builder()
                 .id(UUID.randomUUID())
                 .bookingId(bookingId)
-                .technicianProfileId(technicianProfileId)
+                .technicianProfileId(actorProfileId)
                 .kind(kind)
                 .note(request.note())
                 .createdAt(Instant.now())
@@ -449,46 +523,45 @@ public class BookingLifecycleService {
     private void publishDomainEvent(String eventType, BookingEntity booking) {
         Instant now = Instant.now();
         UUID eventId = UUID.randomUUID();
-        String payload = """
-                {"eventId":"%s","eventType":"%s","occurredAt":"%s","producer":"booking-service","correlationId":"%s","data":{"bookingId":"%s","requesterProfileId":"%s","technicianProfileId":"%s","serviceName":"%s","status":"%s","bookingType":"%s","deviceId":"%s","warrantyId":"%s"}}
-                """
-                .formatted(
-                        eventId,
-                        eventType,
-                        now,
-                        booking.getId(),
-                        booking.getId(),
-                        booking.getRequesterProfileId(),
-                        booking.getAssignedTechnicianProfileId() == null ? "demo-technician"
-                                : booking.getAssignedTechnicianProfileId(),
-                        booking.getServiceName(),
-                        booking.getStatus(),
-                        booking.getBookingType(),
-                        booking.getDeviceId(),
-                        booking.getWarrantyId())
-                .strip();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("bookingId", booking.getId());
+        data.put("requesterProfileId", booking.getRequesterProfileId());
+        data.put("technicianProfileId", booking.getAssignedTechnicianProfileId() == null
+                ? "demo-technician"
+                : booking.getAssignedTechnicianProfileId());
+        data.put("serviceName", booking.getServiceName());
+        data.put("status", booking.getStatus());
+        data.put("bookingType", booking.getBookingType());
+        data.put("deviceId", booking.getDeviceId());
+        data.put("warrantyId", booking.getWarrantyId());
 
-        BookingOutboxEventEntity outbox = outboxEventRepository.save(BookingOutboxEventEntity.builder()
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put(DomainEventContracts.FIELD_EVENT_ID, eventId);
+        envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, eventType);
+        envelope.put(DomainEventContracts.FIELD_OCCURRED_AT, now.toString());
+        envelope.put(DomainEventContracts.FIELD_PRODUCER, "booking-service");
+        envelope.put("correlationId", booking.getId());
+        envelope.put(DomainEventContracts.FIELD_DATA, data);
+
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(envelope);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to serialize booking outbox payload", e);
+        }
+
+        outboxEventRepository.save(BookingOutboxEventEntity.builder()
                 .id(eventId)
                 .aggregateType("Booking")
                 .aggregateId(booking.getId())
                 .eventType(eventType)
                 .routingKey(eventType)
                 .payloadJson(payload)
-                .status("PENDING")
+                .status(EntityStatus.PENDING.name())
                 .retryCount(0)
                 .nextAttemptAt(now)
                 .createdAt(now)
                 .build());
-
-        try {
-            rabbitTemplate.convertAndSend(EXCHANGE, eventType, payload);
-            outbox.setStatus("PUBLISHED");
-            outbox.setPublishedAt(Instant.now());
-            outboxEventRepository.save(outbox);
-        } catch (Exception e) {
-            log.warn("RabbitMQ publish skipped in local/test mode for {}: {}", eventType, e.getMessage());
-        }
     }
 
     private BookingEntity requireBooking(UUID bookingId) {

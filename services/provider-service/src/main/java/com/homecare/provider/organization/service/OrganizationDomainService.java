@@ -6,9 +6,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.event.DomainEventContracts;
 import com.homecare.provider.entity.ProviderEntity;
@@ -72,7 +74,7 @@ public class OrganizationDomainService {
                 .organizationId(orgId)
                 .userId(userId)
                 .role(OrgRole.ORG_OWNER)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .joinedAt(now)
                 .createdAt(now)
                 .build());
@@ -82,7 +84,7 @@ public class OrganizationDomainService {
 
     @Transactional(readOnly = true)
     public List<MyOrganizationMembershipResponse> listMyOrganizations(String userId) {
-        List<OrganizationMemberEntity> memberships = memberRepository.findByUserIdAndStatus(userId, "ACTIVE");
+        List<OrganizationMemberEntity> memberships = memberRepository.findByUserIdAndStatus(userId, EntityStatus.ACTIVE.name());
         if (memberships.isEmpty()) {
             return List.of();
         }
@@ -115,7 +117,7 @@ public class OrganizationDomainService {
         if (!isAdmin) {
             OrganizationMemberEntity member = memberRepository.findByOrganizationIdAndUserId(orgId, userId)
                     .orElseThrow(() -> new DomainException(ProviderErrorCode.ORG_MEMBERSHIP_REQUIRED));
-            if (!"ACTIVE".equalsIgnoreCase(member.getStatus())) {
+            if (!EntityStatus.ACTIVE.name().equalsIgnoreCase(member.getStatus())) {
                 throw new DomainException(ProviderErrorCode.ORG_MEMBERSHIP_REQUIRED);
             }
         }
@@ -158,7 +160,7 @@ public class OrganizationDomainService {
                         .city(saved.getCity())
                         .phone(saved.getPhone())
                         .ratingAvg(0.0)
-                        .status("INACTIVE")
+                        .status(EntityStatus.INACTIVE.name())
                         .createdAt(now)
                         .build());
             }
@@ -166,7 +168,7 @@ public class OrganizationDomainService {
 
         List<String> activeMemberIds = memberRepository.findByOrganizationIdOrderByJoinedAtAsc(orgId)
                 .stream()
-                .filter(m -> "ACTIVE".equalsIgnoreCase(m.getStatus()))
+                .filter(m -> EntityStatus.ACTIVE.name().equalsIgnoreCase(m.getStatus()))
                 .map(OrganizationMemberEntity::getUserId)
                 .toList();
 
@@ -212,13 +214,13 @@ public class OrganizationDomainService {
         OrganizationEntity saved = organizationRepository.save(org);
 
         providerRepository.findByOrganizationId(orgId).ifPresent(provider -> {
-            provider.setStatus("INACTIVE");
+            provider.setStatus(EntityStatus.INACTIVE.name());
             providerRepository.save(provider);
         });
 
         List<String> activeMemberIds = memberRepository.findByOrganizationIdOrderByJoinedAtAsc(orgId)
                 .stream()
-                .filter(m -> "ACTIVE".equalsIgnoreCase(m.getStatus()))
+                .filter(m -> EntityStatus.ACTIVE.name().equalsIgnoreCase(m.getStatus()))
                 .map(OrganizationMemberEntity::getUserId)
                 .toList();
 
@@ -234,7 +236,7 @@ public class OrganizationDomainService {
     public List<OrganizationMemberResponse> listMembers(UUID orgId) {
         return memberRepository.findByOrganizationIdOrderByJoinedAtAsc(orgId)
                 .stream()
-                .filter(m -> "ACTIVE".equalsIgnoreCase(m.getStatus()))
+                .filter(m -> EntityStatus.ACTIVE.name().equalsIgnoreCase(m.getStatus()))
                 .map(this::toMemberResponse)
                 .toList();
     }
@@ -248,23 +250,27 @@ public class OrganizationDomainService {
 
         OrganizationMemberEntity saved;
         if (existing != null) {
-            if ("ACTIVE".equalsIgnoreCase(existing.getStatus())) {
+            if (EntityStatus.ACTIVE.name().equalsIgnoreCase(existing.getStatus())) {
                 throw new DomainException(ProviderErrorCode.MEMBER_ALREADY_EXISTS);
             }
             existing.setRole(request.role());
-            existing.setStatus("ACTIVE");
+            existing.setStatus(EntityStatus.ACTIVE.name());
             existing.setJoinedAt(now);
             saved = memberRepository.save(existing);
         } else {
-            saved = memberRepository.save(OrganizationMemberEntity.builder()
-                    .id(UUID.randomUUID())
-                    .organizationId(orgId)
-                    .userId(targetUserId)
-                    .role(request.role())
-                    .status("ACTIVE")
-                    .joinedAt(now)
-                    .createdAt(now)
-                    .build());
+            try {
+                saved = memberRepository.saveAndFlush(OrganizationMemberEntity.builder()
+                        .id(UUID.randomUUID())
+                        .organizationId(orgId)
+                        .userId(targetUserId)
+                        .role(request.role())
+                        .status(EntityStatus.ACTIVE.name())
+                        .joinedAt(now)
+                        .createdAt(now)
+                        .build());
+            } catch (DataIntegrityViolationException ex) {
+                throw new DomainException(ProviderErrorCode.MEMBER_ALREADY_EXISTS);
+            }
         }
 
         Map<String, Object> data = Map.of(
@@ -284,7 +290,7 @@ public class OrganizationDomainService {
     @Transactional
     public void removeMember(UUID orgId, String targetUserId) {
         OrganizationMemberEntity member = requireActiveModifiableMember(orgId, targetUserId);
-        member.setStatus("INACTIVE");
+        member.setStatus(EntityStatus.INACTIVE.name());
         memberRepository.save(member);
 
         Map<String, Object> data = Map.of(
@@ -297,7 +303,7 @@ public class OrganizationDomainService {
         OrganizationEntity org = organizationRepository.findById(orgId)
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
         OrganizationMemberEntity member = memberRepository.findByOrganizationIdAndUserId(orgId, targetUserId)
-                .filter(m -> "ACTIVE".equalsIgnoreCase(m.getStatus()))
+                .filter(m -> EntityStatus.ACTIVE.name().equalsIgnoreCase(m.getStatus()))
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.ORG_MEMBERSHIP_REQUIRED));
         if (org.getOwnerUserId().equals(targetUserId) || member.getRole() == OrgRole.ORG_OWNER) {
             throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN);
@@ -328,7 +334,7 @@ public class OrganizationDomainService {
                 .eventType(eventType)
                 .routingKey(eventType)
                 .payloadJson(json)
-                .status("PENDING")
+                .status(EntityStatus.PENDING.name())
                 .retryCount(0)
                 .nextAttemptAt(now)
                 .createdAt(now)

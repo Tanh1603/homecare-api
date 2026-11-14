@@ -47,7 +47,7 @@ public class NotificationController {
             HttpServletRequest httpRequest) {
         List<NotificationResponse> items = service.listInbox(jwt.getSubject());
         return ResponseEntity.ok(responseFactory.ok(
-                "Notifications retrieved",
+                ApiMessages.RETRIEVED,
                 PageResponse.of(items, page, size, items.size()),
                 httpRequest));
     }
@@ -58,7 +58,7 @@ public class NotificationController {
             @PathVariable UUID notificationId,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
-                "Notification marked as read",
+                ApiMessages.UPDATED,
                 service.markAsRead(jwt.getSubject(), notificationId),
                 httpRequest));
     }

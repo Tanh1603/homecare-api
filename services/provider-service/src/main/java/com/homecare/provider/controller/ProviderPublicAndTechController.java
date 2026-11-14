@@ -57,7 +57,7 @@ public class ProviderPublicAndTechController {
             HttpServletRequest httpRequest) {
         List<ServiceOfferingResponse> items = service.listOfferings(category);
         return ResponseEntity.ok(responseFactory.ok(
-                "Services retrieved",
+                ApiMessages.RETRIEVED,
                 PageResponse.of(items, page, size, items.size()),
                 httpRequest));
     }
@@ -67,7 +67,7 @@ public class ProviderPublicAndTechController {
             @PathVariable UUID serviceId,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
-                "Service retrieved",
+                ApiMessages.RETRIEVED,
                 service.getOffering(serviceId),
                 httpRequest));
     }
@@ -79,7 +79,7 @@ public class ProviderPublicAndTechController {
             HttpServletRequest httpRequest) {
         List<ProviderResponse> items = service.listProviders();
         return ResponseEntity.ok(responseFactory.ok(
-                "Providers retrieved",
+                ApiMessages.RETRIEVED,
                 PageResponse.of(items, page, size, items.size()),
                 httpRequest));
     }
@@ -89,7 +89,7 @@ public class ProviderPublicAndTechController {
             @PathVariable UUID providerId,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
-                "Provider retrieved",
+                ApiMessages.RETRIEVED,
                 service.getProvider(providerId),
                 httpRequest));
     }
@@ -102,7 +102,7 @@ public class ProviderPublicAndTechController {
             HttpServletRequest httpRequest) {
         List<TechnicianResponse> items = service.listTechnicians(providerId);
         return ResponseEntity.ok(responseFactory.ok(
-                "Technicians retrieved",
+                ApiMessages.RETRIEVED,
                 PageResponse.of(items, page, size, items.size()),
                 httpRequest));
     }
@@ -112,7 +112,7 @@ public class ProviderPublicAndTechController {
             @PathVariable UUID technicianId,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
-                "Technician retrieved",
+                ApiMessages.RETRIEVED,
                 service.getTechnician(technicianId),
                 httpRequest));
     }
@@ -124,7 +124,7 @@ public class ProviderPublicAndTechController {
             HttpServletRequest httpRequest) {
         String sub = jwt != null ? jwt.getSubject() : null;
         return ResponseEntity.ok(responseFactory.ok(
-                "Schedules retrieved",
+                ApiMessages.RETRIEVED,
                 service.listScheduleWindows(technicianId, sub),
                 httpRequest));
     }

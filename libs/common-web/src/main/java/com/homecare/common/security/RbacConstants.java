@@ -14,8 +14,6 @@ public final class RbacConstants {
     public static final String ROLE_CUSTOMER = "CUSTOMER";
 
     public static final String PERM_ADMIN_ALL = "admin:all";
-    public static final String PERM_ORGANIZATION_READ = "organization:read";
-    public static final String PERM_ORGANIZATION_MANAGE = "organization:manage";
     public static final String PERM_ORGANIZATION_REVIEW = "organization:review";
 
     public static final String PERM_SCHEDULE_MANAGE = "schedule:manage";

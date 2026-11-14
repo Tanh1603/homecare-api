@@ -3,6 +3,8 @@ package com.homecare.provider.organization.entity;
 import java.time.Instant;
 import java.util.UUID;
 
+import com.homecare.common.domain.EntityStatus;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -44,7 +46,7 @@ public class OrganizationMemberEntity {
 
     @Column(nullable = false, length = 30)
     @Builder.Default
-    private String status = "ACTIVE";
+    private String status = EntityStatus.ACTIVE.name();
 
     @Column(name = "joined_at", nullable = false)
     private Instant joinedAt;

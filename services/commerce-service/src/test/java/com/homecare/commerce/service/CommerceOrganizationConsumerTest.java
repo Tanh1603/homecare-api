@@ -16,6 +16,7 @@ import com.homecare.commerce.entity.MerchantEntity;
 import com.homecare.commerce.entity.OrderEntity;
 import com.homecare.commerce.repository.MerchantRepository;
 import com.homecare.commerce.repository.OrderRepository;
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.DomainException;
 
 @SpringBootTest
@@ -45,15 +46,15 @@ class CommerceOrganizationConsumerTest {
         // First call creates INACTIVE MerchantEntity
         consumer.onOrganizationEvent(approvedJson);
         MerchantEntity created = merchantRepository.findByOrganizationId(orgId).orElseThrow();
-        assertThat(created.getStatus()).isEqualTo("INACTIVE");
+        assertThat(created.getStatus()).isEqualTo(EntityStatus.INACTIVE.name());
         assertThat(created.getName()).isEqualTo("Cửa Hàng Linh Kiện A");
 
         // Duplicate event is ignored idempotently
-        created.setStatus("ACTIVE");
+        created.setStatus(EntityStatus.ACTIVE.name());
         merchantRepository.save(created);
         consumer.onOrganizationEvent(approvedJson);
         MerchantEntity afterDup = merchantRepository.findByOrganizationId(orgId).orElseThrow();
-        assertThat(afterDup.getStatus()).isEqualTo("ACTIVE");
+        assertThat(afterDup.getStatus()).isEqualTo(EntityStatus.ACTIVE.name());
 
         // Suspend event sets status back to INACTIVE without deleting
         UUID suspendEventId = UUID.randomUUID();
@@ -62,7 +63,7 @@ class CommerceOrganizationConsumerTest {
                 """.formatted(suspendEventId, orgId).strip();
         consumer.onOrganizationEvent(suspendedJson);
         MerchantEntity suspended = merchantRepository.findByOrganizationId(orgId).orElseThrow();
-        assertThat(suspended.getStatus()).isEqualTo("INACTIVE");
+        assertThat(suspended.getStatus()).isEqualTo(EntityStatus.INACTIVE.name());
     }
 
     @Test
@@ -87,7 +88,7 @@ class CommerceOrganizationConsumerTest {
                 .name("Suspended Shop")
                 .city("HCM")
                 .ratingAvg(0.0)
-                .status("INACTIVE")
+                .status(EntityStatus.INACTIVE.name())
                 .createdAt(Instant.now())
                 .build());
         OrderEntity order = orderRepository.save(OrderEntity.builder()
@@ -108,11 +109,16 @@ class CommerceOrganizationConsumerTest {
                 .extracting(ex -> ((DomainException) ex).status())
                 .isEqualTo(HttpStatus.FORBIDDEN);
 
-        merchant.setStatus("ACTIVE");
+        merchant.setStatus(EntityStatus.ACTIVE.name());
         merchantRepository.save(merchant);
 
         UUID otherOrgId = UUID.randomUUID();
         assertThatThrownBy(() -> commerceDomainService.fulfillOrderLine("actor-1", order.getId(), UUID.randomUUID(), otherOrgId))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).status())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+
+        assertThatThrownBy(() -> commerceDomainService.fulfillOrderLine("actor-1", order.getId(), UUID.randomUUID(), null, false))
                 .isInstanceOf(DomainException.class)
                 .extracting(ex -> ((DomainException) ex).status())
                 .isEqualTo(HttpStatus.FORBIDDEN);

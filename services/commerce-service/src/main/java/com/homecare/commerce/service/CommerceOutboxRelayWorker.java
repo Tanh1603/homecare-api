@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.homecare.commerce.entity.CommerceOutboxEventEntity;
 import com.homecare.commerce.repository.CommerceOutboxEventRepository;
+import com.homecare.common.domain.EntityStatus;
 
 import lombok.RequiredArgsConstructor;
 
@@ -29,14 +30,14 @@ public class CommerceOutboxRelayWorker {
     @Scheduled(fixedDelayString = "${homecare.outbox.relay-interval-ms:10000}")
     @Transactional
     public void relayPendingEvents() {
-        List<CommerceOutboxEventEntity> pending = repository.findByStatusOrderByCreatedAtAsc("PENDING");
+        List<CommerceOutboxEventEntity> pending = repository.findPendingDueEvents(Instant.now());
         if (pending.isEmpty()) {
             return;
         }
         for (CommerceOutboxEventEntity event : pending) {
             try {
                 rabbitTemplate.convertAndSend(CommerceDomainService.EXCHANGE, event.getRoutingKey(), event.getPayloadJson());
-                event.setStatus("PUBLISHED");
+                event.setStatus(EntityStatus.PUBLISHED.name());
                 event.setPublishedAt(Instant.now());
                 repository.save(event);
             } catch (Exception e) {

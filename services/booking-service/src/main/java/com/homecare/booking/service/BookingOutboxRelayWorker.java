@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.homecare.booking.entity.BookingOutboxEventEntity;
 import com.homecare.booking.repository.BookingOutboxEventRepository;
+import com.homecare.common.domain.EntityStatus;
 
 import lombok.RequiredArgsConstructor;
 
@@ -29,14 +30,14 @@ public class BookingOutboxRelayWorker {
     @Scheduled(fixedDelayString = "${homecare.outbox.relay-interval-ms:10000}")
     @Transactional
     public void relayPendingEvents() {
-        List<BookingOutboxEventEntity> pending = repository.findByStatusOrderByCreatedAtAsc("PENDING");
+        List<BookingOutboxEventEntity> pending = repository.findPendingDueEvents(Instant.now());
         if (pending.isEmpty()) {
             return;
         }
         for (BookingOutboxEventEntity event : pending) {
             try {
                 rabbitTemplate.convertAndSend(BookingLifecycleService.EXCHANGE, event.getRoutingKey(), event.getPayloadJson());
-                event.setStatus("PUBLISHED");
+                event.setStatus(EntityStatus.PUBLISHED.name());
                 event.setPublishedAt(Instant.now());
                 repository.save(event);
             } catch (Exception e) {

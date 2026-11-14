@@ -61,7 +61,7 @@ public class CommerceController {
             HttpServletRequest httpRequest) {
         List<ProductResponse> items = service.listProducts(category);
         return ResponseEntity.ok(responseFactory.ok(
-                "Products retrieved",
+                ApiMessages.RETRIEVED,
                 PageResponse.of(items, page, size, items.size()),
                 httpRequest));
     }
@@ -71,7 +71,7 @@ public class CommerceController {
             @PathVariable UUID productId,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
-                "Product retrieved",
+                ApiMessages.RETRIEVED,
                 service.getProduct(productId),
                 httpRequest));
     }
@@ -165,9 +165,13 @@ public class CommerceController {
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
             HttpServletRequest httpRequest) {
         verifyOrganizationOrAdmin(jwt, RbacConstants.PERM_ORDER_FULFILL);
+        boolean globalAdmin = isGlobalAdmin(jwt);
+        if (!globalAdmin && orgIdHeader == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.PROCESSED,
-                service.fulfillOrderLine(jwt.getSubject(), orderId, lineId, orgIdHeader),
+                service.fulfillOrderLine(jwt.getSubject(), orderId, lineId, orgIdHeader, globalAdmin),
                 httpRequest));
     }
 
@@ -193,9 +197,18 @@ public class CommerceController {
             @Valid @RequestBody ResolveOrderReturnRequest request,
             HttpServletRequest httpRequest) {
         verifyOrganizationOrAdmin(jwt, RbacConstants.PERM_ORDER_RETURN_RESOLVE);
+        boolean globalAdmin = isGlobalAdmin(jwt);
+        if (!globalAdmin && orgIdHeader == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
         OrderReturnResponse resolved = service.resolveOrderReturnRequest(
-                jwt.getSubject(), orderId, returnId, request, orgIdHeader);
+                jwt.getSubject(), orderId, returnId, request, orgIdHeader, globalAdmin);
         return ResponseEntity.ok(responseFactory.ok(ApiMessages.PROCESSED, resolved, httpRequest));
+    }
+
+    private boolean isGlobalAdmin(Jwt jwt) {
+        return SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ADMIN_ALL);
     }
 
     private void verifyOrganizationOrAdmin(Jwt jwt, String requiredPermission) {
@@ -210,15 +223,20 @@ public class CommerceController {
     @GetMapping("/orders/{orderId}/returns")
     public ResponseEntity<ApiResponse<List<OrderReturnResponse>>> listOrderReturns(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
             @PathVariable UUID orderId,
             HttpServletRequest httpRequest) {
         boolean isPrivileged = SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
                 jwt,
                 new String[]{RbacConstants.ROLE_ORGANIZATION, RbacConstants.ROLE_ADMIN},
                 RbacConstants.PERM_ORDER_FULFILL, RbacConstants.PERM_ORDER_RETURN_RESOLVE, RbacConstants.PERM_ADMIN_ALL);
+        boolean globalAdmin = isGlobalAdmin(jwt);
+        if (isPrivileged && !globalAdmin && orgIdHeader == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.listOrderReturns(jwt.getSubject(), isPrivileged, orderId),
+                service.listOrderReturns(jwt.getSubject(), isPrivileged, globalAdmin, orgIdHeader, orderId),
                 httpRequest));
     }
 }

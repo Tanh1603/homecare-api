@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.DomainException;
 import com.homecare.provider.entity.ProviderEntity;
 import com.homecare.provider.exception.ProviderErrorCode;
@@ -73,7 +74,7 @@ class OrganizationDomainServiceTest {
         assertThat(approved.status()).isEqualTo(OrganizationStatus.APPROVED);
 
         ProviderEntity createdProvider = providerRepository.findByOrganizationId(pending.id()).orElseThrow();
-        assertThat(createdProvider.getStatus()).isEqualTo("INACTIVE");
+        assertThat(createdProvider.getStatus()).isEqualTo(EntityStatus.INACTIVE.name());
 
         List<ProviderOutboxEventEntity> events = outboxRepository.findAll().stream()
                 .filter(e -> e.getAggregateId().equals(pending.id()))
@@ -83,7 +84,7 @@ class OrganizationDomainServiceTest {
         OrganizationResponse suspended = organizationService.suspendOrganization(pending.id());
         assertThat(suspended.status()).isEqualTo(OrganizationStatus.SUSPENDED);
         ProviderEntity afterSuspend = providerRepository.findByOrganizationId(pending.id()).orElseThrow();
-        assertThat(afterSuspend.getStatus()).isEqualTo("INACTIVE");
+        assertThat(afterSuspend.getStatus()).isEqualTo(EntityStatus.INACTIVE.name());
     }
 
     @Test

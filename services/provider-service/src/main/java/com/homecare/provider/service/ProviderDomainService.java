@@ -10,6 +10,7 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.web.EtagSupport;
@@ -75,8 +76,8 @@ public class ProviderDomainService {
     @Transactional(readOnly = true)
     public List<TechnicianResponse> listTechnicians(UUID providerId) {
         List<Technician> techs = providerId != null
-                ? technicianRepository.findByProviderIdAndStatus(providerId, "ACTIVE")
-                : technicianRepository.findByStatus("ACTIVE");
+                ? technicianRepository.findByProviderIdAndStatus(providerId, EntityStatus.ACTIVE.name())
+                : technicianRepository.findByStatus(EntityStatus.ACTIVE.name());
         return techs.stream().map(this::toTechnicianResponse).toList();
     }
 
@@ -219,11 +220,11 @@ public class ProviderDomainService {
         if (strictProviderMatch) {
             // Flow 1 (WARRANTY_CLAIM): Strictly lock technician search to the store that
             // issued the warranty
-            candidates = technicianRepository.findByProviderIdAndStatus(targetProviderId, "ACTIVE");
+            candidates = technicianRepository.findByProviderIdAndStatus(targetProviderId, EntityStatus.ACTIVE.name());
         } else {
             // Flow 2 & 3 (STANDARD): Search all active technicians, giving +25.0 affinity
             // bonus to targetProviderId
-            candidates = technicianRepository.findByStatus("ACTIVE");
+            candidates = technicianRepository.findByStatus(EntityStatus.ACTIVE.name());
         }
 
         List<Technician> eligible = candidates.stream()
