@@ -134,4 +134,30 @@ class TokenBlacklistFilterTest {
 
         verify(chain).filter(exchange);
     }
+
+    @Test
+    void blocksRequestWhenUserStatusIsSuspendedOrBanned() {
+        Jwt jwt = new Jwt(
+                "token-value",
+                Instant.now(),
+                Instant.now().plusSeconds(300),
+                Map.of("alg", "none"),
+                Map.of("sub", "user-123", "user_status", "SUSPENDED"));
+        JwtAuthenticationToken auth = new JwtAuthenticationToken(jwt, Collections.emptyList());
+        SecurityContext securityContext = new SecurityContextImpl(auth);
+
+        MockServerHttpRequest request = MockServerHttpRequest.get("/api/v1/households")
+                .header("X-Correlation-Id", "test-susp-id")
+                .build();
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+
+        filter.filter(exchange, chain)
+                .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(Mono.just(securityContext)))
+                .block();
+
+        assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        String body = exchange.getResponse().getBodyAsString().block();
+        assertThat(body).contains("ACCESS_DENIED");
+        verify(chain, never()).filter(any());
+    }
 }

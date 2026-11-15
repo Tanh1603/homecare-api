@@ -71,6 +71,10 @@ public class BookingLifecycleService {
         Instant preferredStart = request.preferredStart() != null
                 ? request.preferredStart()
                 : now.plus(2, ChronoUnit.HOURS);
+        if (request.preferredEnd() != null && !request.preferredEnd().isAfter(preferredStart)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "preferredEnd must be after preferredStart.");
+        }
 
         boolean isWarrantyClaim = request.warrantyId() != null
                 || "WARRANTY_CLAIM".equalsIgnoreCase(request.bookingType());
@@ -114,14 +118,13 @@ public class BookingLifecycleService {
             offering = providerGrpcClient.verifyOffering(request.serviceId());
         } catch (Exception e) {
             log.warn("gRPC VerifyOffering failed for service {}: {}", request.serviceId(), e.getMessage());
-            offering = VerifyOfferingResponse.newBuilder()
-                    .setServiceId(request.serviceId().toString())
-                    .setName("HomeCare Service")
-                    .setBasePrice(250_000L)
-                    .setActive(true)
-                    .setCategory(resolvedDeviceType != null ? resolvedDeviceType : "AC")
-                    .setEstimatedDurationMinutes(60)
-                    .build();
+            saga.setSagaStatus("FAILED");
+            saga.setCurrentStep("VERIFY_OFFERING");
+            saga.setFailureReason("SERVICE_NOT_AVAILABLE");
+            saga.setUpdatedAt(Instant.now());
+            saga.setCompletedAt(Instant.now());
+            sagaRepository.save(saga);
+            throw new DomainException(BookingErrorCode.SERVICE_NOT_AVAILABLE);
         }
 
         if (!offering.getActive()) {
@@ -140,6 +143,10 @@ public class BookingLifecycleService {
         Instant preferredEnd = request.preferredEnd() != null
                 ? request.preferredEnd()
                 : preferredStart.plus(durationMins, ChronoUnit.MINUTES);
+        if (!preferredEnd.isAfter(preferredStart)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "preferredEnd must be after preferredStart.");
+        }
         String finalDeviceType = (resolvedDeviceType != null && !resolvedDeviceType.isBlank())
                 ? resolvedDeviceType
                 : offering.getCategory();
@@ -296,14 +303,15 @@ public class BookingLifecycleService {
                     ? bookingRepository.findByProviderIdOrderByCreatedAtDesc(orgScopeId, pageable)
                     : bookingRepository.findAllByOrderByCreatedAtDesc(pageable);
         } else if (isOrgOperator) {
-            if (orgScopeId == null) {
-                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-            }
+            requireOrgMembership(orgScopeId, actorProfileId);
             result = bookingRepository.findByProviderIdOrderByCreatedAtDesc(orgScopeId, pageable);
         } else if (isTechnician) {
-            result = orgScopeId != null
-                    ? bookingRepository.findByProviderIdOrderByCreatedAtDesc(orgScopeId, pageable)
-                    : bookingRepository.findByAssignedTechnicianProfileIdOrderByCreatedAtDesc(actorProfileId, pageable);
+            if (orgScopeId != null) {
+                requireOrgMembership(orgScopeId, actorProfileId);
+                result = bookingRepository.findByProviderIdOrderByCreatedAtDesc(orgScopeId, pageable);
+            } else {
+                result = bookingRepository.findByAssignedTechnicianProfileIdOrderByCreatedAtDesc(actorProfileId, pageable);
+            }
         } else {
             result = bookingRepository.findByRequesterProfileIdOrderByCreatedAtDesc(actorProfileId, pageable);
         }
@@ -350,13 +358,18 @@ public class BookingLifecycleService {
             return toBookingResponse(booking);
         }
         if (isOrgOperator) {
-            if (orgScopeId == null || !orgScopeId.equals(booking.getProviderId())) {
+            requireOrgMembership(orgScopeId, actorProfileId);
+            if (!orgScopeId.equals(booking.getProviderId())) {
                 throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
             }
             return toBookingResponse(booking);
         }
         if (isTechnician) {
-            boolean matchesOrg = orgScopeId != null && orgScopeId.equals(booking.getProviderId());
+            boolean matchesOrg = false;
+            if (orgScopeId != null) {
+                requireOrgMembership(orgScopeId, actorProfileId);
+                matchesOrg = orgScopeId.equals(booking.getProviderId());
+            }
             boolean matchesTech = actorProfileId.equals(booking.getAssignedTechnicianProfileId());
             if (!matchesOrg && !matchesTech && !booking.getRequesterProfileId().equals(actorProfileId)) {
                 throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
@@ -391,8 +404,11 @@ public class BookingLifecycleService {
         if (!isAdmin && !booking.getRequesterProfileId().equals(actorProfileId)) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
-        if (orgScopeId != null && isAdmin && !orgScopeId.equals(booking.getProviderId())) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        if (orgScopeId != null && isAdmin) {
+            requireOrgMembership(orgScopeId, actorProfileId);
+            if (!orgScopeId.equals(booking.getProviderId())) {
+                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            }
         }
         EtagSupport.verifyIfMatch(ifMatchHeader, booking.getVersion());
         if ("IN_PROGRESS".equals(booking.getStatus())
@@ -433,21 +449,22 @@ public class BookingLifecycleService {
             CreateWorkUpdateRequest request) {
         BookingEntity booking = requireBooking(bookingId);
         if (isOrgOrAdmin) {
-            if (orgScopeId != null && !orgScopeId.equals(booking.getProviderId())) {
-                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            if (orgScopeId != null) {
+                requireOrgMembership(orgScopeId, actorProfileId);
+                if (!orgScopeId.equals(booking.getProviderId())) {
+                    throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+                }
             }
         } else if (!actorProfileId.equals(booking.getAssignedTechnicianProfileId())) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
-        if (ifMatchHeader != null && !ifMatchHeader.isBlank()) {
-            EtagSupport.verifyIfMatch(ifMatchHeader, booking.getVersion());
-        }
+        EtagSupport.verifyIfMatch(ifMatchHeader, booking.getVersion());
         String kind = request.kind().trim().toUpperCase();
         String previous = booking.getStatus();
 
         switch (kind) {
             case "ARRIVED", "DIAGNOSED", "STARTED", "IN_PROGRESS" -> {
-                if (!"ASSIGNED".equals(previous) && !"REQUESTED".equals(previous) && !"IN_PROGRESS".equals(previous)) {
+                if (!"ASSIGNED".equals(previous) && !"IN_PROGRESS".equals(previous)) {
                     throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
                 }
                 booking.setStatus("IN_PROGRESS");
@@ -460,7 +477,7 @@ public class BookingLifecycleService {
                 }
             }
             case "COMPLETED" -> {
-                if (!"IN_PROGRESS".equals(previous) && !"ASSIGNED".equals(previous)) {
+                if (!"IN_PROGRESS".equals(previous)) {
                     throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
                 }
                 booking.setStatus("COMPLETED");
@@ -506,6 +523,13 @@ public class BookingLifecycleService {
                         null,
                         null,
                         "NOT_ELIGIBLE"));
+    }
+
+    private void requireOrgMembership(UUID orgScopeId, String actorProfileId) {
+        if (orgScopeId == null || actorProfileId == null
+                || !providerGrpcClient.verifyOrganizationMembership(orgScopeId, actorProfileId)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
     }
 
     private void recordHistory(UUID bookingId, String from, String to, String actorId, String reason) {

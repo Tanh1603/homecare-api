@@ -9,4 +9,8 @@ import com.homecare.commerce.entity.OrderEntity;
 
 public interface OrderRepository extends JpaRepository<OrderEntity, UUID> {
     List<OrderEntity> findByBuyerProfileIdOrderByCreatedAtDesc(String buyerProfileId);
+
+    List<OrderEntity> findByMerchantIdOrderByCreatedAtDesc(UUID merchantId);
+
+    List<OrderEntity> findAllByOrderByCreatedAtDesc();
 }

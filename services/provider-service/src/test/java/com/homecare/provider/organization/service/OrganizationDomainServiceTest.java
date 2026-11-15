@@ -28,6 +28,7 @@ import com.homecare.provider.organization.entity.OrganizationType;
 import com.homecare.provider.organization.entity.ProviderOutboxEventEntity;
 import com.homecare.provider.organization.repository.OrganizationMemberRepository;
 import com.homecare.provider.organization.repository.ProviderOutboxEventRepository;
+import com.homecare.provider.organization.security.OrgContext;
 import com.homecare.provider.repository.ProviderRepository;
 
 import tools.jackson.databind.ObjectMapper;
@@ -163,5 +164,38 @@ class OrganizationDomainServiceTest {
                 .isInstanceOf(DomainException.class)
                 .extracting(ex -> ((DomainException) ex).errorCode())
                 .isEqualTo(ProviderErrorCode.INVALID_ORGANIZATION_STATE.name());
+    }
+
+    @Test
+    void preventsOrgOwnerAssignmentAndSelfRoleModification() {
+        String ownerId = "supabase-owner-" + UUID.randomUUID();
+        OrganizationResponse org = organizationService.registerOrganization(
+                ownerId,
+                new RegisterOrganizationRequest("Role Guard Org", OrganizationType.SERVICE, null, "0904", "HCM", null, null));
+        organizationService.approveOrganization(org.id(), "admin-1");
+
+        String targetUser = "supabase-admin-" + UUID.randomUUID();
+        assertThatThrownBy(() -> organizationService.addMember(
+                org.id(), new AddMemberRequest(targetUser, OrgRole.ORG_OWNER)))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).errorCode())
+                .isEqualTo(ProviderErrorCode.ORG_ROLE_FORBIDDEN.name());
+
+        organizationService.addMember(org.id(), new AddMemberRequest(targetUser, OrgRole.ORG_ADMIN));
+
+        assertThatThrownBy(() -> organizationService.updateMemberRole(org.id(), targetUser, OrgRole.ORG_OWNER))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).errorCode())
+                .isEqualTo(ProviderErrorCode.ORG_ROLE_FORBIDDEN.name());
+
+        OrgContext.set(new OrgContext(org.id(), targetUser, OrgRole.ORG_ADMIN));
+        try {
+            assertThatThrownBy(() -> organizationService.updateMemberRole(org.id(), targetUser, OrgRole.ORG_STAFF))
+                    .isInstanceOf(DomainException.class)
+                    .extracting(ex -> ((DomainException) ex).errorCode())
+                    .isEqualTo(ProviderErrorCode.ORG_ROLE_FORBIDDEN.name());
+        } finally {
+            OrgContext.clear();
+        }
     }
 }

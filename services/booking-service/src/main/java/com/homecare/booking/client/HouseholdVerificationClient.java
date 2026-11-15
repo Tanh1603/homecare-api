@@ -55,7 +55,8 @@ public class HouseholdVerificationClient {
         } catch (DomainException e) {
             throw e;
         } catch (Exception e) {
-            log.warn("Household gRPC verification unreachable ({}), using fallback deviceType", e.getMessage());
+            log.warn("Household gRPC verification unreachable ({})", e.getMessage());
+            throw new DomainException(BookingErrorCode.DEVICE_REFERENCE_INVALID);
         }
         return fallbackDeviceType;
     }
@@ -88,8 +89,8 @@ public class HouseholdVerificationClient {
             throw e;
         } catch (Exception e) {
             log.warn("Household warranty gRPC verification unreachable ({})", e.getMessage());
+            throw new DomainException(BookingErrorCode.WARRANTY_INVALID);
         }
-        return new WarrantyVerificationResult(warrantyId, null, "AC", null, "");
     }
 
     private HouseholdVerificationServiceGrpc.HouseholdVerificationServiceBlockingStub withInternalMetadata(

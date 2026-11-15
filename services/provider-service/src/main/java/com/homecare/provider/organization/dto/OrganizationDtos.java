@@ -74,4 +74,13 @@ public final class OrganizationDtos {
     public record RejectOrganizationRequest(
             @NotBlank String reason) {
     }
+
+    public record AdminUserResponse(
+            String id,
+            String fullName,
+            String email,
+            String role,
+            String status,
+            Instant createdAt) {
+    }
 }

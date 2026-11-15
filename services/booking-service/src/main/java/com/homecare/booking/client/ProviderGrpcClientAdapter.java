@@ -4,6 +4,8 @@ import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -13,6 +15,8 @@ import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.ProviderAllocationServiceGrpc;
 import com.homecare.provider.v1.VerifyOfferingRequest;
 import com.homecare.provider.v1.VerifyOfferingResponse;
+import com.homecare.provider.v1.VerifyOrganizationMembershipRequest;
+import com.homecare.provider.v1.VerifyOrganizationMembershipResponse;
 
 import io.grpc.Metadata;
 import io.grpc.stub.MetadataUtils;
@@ -21,6 +25,7 @@ import net.devh.boot.grpc.client.inject.GrpcClient;
 @Component
 public class ProviderGrpcClientAdapter {
 
+    private static final Logger log = LoggerFactory.getLogger(ProviderGrpcClientAdapter.class);
     private static final Metadata.Key<String> WORKLOAD_TOKEN_KEY =
             WorkloadAuthClientInterceptor.WORKLOAD_TOKEN_KEY;
 
@@ -72,6 +77,25 @@ public class ProviderGrpcClientAdapter {
         return withInternalMetadata(providerStub)
                 .withDeadlineAfter(3, TimeUnit.SECONDS)
                 .allocateTechnician(builder.build());
+    }
+
+    public boolean verifyOrganizationMembership(UUID organizationId, String userId) {
+        if (organizationId == null || userId == null || userId.isBlank()) {
+            return false;
+        }
+        try {
+            VerifyOrganizationMembershipResponse response = withInternalMetadata(providerStub)
+                    .withDeadlineAfter(3, TimeUnit.SECONDS)
+                    .verifyOrganizationMembership(VerifyOrganizationMembershipRequest.newBuilder()
+                            .setOrganizationId(organizationId.toString())
+                            .setUserId(userId)
+                            .build());
+            return response.getValid();
+        } catch (Exception e) {
+            log.warn("Provider org membership gRPC verification failed for org {} user {}: {}",
+                    organizationId, userId, e.getMessage());
+            return false;
+        }
     }
 
     private ProviderAllocationServiceGrpc.ProviderAllocationServiceBlockingStub withInternalMetadata(

@@ -1,6 +1,7 @@
 package com.homecare.common.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
 import java.util.List;
@@ -10,6 +11,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.InvalidBearerTokenException;
 
 class SupabaseJwtConverterSupportTest {
 
@@ -109,5 +111,34 @@ class SupabaseJwtConverterSupportTest {
                 permOnlyJwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ORGANIZATION_REVIEW)).isTrue();
         assertThat(SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
                 permOnlyJwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ORDER_FULFILL)).isFalse();
+    }
+
+    @Test
+    void blocksSuspendedAndBannedUserStatus() {
+        Jwt suspendedJwt = new Jwt(
+                "suspended",
+                Instant.now(),
+                Instant.now().plusSeconds(3600),
+                Map.of("alg", "HS256"),
+                Map.of("sub", "u-susp", "user_status", "SUSPENDED", "user_roles", List.of("ADMIN"), "permissions", List.of("admin:all")));
+
+        assertThat(SupabaseJwtConverterSupport.extractRoles(suspendedJwt)).isEmpty();
+        assertThat(SupabaseJwtConverterSupport.extractPermissions(suspendedJwt)).isEmpty();
+        assertThat(SupabaseJwtConverterSupport.extractAuthorities(suspendedJwt)).isEmpty();
+        assertThat(SupabaseJwtConverterSupport.hasAnyRole(suspendedJwt, "ADMIN")).isFalse();
+
+        var converter = SupabaseJwtConverterSupport.createJwtAuthenticationConverter();
+        assertThatThrownBy(() -> converter.convert(suspendedJwt))
+                .isInstanceOf(InvalidBearerTokenException.class);
+
+        Jwt bannedJwt = new Jwt(
+                "banned",
+                Instant.now(),
+                Instant.now().plusSeconds(3600),
+                Map.of("alg", "HS256"),
+                Map.of("sub", "u-ban", "app_metadata", Map.of("user_status", "BANNED", "roles", List.of("CUSTOMER"))));
+        assertThat(SupabaseJwtConverterSupport.extractRoles(bannedJwt)).isEmpty();
+        assertThatThrownBy(() -> converter.convert(bannedJwt))
+                .isInstanceOf(InvalidBearerTokenException.class);
     }
 }

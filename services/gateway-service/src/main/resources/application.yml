@@ -25,7 +25,7 @@ spring:
             - id: household-service-route
               uri: ${HOUSEHOLD_URL:http://localhost:8082}
               predicates:
-                - Path=/api/v1/households,/api/v1/households/**,/api/v1/devices,/api/v1/devices/**,/api/v1/warranties/**,/api/v1/maintenance-schedules/**,/api/v1/care-history/**,/api/v1/admin/device-types/**
+                - Path=/api/v1/households,/api/v1/households/**,/api/v1/devices,/api/v1/devices/**,/api/v1/warranties,/api/v1/warranties/**,/api/v1/maintenance-schedules/**,/api/v1/care-history/**,/api/v1/admin/device-types/**
             - id: review-service-route
               uri: ${REVIEW_URL:http://localhost:8086}
               predicates:
@@ -33,7 +33,7 @@ spring:
             - id: provider-service-route
               uri: ${PROVIDER_URL:http://localhost:8083}
               predicates:
-                - Path=/api/v1/services,/api/v1/services/**,/api/v1/providers,/api/v1/providers/**,/api/v1/technicians,/api/v1/technicians/**,/api/v1/organizations,/api/v1/organizations/**,/api/v1/admin/organizations,/api/v1/admin/organizations/**,/api/v1/admin/providers/**,/api/v1/admin/technicians/**,/api/v1/admin/service-categories/**
+                - Path=/api/v1/services,/api/v1/services/**,/api/v1/providers,/api/v1/providers/**,/api/v1/technicians,/api/v1/technicians/**,/api/v1/organizations,/api/v1/organizations/**,/api/v1/admin/organizations,/api/v1/admin/organizations/**,/api/v1/admin/users,/api/v1/admin/users/**,/api/v1/admin/providers/**,/api/v1/admin/technicians/**,/api/v1/admin/service-categories/**
             - id: booking-service-route
               uri: ${BOOKING_URL:http://localhost:8084}
               predicates:
@@ -85,9 +85,7 @@ spring:
           globalcors:
             cors-configurations:
               '[/**]':
-                allowed-origins:
-                  - http://localhost:3000
-                  - http://localhost:5173
+                allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
                 allowed-methods:
                   - GET
                   - POST
@@ -102,6 +100,7 @@ spring:
                   - Origin
                   - X-Requested-With
                   - X-Correlation-Id
+                  - X-Organization-Id
                   - If-Match
                   - Idempotency-Key
                 exposed-headers:

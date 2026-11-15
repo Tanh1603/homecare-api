@@ -12,6 +12,7 @@ import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.review.client.EvidenceVerificationClient;
 import com.homecare.review.client.EvidenceVerificationClient.BookingEligibility;
+import com.homecare.review.client.EvidenceVerificationClient.OrderLineEligibility;
 import com.homecare.review.dto.ReviewDtos.CreateProductReviewRequest;
 import com.homecare.review.dto.ReviewDtos.CreateServiceReviewRequest;
 import com.homecare.review.dto.ReviewDtos.ReviewResponse;
@@ -36,14 +37,14 @@ public class ReviewDomainService {
         }
         BookingEligibility eligibility = verificationClient.verifyBookingEligible(
                 request.bookingId(), authorProfileId);
-        if (!eligibility.eligible()) {
+        if (!eligibility.eligible() || eligibility.providerId() == null) {
             throw new DomainException(ReviewErrorCode.REVIEW_NOT_ELIGIBLE);
         }
-        UUID providerId = request.providerId() != null
-                ? request.providerId()
-                : (eligibility.providerId() != null
-                        ? eligibility.providerId()
-                        : UUID.fromString("11111111-1111-1111-1111-111111111111"));
+        if (request.providerId() != null && !request.providerId().equals(eligibility.providerId())) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "providerId does not match booking provider.");
+        }
+        UUID providerId = eligibility.providerId();
         Instant now = Instant.now();
         ReviewEntity saved = reviewRepository.save(ReviewEntity.builder()
                 .id(UUID.randomUUID())
@@ -68,8 +69,14 @@ public class ReviewDomainService {
         if (reviewRepository.findBySourceId(request.orderLineId()).isPresent()) {
             throw new DomainException(ReviewErrorCode.REVIEW_ALREADY_EXISTS);
         }
-        if (!verificationClient.verifyOrderLineEligible(request.orderLineId(), authorProfileId)) {
+        OrderLineEligibility eligibility = verificationClient.verifyOrderLineEligibility(
+                request.orderLineId(), authorProfileId);
+        if (!eligibility.eligible()) {
             throw new DomainException(ReviewErrorCode.REVIEW_NOT_ELIGIBLE);
+        }
+        if (eligibility.productId() == null || !productId.equals(eligibility.productId())) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "productId does not match order line product.");
         }
         Instant now = Instant.now();
         ReviewEntity saved = reviewRepository.save(ReviewEntity.builder()
@@ -94,6 +101,10 @@ public class ReviewDomainService {
             UpdateReviewRequest request) {
         ReviewEntity r = reviewRepository.findById(reviewId)
                 .orElseThrow(() -> new DomainException(ReviewErrorCode.REVIEW_NOT_FOUND));
+        if (!"SERVICE_BOOKING".equalsIgnoreCase(r.getTargetType())) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Cannot update non-service review via service review endpoint.");
+        }
         if (!r.getAuthorProfileId().equals(authorProfileId)) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }

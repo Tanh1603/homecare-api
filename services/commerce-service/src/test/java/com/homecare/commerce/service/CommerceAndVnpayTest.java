@@ -125,6 +125,20 @@ class CommerceAndVnpayTest {
                 .extracting("errorCode")
                 .isEqualTo("ORDER_LINE_NOT_DELIVERED");
 
+        assertThatThrownBy(() -> service.fulfillOrderLine("demo-organization", order.id(), lineId))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("ORDER_INVALID_STATE");
+
+        PaymentAttemptResponse attempt = service.createPaymentAttempt("buyer-return-1", order.id());
+        Map<String, String> ipnParams = new HashMap<>();
+        ipnParams.put("vnp_TxnRef", attempt.txnRef());
+        ipnParams.put("vnp_Amount", String.valueOf(attempt.amount() * 100L));
+        ipnParams.put("vnp_ResponseCode", "00");
+        ipnParams.put("vnp_TmnCode", "HOMECARE01");
+        ipnParams.put("vnp_SecureHash", vnpayStrategy.signParamsForTest(ipnParams));
+        assertThat(service.handleVnpayIpn(ipnParams).get("RspCode")).isEqualTo("00");
+
         service.fulfillOrderLine("demo-organization", order.id(), lineId);
 
         assertThatThrownBy(() -> service.createOrderReturnRequest(
@@ -143,6 +157,15 @@ class CommerceAndVnpayTest {
                 new CreateOrderReturnRequest("REFUND", 2, "Ốc vít không vừa ren giá đỡ dàn nóng"));
         assertThat(createdReturn.status()).isEqualTo("REQUESTED");
         assertThat(createdReturn.organizationId()).isEqualTo(CommerceDataInitializer.MERCHANT_1_ID);
+
+        assertThatThrownBy(() -> service.createOrderReturnRequest(
+                "buyer-return-1",
+                order.id(),
+                lineId,
+                new CreateOrderReturnRequest("REFUND", 1, "Duplicate return exceeding line qty")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RETURN_QUANTITY_EXCEEDED");
 
         OrderReturnResponse approved = service.resolveOrderReturnRequest(
                 "demo-organization",
@@ -173,5 +196,55 @@ class CommerceAndVnpayTest {
 
         assertThat(service.listOrderReturns("buyer-owner-xyz", false, order.id())).isEmpty();
         assertThat(service.listOrderReturns("admin-user", true, order.id())).isEmpty();
+    }
+
+    @Test
+    void rejectsInvalidReturnUrlIpnTamperingAndCrossTenantMerchantSpoofing() {
+        OrderResponse order = service.createOrder(
+                "buyer-sec-1",
+                new CreateOrderRequest(
+                        List.of(new OrderLineRequest(CommerceDataInitializer.PRODUCT_AC_FILTER_ID, 1)),
+                        "12 Le Loi, Q1"));
+
+        assertThatThrownBy(() -> service.createPaymentAttempt(
+                "buyer-sec-1", order.id(), "https://evil.example.com/steal"))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("VALIDATION_FAILED");
+
+        PaymentAttemptResponse attempt = service.createPaymentAttempt("buyer-sec-1", order.id());
+
+        Map<String, String> badTmn = new HashMap<>();
+        badTmn.put("vnp_TxnRef", attempt.txnRef());
+        badTmn.put("vnp_Amount", String.valueOf(attempt.amount() * 100L));
+        badTmn.put("vnp_ResponseCode", "00");
+        badTmn.put("vnp_TmnCode", "WRONG_TMN");
+        badTmn.put("vnp_SecureHash", vnpayStrategy.signParamsForTest(badTmn));
+        assertThat(service.handleVnpayIpn(badTmn).get("RspCode")).isEqualTo("97");
+
+        Map<String, String> badAmount = new HashMap<>();
+        badAmount.put("vnp_TxnRef", attempt.txnRef());
+        badAmount.put("vnp_Amount", "100");
+        badAmount.put("vnp_ResponseCode", "00");
+        badAmount.put("vnp_TmnCode", "HOMECARE01");
+        badAmount.put("vnp_SecureHash", vnpayStrategy.signParamsForTest(badAmount));
+        assertThat(service.handleVnpayIpn(badAmount).get("RspCode")).isEqualTo("04");
+        assertThat(service.getOrder("buyer-sec-1", order.id()).status()).isEqualTo("AWAITING_PAYMENT");
+
+        assertThatThrownBy(() -> service.listOrdersForPortal(
+                "stranger-org-user", CommerceDataInitializer.MERCHANT_1_ID, false, true))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
+
+        assertThatThrownBy(() -> service.fulfillOrderLine(
+                "stranger-org-user",
+                order.id(),
+                order.lines().getFirst().id(),
+                CommerceDataInitializer.MERCHANT_1_ID,
+                false))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
     }
 }

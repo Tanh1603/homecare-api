@@ -60,6 +60,10 @@ public class EvidenceVerificationClient {
     }
 
     public boolean verifyOrderLineEligible(UUID orderLineId, String requesterProfileId) {
+        return verifyOrderLineEligibility(orderLineId, requesterProfileId).eligible();
+    }
+
+    public OrderLineEligibility verifyOrderLineEligibility(UUID orderLineId, String requesterProfileId) {
         try {
             VerifyOrderLineEligibilityResponse response = withInternalMetadata(commerceStub)
                     .withDeadlineAfter(3, TimeUnit.SECONDS)
@@ -68,10 +72,17 @@ public class EvidenceVerificationClient {
                             .setRequesterProfileId(requesterProfileId)
                             .build());
 
-            return response.getEligible();
+            UUID productId = null;
+            if (!response.getProductId().isBlank()) {
+                try {
+                    productId = UUID.fromString(response.getProductId());
+                } catch (Exception ignored) {
+                }
+            }
+            return new OrderLineEligibility(response.getEligible(), productId);
         } catch (Exception e) {
             log.warn("Commerce gRPC verification failed ({}), defaulting to ineligible", e.getMessage());
-            return false;
+            return new OrderLineEligibility(false, null);
         }
     }
 
@@ -82,5 +93,8 @@ public class EvidenceVerificationClient {
     }
 
     public record BookingEligibility(boolean eligible, UUID providerId) {
+    }
+
+    public record OrderLineEligibility(boolean eligible, UUID productId) {
     }
 }

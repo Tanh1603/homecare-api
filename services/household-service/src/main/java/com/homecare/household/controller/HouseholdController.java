@@ -20,6 +20,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.homecare.common.error.CommonErrorCode;
+import com.homecare.common.error.DomainException;
+import com.homecare.common.security.RbacConstants;
+import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
@@ -201,6 +205,33 @@ public class HouseholdController {
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.UPDATED,
                 service.updateWarranty(jwt.getSubject(), warrantyId, request),
+                httpRequest));
+    }
+
+    @GetMapping("/warranties")
+    public ResponseEntity<ApiResponse<PageResponse<WarrantyResponse>>> listWarrantiesForOrganization(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
+            @RequestParam(required = false) UUID organizationId,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
+            HttpServletRequest httpRequest) {
+        boolean globalAdmin = SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ADMIN_ALL);
+        boolean orgOperator = SupabaseJwtConverterSupport.hasAnyRole(
+                jwt, RbacConstants.ROLE_ORGANIZATION);
+        if (!globalAdmin && !orgOperator) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        UUID effectiveOrgId = organizationId != null ? organizationId : orgIdHeader;
+        if (!globalAdmin && effectiveOrgId == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        List<WarrantyResponse> items = service.listWarrantiesForOrganization(
+                jwt.getSubject(), effectiveOrgId, globalAdmin);
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.RETRIEVED,
+                PageResponse.of(items, page, size, items.size()),
                 httpRequest));
     }
 

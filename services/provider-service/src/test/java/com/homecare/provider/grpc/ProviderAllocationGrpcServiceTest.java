@@ -16,6 +16,8 @@ import com.homecare.provider.v1.AllocateTechnicianRequest;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.VerifyOfferingRequest;
 import com.homecare.provider.v1.VerifyOfferingResponse;
+import com.homecare.provider.v1.VerifyOrganizationMembershipRequest;
+import com.homecare.provider.v1.VerifyOrganizationMembershipResponse;
 
 import io.grpc.stub.StreamObserver;
 
@@ -86,5 +88,41 @@ class ProviderAllocationGrpcServiceTest {
         assertThat(allocHolder[0].getAllocated()).isTrue();
         assertThat(allocHolder[0].getTechnicianId()).isEqualTo(ProviderDataInitializer.DEMO_TECH_ID.toString());
         assertThat(allocHolder[0].getTechnicianProfileId()).isEqualTo("demo-technician");
+
+        VerifyOrganizationMembershipResponse okOrgMember = invokeMembership(
+                ProviderDataInitializer.PROVIDER_1_ID.toString(), "a0000000-0000-0000-0000-000000000002");
+        assertThat(okOrgMember.getValid()).isTrue();
+
+        VerifyOrganizationMembershipResponse okTech = invokeMembership(
+                ProviderDataInitializer.PROVIDER_1_ID.toString(), "demo-technician");
+        assertThat(okTech.getValid()).isTrue();
+
+        VerifyOrganizationMembershipResponse denied = invokeMembership(
+                ProviderDataInitializer.PROVIDER_1_ID.toString(), "stranger-user");
+        assertThat(denied.getValid()).isFalse();
+    }
+
+    private VerifyOrganizationMembershipResponse invokeMembership(String orgId, String userId) {
+        final VerifyOrganizationMembershipResponse[] holder = new VerifyOrganizationMembershipResponse[1];
+        grpcService.verifyOrganizationMembership(
+                VerifyOrganizationMembershipRequest.newBuilder()
+                        .setOrganizationId(orgId)
+                        .setUserId(userId)
+                        .build(),
+                new StreamObserver<>() {
+                    @Override
+                    public void onNext(VerifyOrganizationMembershipResponse value) {
+                        holder[0] = value;
+                    }
+
+                    @Override
+                    public void onError(Throwable t) {
+                    }
+
+                    @Override
+                    public void onCompleted() {
+                    }
+                });
+        return holder[0];
     }
 }

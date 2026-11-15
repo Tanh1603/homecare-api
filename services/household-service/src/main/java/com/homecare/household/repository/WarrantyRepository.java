@@ -11,5 +11,9 @@ import com.homecare.household.entity.Warranty;
 public interface WarrantyRepository extends JpaRepository<Warranty, UUID> {
     List<Warranty> findByDeviceIdOrderByEndsOnDesc(UUID deviceId);
 
+    List<Warranty> findByOrganizationIdOrderByEndsOnDesc(UUID organizationId);
+
+    List<Warranty> findAllByOrderByEndsOnDesc();
+
     Optional<Warranty> findByOrderLineId(UUID orderLineId);
 }

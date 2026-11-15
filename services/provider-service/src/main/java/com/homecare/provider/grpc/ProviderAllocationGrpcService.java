@@ -12,6 +12,8 @@ import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.ProviderAllocationServiceGrpc;
 import com.homecare.provider.v1.VerifyOfferingRequest;
 import com.homecare.provider.v1.VerifyOfferingResponse;
+import com.homecare.provider.v1.VerifyOrganizationMembershipRequest;
+import com.homecare.provider.v1.VerifyOrganizationMembershipResponse;
 
 import io.grpc.stub.StreamObserver;
 import lombok.RequiredArgsConstructor;
@@ -92,6 +94,20 @@ public class ProviderAllocationGrpcService extends ProviderAllocationServiceGrpc
         }
 
         responseObserver.onNext(builder.build());
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void verifyOrganizationMembership(
+            VerifyOrganizationMembershipRequest request,
+            StreamObserver<VerifyOrganizationMembershipResponse> responseObserver) {
+        UUID orgId = parseUuidOrNull(request.getOrganizationId());
+        var role = domainService.resolveMembershipRole(orgId, request.getUserId());
+        VerifyOrganizationMembershipResponse response = VerifyOrganizationMembershipResponse.newBuilder()
+                .setValid(role.isPresent())
+                .setRole(role.orElse(""))
+                .build();
+        responseObserver.onNext(response);
         responseObserver.onCompleted();
     }
 

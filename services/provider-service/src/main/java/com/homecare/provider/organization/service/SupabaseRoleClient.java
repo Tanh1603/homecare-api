@@ -1,13 +1,20 @@
 package com.homecare.provider.organization.service;
 
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+
+import com.homecare.provider.organization.dto.OrganizationDtos.AdminUserResponse;
 
 @Service
 public class SupabaseRoleClient {
@@ -62,6 +69,96 @@ public class SupabaseRoleClient {
                 .retrieve()
                 .toBodilessEntity();
         log.info("[AUDIT-ROLE-SYNC] Revoked global ORGANIZATION role in Supabase public.user_roles for userId={}", userId);
+    }
+
+    public List<AdminUserResponse> listUsers() {
+        if (!isConfigured()) {
+            log.warn("[ADMIN-USERS] Supabase secret key not configured; returning empty user list.");
+            return List.of();
+        }
+        try {
+            Map<String, Object> body = restClient.get()
+                    .uri("/auth/v1/admin/users?page=1&per_page=100")
+                    .header("apikey", secretKey)
+                    .header("Authorization", "Bearer " + secretKey)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+            if (body == null || !(body.get("users") instanceof Collection<?> rawUsers)) {
+                return List.of();
+            }
+            List<AdminUserResponse> result = new ArrayList<>();
+            for (Object entry : rawUsers) {
+                if (!(entry instanceof Map<?, ?> user)) {
+                    continue;
+                }
+                String id = asString(user.get("id"));
+                String email = asString(user.get("email"));
+                Map<?, ?> userMeta = user.get("user_metadata") instanceof Map<?, ?> m ? m : Map.of();
+                Map<?, ?> appMeta = user.get("app_metadata") instanceof Map<?, ?> m ? m : Map.of();
+
+                String fullName = firstNonBlank(
+                        asString(userMeta.get("full_name")),
+                        asString(userMeta.get("name")),
+                        email != null && email.contains("@") ? email.substring(0, email.indexOf('@')) : id);
+                String role = resolveHighestRole(appMeta, userMeta);
+                String status = user.get("banned_until") != null ? "SUSPENDED" : "ACTIVE";
+                Instant createdAt = parseInstant(asString(user.get("created_at")));
+                result.add(new AdminUserResponse(id, fullName, email != null ? email : "", role, status, createdAt));
+            }
+            return result;
+        } catch (Exception ex) {
+            log.warn("[ADMIN-USERS] Failed to query Supabase Auth Admin API: {}", ex.getMessage());
+            return List.of();
+        }
+    }
+
+    private String resolveHighestRole(Map<?, ?> appMeta, Map<?, ?> userMeta) {
+        List<String> roles = new ArrayList<>();
+        collectStrings(appMeta.get("roles"), roles);
+        collectStrings(appMeta.get("user_roles"), roles);
+        collectStrings(userMeta.get("role"), roles);
+        for (String candidate : List.of("ADMIN", "ORGANIZATION", "TECHNICIAN", "CUSTOMER")) {
+            if (roles.stream().anyMatch(r -> r.equalsIgnoreCase(candidate))) {
+                return candidate;
+            }
+        }
+        return roles.isEmpty() ? "CUSTOMER" : roles.get(0).toUpperCase();
+    }
+
+    private void collectStrings(Object value, List<String> out) {
+        if (value instanceof Collection<?> col) {
+            for (Object item : col) {
+                if (item != null && !item.toString().isBlank()) {
+                    out.add(item.toString().trim());
+                }
+            }
+        } else if (value instanceof String s && !s.isBlank()) {
+            out.add(s.trim());
+        }
+    }
+
+    private String asString(Object val) {
+        return val != null ? val.toString() : null;
+    }
+
+    private String firstNonBlank(String... candidates) {
+        for (String c : candidates) {
+            if (c != null && !c.isBlank()) {
+                return c;
+            }
+        }
+        return "";
+    }
+
+    private Instant parseInstant(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Instant.now();
+        }
+        try {
+            return Instant.parse(raw);
+        } catch (Exception ex) {
+            return Instant.now();
+        }
     }
 
     private boolean isConfigured() {

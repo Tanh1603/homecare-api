@@ -2,6 +2,7 @@ package com.homecare.household.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.when;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -11,10 +12,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.web.EtagSupport;
+import com.homecare.household.client.ProviderOrgClient;
 import com.homecare.household.dto.HouseholdDtos.CareRecordResponse;
 import com.homecare.household.dto.HouseholdDtos.CreateDeviceRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateHouseholdRequest;
@@ -43,6 +46,9 @@ class HouseholdDomainServiceTest {
 
     @Autowired
     private HouseholdOutboxEventRepository outboxEventRepository;
+
+    @MockitoBean
+    private ProviderOrgClient providerOrgClient;
 
     @Test
     void enforcesOwnershipEtagWarrantyDateOrderScheduleNotificationConflictAndOutbox() {
@@ -172,5 +178,13 @@ class HouseholdDomainServiceTest {
         assertThat(careRecords).hasSize(1);
         assertThat(careRecords.getFirst().kind()).isEqualTo("WARRANTY_REPAIR");
         assertThat(careRecords.getFirst().bookingId()).isEqualTo(bookingId);
+
+        assertThatThrownBy(() -> service.listWarrantiesForOrganization("spoofing-org-user", orgId, false))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
+
+        when(providerOrgClient.verifyOrganizationMembership(orgId, "valid-org-user")).thenReturn(true);
+        assertThat(service.listWarrantiesForOrganization("valid-org-user", orgId, false)).hasSize(1);
     }
 }

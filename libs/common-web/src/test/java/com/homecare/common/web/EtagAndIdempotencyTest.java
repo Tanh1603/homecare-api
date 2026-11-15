@@ -116,5 +116,35 @@ class EtagAndIdempotencyTest {
         assertThat(json.has("data")).isTrue();
         assertThat(json.path("data").isNull()).isTrue();
         assertThat(json.has("errors")).isFalse();
+
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders
+                .standaloneSetup(new DummyForbiddenController())
+                .setControllerAdvice(new DummyForbiddenAdvice(factory))
+                .build();
+        try {
+            var res = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/dummy-forbidden")
+                            .requestAttr(CorrelationIdSupport.REQUEST_ATTRIBUTE, "corr-forbidden-test"))
+                    .andReturn()
+                    .getResponse();
+            assertThat(res.getStatus()).isEqualTo(403);
+            assertThat(res.getContentAsString()).contains("\"errorCode\":\"RESOURCE_FORBIDDEN\"");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @org.springframework.web.bind.annotation.RestControllerAdvice
+    static class DummyForbiddenAdvice extends com.homecare.common.web.servlet.BaseApiExceptionHandler {
+        DummyForbiddenAdvice(com.homecare.common.web.servlet.ServletApiResponseFactory responseFactory) {
+            super(responseFactory);
+        }
+    }
+
+    @org.springframework.web.bind.annotation.RestController
+    static class DummyForbiddenController {
+        @org.springframework.web.bind.annotation.GetMapping("/dummy-forbidden")
+        public String forbidden() {
+            throw new org.springframework.security.access.AccessDeniedException("Denied");
+        }
     }
 }

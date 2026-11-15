@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -36,6 +37,7 @@ public class NotificationInboxService {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationInboxService.class);
     public static final String CONSUMER_NAME = "notification-inbox-consumer";
+    private static final Set<String> ALLOWED_PLATFORMS = Set.of("ANDROID", "IOS", "WEB");
 
     private final NotificationRepository notificationRepository;
     private final ProcessedEventRepository processedEventRepository;
@@ -166,20 +168,27 @@ public class NotificationInboxService {
 
     @Transactional
     public DeviceRegistrationResponse registerDevice(String recipientId, RegisterDeviceRequest request) {
+        String platform = request.platform() == null ? "" : request.platform().trim().toUpperCase();
+        if (!ALLOWED_PLATFORMS.contains(platform)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Unsupported device platform.");
+        }
         Optional<DeviceRegistrationEntity> existing = deviceRegistrationRepository
                 .findByPushToken(request.pushToken().trim());
         if (existing.isPresent()) {
             DeviceRegistrationEntity d = existing.get();
-            // Transfer ownership to new user on shared devices / account switching
+            if (!d.getRecipientId().equals(recipientId) && d.isActive()) {
+                throw new DomainException(NotificationErrorCode.TOKEN_ALREADY_REGISTERED);
+            }
+            // Allow reclaiming inactive token (after prior logout/deactivation) on shared devices
             d.setRecipientId(recipientId);
-            d.setPlatform(request.platform().trim().toUpperCase());
+            d.setPlatform(platform);
             d.setActive(true);
             return toDeviceResponse(deviceRegistrationRepository.save(d));
         }
         DeviceRegistrationEntity saved = deviceRegistrationRepository.save(DeviceRegistrationEntity.builder()
                 .id(UUID.randomUUID())
                 .recipientId(recipientId)
-                .platform(request.platform().trim().toUpperCase())
+                .platform(platform)
                 .pushToken(request.pushToken().trim())
                 .active(true)
                 .createdAt(Instant.now().truncatedTo(ChronoUnit.MILLIS))

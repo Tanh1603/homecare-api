@@ -172,6 +172,37 @@ public class CommerceDomainService {
     }
 
     @Transactional(readOnly = true)
+    public List<OrderResponse> listOrdersForPortal(
+            String buyerProfileId,
+            UUID organizationId,
+            boolean globalAdmin,
+            boolean orgOperator) {
+        if (organizationId != null && (globalAdmin || orgOperator)) {
+            if (!globalAdmin) {
+                MerchantEntity merchant = merchantRepository.findByOrganizationId(organizationId)
+                        .orElseGet(() -> merchantRepository.findById(organizationId).orElse(null));
+                if (merchant == null
+                        || EntityStatus.INACTIVE.name().equalsIgnoreCase(merchant.getStatus())
+                        || buyerProfileId == null
+                        || !buyerProfileId.equals(merchant.getOwnerProfileId())) {
+                    throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+                }
+            }
+            return orderRepository.findByMerchantIdOrderByCreatedAtDesc(organizationId)
+                    .stream()
+                    .map(this::toOrderResponse)
+                    .toList();
+        }
+        if (globalAdmin) {
+            return orderRepository.findAllByOrderByCreatedAtDesc()
+                    .stream()
+                    .map(this::toOrderResponse)
+                    .toList();
+        }
+        return listOrders(buyerProfileId);
+    }
+
+    @Transactional(readOnly = true)
     public OrderResponse getOrder(String buyerProfileId, UUID orderId) {
         OrderEntity order = requireOwnedOrder(buyerProfileId, orderId);
         return toOrderResponse(order);
@@ -215,6 +246,10 @@ public class CommerceDomainService {
         if (!vnpayStrategy.verifyIpnSignature(params)) {
             return Map.of("RspCode", "97", "Message", "Invalid Checksum");
         }
+        String tmnCode = params.get("vnp_TmnCode");
+        if (tmnCode == null || !vnpayStrategy.getTmnCode().equals(tmnCode)) {
+            return Map.of("RspCode", "97", "Message", "Invalid TmnCode");
+        }
         String txnRef = params.get("vnp_TxnRef");
         String rspCode = params.getOrDefault("vnp_ResponseCode", "99");
         PaymentAttemptEntity attempt = paymentAttemptRepository.findByTxnRef(txnRef).orElse(null);
@@ -223,6 +258,15 @@ public class CommerceDomainService {
         }
         if (!"PENDING".equals(attempt.getStatus())) {
             return Map.of("RspCode", "02", "Message", "Order already confirmed");
+        }
+        long vnpAmount;
+        try {
+            vnpAmount = Long.parseLong(params.getOrDefault("vnp_Amount", "-1"));
+        } catch (NumberFormatException e) {
+            vnpAmount = -1L;
+        }
+        if (vnpAmount != attempt.getAmount() * 100L) {
+            return Map.of("RspCode", "04", "Message", "Invalid Amount");
         }
         OrderEntity order = orderRepository.findById(attempt.getOrderId()).orElseThrow();
         Instant now = Instant.now();
@@ -297,11 +341,15 @@ public class CommerceDomainService {
             boolean isGlobalAdmin) {
         OrderEntity order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
-        verifyActiveMerchantScope(order, orgIdHeader, isGlobalAdmin);
+        verifyActiveMerchantScope(actorProfileId, order, orgIdHeader, isGlobalAdmin);
         OrderLineEntity line = orderLineRepository.findById(lineId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_LINE_NOT_FOUND));
         if (!line.getOrderId().equals(orderId)) {
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        }
+        if (!"PAID".equals(order.getPaymentStatus())) {
+            throw new DomainException(CommerceErrorCode.ORDER_INVALID_STATE,
+                    "Cannot fulfill an unpaid order.");
         }
         Instant now = Instant.now();
         line.setFulfillmentStatus("DELIVERED");
@@ -340,7 +388,12 @@ public class CommerceDomainService {
         if (!"DELIVERED".equals(line.getFulfillmentStatus())) {
             throw new DomainException(CommerceErrorCode.ORDER_LINE_NOT_DELIVERED);
         }
-        if (request.quantity() > line.getQuantity()) {
+        int existingReturnedQty = returnRequestRepository.findByOrderIdOrderByCreatedAtDesc(orderId)
+                .stream()
+                .filter(r -> lineId.equals(r.getOrderLineId()) && !"REJECTED".equalsIgnoreCase(r.getStatus()))
+                .mapToInt(OrderReturnRequestEntity::getQuantity)
+                .sum();
+        if (request.quantity() <= 0 || existingReturnedQty + request.quantity() > line.getQuantity()) {
             throw new DomainException(CommerceErrorCode.RETURN_QUANTITY_EXCEEDED);
         }
         ProductEntity product = productRepository.findById(line.getProductId())
@@ -373,13 +426,21 @@ public class CommerceDomainService {
         return toOrderReturnResponse(saved);
     }
 
-    private void verifyActiveMerchantScope(OrderEntity order, UUID orgIdHeader, boolean isGlobalAdmin) {
+    private void verifyActiveMerchantScope(
+            String actorProfileId,
+            OrderEntity order,
+            UUID orgIdHeader,
+            boolean isGlobalAdmin) {
         MerchantEntity merchant = merchantRepository.findById(order.getMerchantId()).orElse(null);
         if (merchant != null && EntityStatus.INACTIVE.name().equalsIgnoreCase(merchant.getStatus())) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
         if (!isGlobalAdmin) {
-            if (orgIdHeader == null || merchant == null || !orgIdHeader.equals(merchant.getOrganizationId())) {
+            if (orgIdHeader == null
+                    || merchant == null
+                    || !orgIdHeader.equals(merchant.getOrganizationId())
+                    || actorProfileId == null
+                    || !actorProfileId.equals(merchant.getOwnerProfileId())) {
                 throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
             }
         }
@@ -414,7 +475,7 @@ public class CommerceDomainService {
             boolean isGlobalAdmin) {
         OrderEntity order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
-        verifyActiveMerchantScope(order, orgIdHeader, isGlobalAdmin);
+        verifyActiveMerchantScope(actorProfileId, order, orgIdHeader, isGlobalAdmin);
         OrderReturnRequestEntity ret = returnRequestRepository.findById(returnId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.RETURN_REQUEST_NOT_FOUND));
         if (!ret.getOrderId().equals(orderId)) {
@@ -472,7 +533,7 @@ public class CommerceDomainService {
                 throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
             }
         } else if (!isGlobalAdmin) {
-            verifyActiveMerchantScope(order, orgIdHeader, false);
+            verifyActiveMerchantScope(callerProfileId, order, orgIdHeader, false);
         }
         return returnRequestRepository.findByOrderIdOrderByCreatedAtDesc(orderId)
                 .stream()

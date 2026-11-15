@@ -243,6 +243,9 @@ public class OrganizationDomainService {
 
     @Transactional
     public OrganizationMemberResponse addMember(UUID orgId, AddMemberRequest request) {
+        if (request.role() == OrgRole.ORG_OWNER) {
+            throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN, "Cannot assign ORG_OWNER role.");
+        }
         Instant now = Instant.now();
         String targetUserId = request.userId().trim();
         OrganizationMemberEntity existing = memberRepository.findByOrganizationIdAndUserId(orgId, targetUserId)
@@ -282,6 +285,14 @@ public class OrganizationDomainService {
 
     @Transactional
     public OrganizationMemberResponse updateMemberRole(UUID orgId, String targetUserId, OrgRole newRole) {
+        if (newRole == OrgRole.ORG_OWNER) {
+            throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN, "Cannot promote member to ORG_OWNER.");
+        }
+        com.homecare.provider.organization.security.OrgContext ctx =
+                com.homecare.provider.organization.security.OrgContext.get();
+        if (ctx != null && targetUserId.equals(ctx.userId())) {
+            throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN, "Cannot modify your own organization role.");
+        }
         OrganizationMemberEntity member = requireActiveModifiableMember(orgId, targetUserId);
         member.setRole(newRole);
         return toMemberResponse(memberRepository.save(member));

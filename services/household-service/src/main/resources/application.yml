@@ -5,6 +5,10 @@ server:
 grpc:
     server:
         port: ${HOUSEHOLD_GRPC_PORT:9082}
+    client:
+        providerService:
+            address: ${PROVIDER_GRPC_ADDRESS:static://localhost:9083}
+            negotiationType: PLAINTEXT
 
 spring:
     application:

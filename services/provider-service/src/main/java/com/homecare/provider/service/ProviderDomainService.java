@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
@@ -26,6 +27,11 @@ import com.homecare.provider.entity.ServiceOffering;
 import com.homecare.provider.entity.Technician;
 import com.homecare.provider.entity.TechnicianAllocation;
 import com.homecare.provider.exception.ProviderErrorCode;
+import com.homecare.provider.organization.entity.OrgRole;
+import com.homecare.provider.organization.entity.OrganizationMemberEntity;
+import com.homecare.provider.organization.entity.OrganizationStatus;
+import com.homecare.provider.organization.repository.OrganizationMemberRepository;
+import com.homecare.provider.organization.repository.OrganizationRepository;
 import com.homecare.provider.repository.ProviderRepository;
 import com.homecare.provider.repository.ScheduleWindowRepository;
 import com.homecare.provider.repository.ServiceOfferingRepository;
@@ -38,11 +44,15 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class ProviderDomainService {
 
+    private static final Set<String> VALID_SCHEDULE_STATUSES = Set.of("AVAILABLE", "UNAVAILABLE", "BLOCKED", "BOOKED");
+
     private final ProviderRepository providerRepository;
     private final ServiceOfferingRepository offeringRepository;
     private final TechnicianRepository technicianRepository;
     private final ScheduleWindowRepository scheduleWindowRepository;
     private final TechnicianAllocationRepository allocationRepository;
+    private final OrganizationRepository organizationRepository;
+    private final OrganizationMemberRepository organizationMemberRepository;
 
     @Transactional(readOnly = true)
     public List<ServiceOfferingResponse> listOfferings(String category) {
@@ -91,19 +101,63 @@ public class ProviderDomainService {
     @Transactional
     public Technician resolveTechnicianOrDemo(String technicianIdOrMe, String jwtSubject) {
         if ("me".equalsIgnoreCase(technicianIdOrMe)) {
-            if (jwtSubject != null) {
-                Optional<Technician> bySub = technicianRepository.findByProfileId(jwtSubject);
-                if (bySub.isPresent()) {
-                    return bySub.get();
-                }
+            if (jwtSubject == null || jwtSubject.isBlank()) {
+                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
             }
-            return technicianRepository.findById(ProviderDataInitializer.DEMO_TECH_ID)
-                    .orElseThrow(() -> new DomainException(
-                            ProviderErrorCode.TECHNICIAN_NOT_FOUND, "Demo technician not found."));
+            return technicianRepository.findByProfileId(jwtSubject)
+                    .orElseThrow(() -> new DomainException(ProviderErrorCode.TECHNICIAN_NOT_FOUND));
         }
         UUID id = UUID.fromString(technicianIdOrMe);
         return technicianRepository.findById(id)
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.TECHNICIAN_NOT_FOUND));
+    }
+
+    @Transactional(readOnly = true)
+    public boolean verifyOrganizationMembership(UUID orgId, String userId) {
+        return resolveMembershipRole(orgId, userId).isPresent();
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<String> resolveMembershipRole(UUID orgId, String userId) {
+        if (orgId == null || userId == null || userId.isBlank()) {
+            return Optional.empty();
+        }
+        Optional<OrganizationMemberEntity> orgMember = organizationRepository.findById(orgId)
+                .filter(org -> org.getStatus() == OrganizationStatus.APPROVED)
+                .flatMap(org -> organizationMemberRepository.findByOrganizationIdAndUserId(orgId, userId))
+                .filter(m -> EntityStatus.ACTIVE.name().equalsIgnoreCase(m.getStatus()));
+        if (orgMember.isPresent()) {
+            return Optional.of(orgMember.get().getRole().name());
+        }
+        boolean isProviderOwner = providerRepository.findById(orgId)
+                .or(() -> providerRepository.findByOrganizationId(orgId))
+                .filter(p -> EntityStatus.ACTIVE.name().equalsIgnoreCase(p.getStatus()))
+                .map(p -> userId.equals(p.getOwnerProfileId()))
+                .orElse(false);
+        if (isProviderOwner) {
+            return Optional.of("PROVIDER_OWNER");
+        }
+        boolean isActiveTech = technicianRepository.findByProfileId(userId)
+                .filter(t -> EntityStatus.ACTIVE.name().equalsIgnoreCase(t.getStatus()))
+                .map(t -> orgId.equals(t.getProviderId()))
+                .orElse(false);
+        return isActiveTech ? Optional.of("TECHNICIAN") : Optional.empty();
+    }
+
+    private void verifyCanManageTechnicianSchedule(Technician tech, String jwtSubject) {
+        if (jwtSubject == null || jwtSubject.isBlank()) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        if (jwtSubject.equals(tech.getProfileId())) {
+            return;
+        }
+        String role = resolveMembershipRole(tech.getProviderId(), jwtSubject).orElse(null);
+        boolean isOrgManager = OrgRole.ORG_OWNER.name().equals(role)
+                || OrgRole.ORG_ADMIN.name().equals(role)
+                || "PROVIDER_OWNER".equals(role);
+        if (!isOrgManager) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
     }
 
     @Transactional(readOnly = true)
@@ -121,6 +175,7 @@ public class ProviderDomainService {
             String jwtSubject,
             CreateScheduleWindowRequest request) {
         Technician tech = resolveTechnicianOrDemo(technicianIdOrMe, jwtSubject);
+        verifyCanManageTechnicianSchedule(tech, jwtSubject);
         if (!request.endsAt().isAfter(request.startsAt())) {
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "endsAt must be after startsAt.");
         }
@@ -148,6 +203,7 @@ public class ProviderDomainService {
             String ifMatchHeader,
             UpdateScheduleWindowRequest request) {
         Technician tech = resolveTechnicianOrDemo(technicianIdOrMe, jwtSubject);
+        verifyCanManageTechnicianSchedule(tech, jwtSubject);
         ScheduleWindow window = scheduleWindowRepository.findById(windowId)
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.SCHEDULE_WINDOW_NOT_FOUND));
         if (!window.getTechnicianId().equals(tech.getId())) {
@@ -163,8 +219,21 @@ public class ProviderDomainService {
         if (request.endsAt() != null) {
             window.setEndsAt(request.endsAt());
         }
+        if (!window.getEndsAt().isAfter(window.getStartsAt())) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "endsAt must be after startsAt.");
+        }
+        boolean overlaps = scheduleWindowRepository.findOverlapping(tech.getId(), window.getStartsAt(), window.getEndsAt())
+                .stream()
+                .anyMatch(w -> !w.getId().equals(windowId));
+        if (overlaps) {
+            throw new DomainException(ProviderErrorCode.SCHEDULE_OVERLAP);
+        }
         if (request.status() != null && !request.status().isBlank()) {
-            window.setStatus(request.status().trim().toUpperCase());
+            String normalizedStatus = request.status().trim().toUpperCase();
+            if (!VALID_SCHEDULE_STATUSES.contains(normalizedStatus)) {
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Invalid schedule status.");
+            }
+            window.setStatus(normalizedStatus);
         }
         return toScheduleResponse(scheduleWindowRepository.saveAndFlush(window));
     }

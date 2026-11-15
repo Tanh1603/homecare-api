@@ -102,10 +102,18 @@ public class CommerceController {
     @GetMapping("/orders")
     public ResponseEntity<ApiResponse<PageResponse<OrderResponse>>> listOrders(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
+            @RequestParam(required = false) UUID organizationId,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<OrderResponse> items = service.listOrders(jwt.getSubject());
+        boolean globalAdmin = SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ADMIN_ALL);
+        boolean orgOperator = SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt, new String[]{RbacConstants.ROLE_ORGANIZATION}, RbacConstants.PERM_ORDER_FULFILL);
+        UUID effectiveOrgId = organizationId != null ? organizationId : orgIdHeader;
+        List<OrderResponse> items = service.listOrdersForPortal(
+                jwt.getSubject(), effectiveOrgId, globalAdmin, orgOperator);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
                 PageResponse.of(items, page, size, items.size()),

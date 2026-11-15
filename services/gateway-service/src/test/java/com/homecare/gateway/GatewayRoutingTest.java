@@ -153,6 +153,17 @@ class GatewayRoutingTest {
         assertTrue(page.body().contains("Swagger UI"));
     }
 
+    @Test void blocksUnauthenticatedTechnicianSchedulesAndRoutesAdminUsers() throws Exception {
+        int before = calls.get();
+        var schedResp = get("/api/v1/technicians/44444444-4444-4444-4444-444444444401/schedules");
+        assertEquals(401, schedResp.statusCode());
+        assertEquals(before, calls.get());
+
+        var adminUsersResp = get("/api/v1/admin/users");
+        assertEquals(401, adminUsersResp.statusCode());
+        assertEquals(before, calls.get());
+    }
+
     private HttpResponse<String> get(String path) throws Exception {
         var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build();
         return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());

@@ -257,4 +257,115 @@ class BookingLifecycleServiceTest {
         assertThat(saga.getSagaStatus()).isEqualTo("FAILED");
         assertThat(saga.getFailureReason()).isEqualTo("NO_AVAILABLE_TECHNICIAN");
     }
+
+    @Test
+    void enforcesFailClosedOfferingInvalidScheduleStateJumpsIfMatchAndOrgMembership() {
+        UUID serviceId = UUID.fromString("33333333-3333-3333-3333-333333333301");
+        UUID providerId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID techId = UUID.fromString("44444444-4444-4444-4444-444444444401");
+        Instant start = Instant.now().plus(2, ChronoUnit.HOURS);
+
+        when(householdVerificationClient.verifyDeviceOrFallback(any(), anyString(), any()))
+                .thenReturn("AC");
+        when(providerGrpcClient.verifyOffering(serviceId))
+                .thenThrow(new RuntimeException("provider gRPC down"))
+                .thenReturn(VerifyOfferingResponse.newBuilder()
+                        .setServiceId(serviceId.toString())
+                        .setProviderId(providerId.toString())
+                        .setName("Ve sinh May lanh")
+                        .setBasePrice(250_000L)
+                        .setActive(true)
+                        .setCategory("AC")
+                        .setEstimatedDurationMinutes(60)
+                        .build());
+
+        // (a) VerifyOffering unreachable must fail closed instead of falling back to 250k price
+        assertThatThrownBy(() -> service.createBooking(
+                "customer-fail-closed",
+                new CreateBookingRequest(
+                        serviceId, null, "AC", start, start.plus(1, ChronoUnit.HOURS), "123 Le Loi", null)))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("SERVICE_NOT_AVAILABLE");
+
+        // (b) preferredEnd <= preferredStart must be rejected
+        assertThatThrownBy(() -> service.createBooking(
+                "customer-bad-window",
+                new CreateBookingRequest(
+                        serviceId, null, "AC", start, start, "123 Le Loi", null)))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("VALIDATION_FAILED");
+
+        // Create a valid ASSIGNED booking to verify state machine, If-Match, and org membership checks
+        when(providerGrpcClient.allocateTechnician(anyString(), any(), any(), anyString(), any(), any(), any(), anyBoolean()))
+                .thenReturn(AllocateTechnicianResponse.newBuilder()
+                        .setAllocated(true)
+                        .setTechnicianId(techId.toString())
+                        .setTechnicianProfileId("demo-technician")
+                        .setTechnicianName("Tran Van Ky Thuat")
+                        .setProviderId(providerId.toString())
+                        .build());
+
+        BookingResponse assigned = service.createBooking(
+                "customer-sec-1",
+                new CreateBookingRequest(
+                        serviceId, null, "AC", start, start.plus(1, ChronoUnit.HOURS), "123 Le Loi", null));
+
+        // (c) Missing If-Match must be rejected; jumping ASSIGNED -> COMPLETED must be rejected
+        assertThatThrownBy(() -> service.appendWorkUpdate(
+                "demo-technician",
+                assigned.id(),
+                null,
+                new CreateWorkUpdateRequest("STARTED", "Arrived")))
+                .isInstanceOf(EtagSupport.PreconditionException.class)
+                .extracting("errorCode")
+                .isEqualTo("PRECONDITION_REQUIRED");
+
+        assertThatThrownBy(() -> service.appendWorkUpdate(
+                "demo-technician",
+                assigned.id(),
+                EtagSupport.format(assigned.version()),
+                new CreateWorkUpdateRequest("COMPLETED", "Skipped STARTED")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("BOOKING_INVALID_STATE");
+
+        // (d) Spoofed X-Organization-Id must be rejected when actor is not a member of the org
+        assertThatThrownBy(() -> service.listBookingsPage(
+                "spoofing-org-operator", false, true, false, providerId, 1, 20))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
+
+        assertThatThrownBy(() -> service.getBooking(
+                "spoofing-org-operator", false, true, false, assigned.id(), providerId))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
+
+        when(providerGrpcClient.verifyOrganizationMembership(providerId, "valid-org-operator"))
+                .thenReturn(true);
+        assertThat(service.getBooking(
+                "valid-org-operator", false, true, false, assigned.id(), providerId).id())
+                .isEqualTo(assigned.id());
+
+        // REQUESTED -> IN_PROGRESS must be rejected
+        when(providerGrpcClient.allocateTechnician(anyString(), any(), any(), anyString(), any(), any(), any(), anyBoolean()))
+                .thenReturn(AllocateTechnicianResponse.newBuilder()
+                        .setAllocated(false)
+                        .setFailureReason("NO_AVAILABLE_TECHNICIAN")
+                        .build());
+        BookingResponse requested = service.createBooking(
+                "customer-sec-2",
+                new CreateBookingRequest(
+                        serviceId, null, "AC", start.plus(3, ChronoUnit.HOURS), null, "123 Le Loi", null));
+        assertThatThrownBy(() -> service.appendWorkUpdate(
+                "valid-org-operator", true, providerId, requested.id(),
+                EtagSupport.format(requested.version()),
+                new CreateWorkUpdateRequest("STARTED", "Trying without assigned tech")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("BOOKING_INVALID_STATE");
+    }
 }

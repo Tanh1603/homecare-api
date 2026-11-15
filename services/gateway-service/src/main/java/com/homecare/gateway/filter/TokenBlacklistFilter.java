@@ -18,6 +18,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 
 import com.homecare.common.error.CommonErrorCode;
+import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.CorrelationIdSupport;
 
@@ -55,6 +56,10 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
                         return chain.filter(exchange);
                     }
                     Jwt jwt = optionalAuth.get().getToken();
+                    if (SupabaseJwtConverterSupport.isUserStatusBlocked(jwt)) {
+                        log.warn("Blocked request for suspended/banned user sub={}", jwt.getSubject());
+                        return writeErrorResponse(exchange, CommonErrorCode.ACCESS_DENIED);
+                    }
                     String sid = jwt.getClaimAsString("session_id");
 
                     if (sid == null || sid.isBlank()) {
@@ -71,15 +76,14 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
                             .flatMap(isBlacklisted -> {
                                 if (Boolean.TRUE.equals(isBlacklisted)) {
                                     log.warn("Blocked request with blacklisted session key={}", key);
-                                    return onTokenRevoked(exchange);
+                                    return writeErrorResponse(exchange, CommonErrorCode.TOKEN_REVOKED);
                                 }
                                 return chain.filter(exchange);
                             });
                 });
     }
 
-    private Mono<Void> onTokenRevoked(ServerWebExchange exchange) {
-        CommonErrorCode errorCode = CommonErrorCode.TOKEN_REVOKED;
+    private Mono<Void> writeErrorResponse(ServerWebExchange exchange, CommonErrorCode errorCode) {
         ServerHttpResponse response = exchange.getResponse();
         response.setStatusCode(errorCode.status());
         response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
@@ -98,7 +102,10 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
         try {
             bytes = objectMapper.writeValueAsBytes(errorResponse);
         } catch (Exception e) {
-            bytes = "{\"success\":false,\"code\":401,\"errorCode\":\"TOKEN_REVOKED\",\"message\":\"Token has been revoked\",\"data\":null}".getBytes(StandardCharsets.UTF_8);
+            bytes = ("{\"success\":false,\"code\":" + errorCode.status().value()
+                    + ",\"errorCode\":\"" + errorCode.name()
+                    + "\",\"message\":\"" + errorCode.defaultMessage() + "\",\"data\":null}")
+                    .getBytes(StandardCharsets.UTF_8);
         }
 
         DataBuffer buffer = response.bufferFactory().wrap(bytes);

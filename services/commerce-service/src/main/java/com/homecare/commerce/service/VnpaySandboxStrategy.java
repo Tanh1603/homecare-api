@@ -1,5 +1,6 @@
 package com.homecare.commerce.service;
 
+import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.ZoneId;
@@ -15,6 +16,9 @@ import javax.crypto.spec.SecretKeySpec;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+
+import com.homecare.common.error.CommonErrorCode;
+import com.homecare.common.error.DomainException;
 
 @Component
 public class VnpaySandboxStrategy {
@@ -37,13 +41,17 @@ public class VnpaySandboxStrategy {
         this.returnUrl = returnUrl;
     }
 
+    public String getTmnCode() {
+        return tmnCode;
+    }
+
     public String buildPaymentUrl(String txnRef, long amountVnd, String orderInfo) {
         return buildPaymentUrl(txnRef, amountVnd, orderInfo, null);
     }
 
     public String buildPaymentUrl(String txnRef, long amountVnd, String orderInfo, String customReturnUrl) {
         String effectiveReturnUrl = (customReturnUrl != null && !customReturnUrl.isBlank())
-                ? customReturnUrl.trim()
+                ? validateReturnUrl(customReturnUrl.trim())
                 : returnUrl;
 
         ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Asia/Ho_Chi_Minh"));
@@ -90,6 +98,38 @@ public class VnpaySandboxStrategy {
         sorted.remove("vnp_SecureHash");
         sorted.remove("vnp_SecureHashType");
         return hmacSha512(hashSecret, buildCanonicalQuery(sorted));
+    }
+
+    private String validateReturnUrl(String candidate) {
+        URI uri;
+        try {
+            uri = URI.create(candidate);
+        } catch (IllegalArgumentException e) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Invalid returnUrl.");
+        }
+        String scheme = uri.getScheme();
+        if ("homecare".equalsIgnoreCase(scheme)) {
+            return candidate;
+        }
+        if ((!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme))
+                || uri.getUserInfo() != null
+                || uri.getHost() == null
+                || uri.getHost().isBlank()) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Untrusted returnUrl origin.");
+        }
+        URI defaultUri = URI.create(returnUrl);
+        String allowedHost = defaultUri.getHost();
+        String host = uri.getHost();
+        boolean matchesConfiguredHost = allowedHost != null && allowedHost.equalsIgnoreCase(host);
+        boolean matchesLocalhost = isLocalhost(allowedHost) && isLocalhost(host);
+        if (!matchesConfiguredHost && !matchesLocalhost) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Untrusted returnUrl origin.");
+        }
+        return candidate;
+    }
+
+    private boolean isLocalhost(String host) {
+        return "localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host);
     }
 
     private String buildCanonicalQuery(Map<String, String> sortedParams) {

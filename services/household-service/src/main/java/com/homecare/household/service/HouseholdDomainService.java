@@ -16,6 +16,7 @@ import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.event.DomainEventContracts;
 import com.homecare.common.web.EtagSupport;
+import com.homecare.household.client.ProviderOrgClient;
 import com.homecare.household.dto.HouseholdDtos.CareRecordResponse;
 import com.homecare.household.dto.HouseholdDtos.CreateCareRecordRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateDeviceRequest;
@@ -60,6 +61,7 @@ public class HouseholdDomainService {
     private final MaintenanceScheduleRepository scheduleRepository;
     private final CareRecordRepository careRecordRepository;
     private final HouseholdOutboxEventRepository outboxEventRepository;
+    private final ProviderOrgClient providerOrgClient;
     private final ObjectMapper objectMapper;
 
     @Transactional
@@ -217,6 +219,33 @@ public class HouseholdDomainService {
                 .createdAt(Instant.now())
                 .build());
         return toWarrantyResponse(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public List<WarrantyResponse> listWarrantiesForOrganization(
+            String actorProfileId,
+            UUID organizationId,
+            boolean globalAdmin) {
+        if (!globalAdmin) {
+            if (organizationId == null || actorProfileId == null
+                    || !providerOrgClient.verifyOrganizationMembership(organizationId, actorProfileId)) {
+                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            }
+        }
+        return listWarrantiesForOrganization(organizationId, globalAdmin);
+    }
+
+    @Transactional(readOnly = true)
+    public List<WarrantyResponse> listWarrantiesForOrganization(UUID organizationId, boolean globalAdmin) {
+        List<Warranty> list;
+        if (organizationId != null) {
+            list = warrantyRepository.findByOrganizationIdOrderByEndsOnDesc(organizationId);
+        } else if (globalAdmin) {
+            list = warrantyRepository.findAllByOrderByEndsOnDesc();
+        } else {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Organization context is required.");
+        }
+        return list.stream().map(this::toWarrantyResponse).toList();
     }
 
     @Transactional

@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
@@ -154,6 +155,14 @@ public abstract class BaseApiExceptionHandler {
         log.warn("Persistence conflict exceptionType={} traceId={}",
                 exception.getClass().getSimpleName(), traceId(request));
         return response(CommonErrorCode.CONFLICT, null, request);
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAccessDenied(
+            AccessDeniedException exception,
+            HttpServletRequest request) {
+        log.warn("Access denied traceId={}", traceId(request));
+        return response(CommonErrorCode.RESOURCE_FORBIDDEN, null, request);
     }
 
     @ExceptionHandler(Exception.class)

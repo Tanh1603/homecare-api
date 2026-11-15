@@ -15,8 +15,11 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import com.homecare.common.error.DomainException;
 import com.homecare.review.client.EvidenceVerificationClient;
 import com.homecare.review.client.EvidenceVerificationClient.BookingEligibility;
+import com.homecare.review.client.EvidenceVerificationClient.OrderLineEligibility;
+import com.homecare.review.dto.ReviewDtos.CreateProductReviewRequest;
 import com.homecare.review.dto.ReviewDtos.CreateServiceReviewRequest;
 import com.homecare.review.dto.ReviewDtos.ReviewResponse;
+import com.homecare.review.dto.ReviewDtos.UpdateReviewRequest;
 
 @SpringBootTest
 @ActiveProfiles("test")
@@ -57,5 +60,48 @@ class ReviewDomainServiceTest {
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("REVIEW_ALREADY_EXISTS");
+    }
+
+    @Test
+    void enforcesProviderAndProductMatchAndPreventsCrossTypeUpdate() {
+        UUID bookingId = UUID.randomUUID();
+        UUID actualProviderId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID spoofedProviderId = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        when(verificationClient.verifyBookingEligible(bookingId, "user-2"))
+                .thenReturn(new BookingEligibility(true, actualProviderId));
+
+        assertThatThrownBy(() -> service.createServiceReview(
+                "user-2",
+                new CreateServiceReviewRequest(bookingId, spoofedProviderId, 1, "Spoofed target provider")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("VALIDATION_FAILED");
+
+        UUID orderLineId = UUID.randomUUID();
+        UUID actualProductId = UUID.randomUUID();
+        UUID spoofedProductId = UUID.randomUUID();
+        when(verificationClient.verifyOrderLineEligibility(orderLineId, "user-2"))
+                .thenReturn(new OrderLineEligibility(true, actualProductId));
+
+        assertThatThrownBy(() -> service.createProductReview(
+                "user-2",
+                spoofedProductId,
+                new CreateProductReviewRequest(orderLineId, 5, "Spoofed product target")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("VALIDATION_FAILED");
+
+        ReviewResponse productReview = service.createProductReview(
+                "user-2",
+                actualProductId,
+                new CreateProductReviewRequest(orderLineId, 5, "San pham dung chuan"));
+
+        assertThatThrownBy(() -> service.updateServiceReview(
+                "user-2",
+                productReview.id(),
+                new UpdateReviewRequest(4, "Updating product review via service endpoint")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("VALIDATION_FAILED");
     }
 }

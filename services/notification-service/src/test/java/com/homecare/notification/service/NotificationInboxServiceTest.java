@@ -1,6 +1,7 @@
 package com.homecare.notification.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 
@@ -8,6 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+
+import com.homecare.common.error.DomainException;
 
 import com.homecare.notification.dto.NotificationDtos.DeviceRegistrationResponse;
 import com.homecare.notification.dto.NotificationDtos.NotificationResponse;
@@ -53,7 +56,8 @@ class NotificationInboxServiceTest {
         assertThat(readOnce.read()).isTrue();
         assertThat(readTwice.readAt()).isEqualTo(readOnce.readAt());
 
-        inboxService.registerDevice("cust-1", new RegisterDeviceRequest("ANDROID", "fcm-token-xyz"));
+        DeviceRegistrationResponse reg1 = inboxService.registerDevice(
+                "cust-1", new RegisterDeviceRequest("ANDROID", "fcm-token-xyz"));
         assertThat(deviceRegistrationRepository.findByRecipientIdAndActiveTrue("cust-1")).hasSize(1);
 
         // Triggering another event for cust-1 after token is registered exercises RabbitMQ push event enqueueing with entity ID
@@ -63,7 +67,22 @@ class NotificationInboxServiceTest {
         consumer.onDomainEvent(event2Json);
         assertThat(inboxService.listInbox("cust-1")).hasSize(2);
 
-        // Verify account switching on same device transfers token ownership to cust-2
+        // Active token owned by cust-1 cannot be hijacked without prior deactivation
+        assertThatThrownBy(() -> inboxService.registerDevice(
+                "cust-2", new RegisterDeviceRequest("ANDROID", "fcm-token-xyz")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("TOKEN_ALREADY_REGISTERED");
+
+        // Unsupported platform must be rejected
+        assertThatThrownBy(() -> inboxService.registerDevice(
+                "cust-1", new RegisterDeviceRequest("WINDOWS_PHONE", "fcm-token-bad")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("VALIDATION_FAILED");
+
+        // Deactivate cust-1 device first, then cust-2 can legitimately claim the shared device token
+        inboxService.deactivateDevice("cust-1", reg1.id());
         DeviceRegistrationResponse transferred = inboxService.registerDevice(
                 "cust-2", new RegisterDeviceRequest("ANDROID", "fcm-token-xyz"));
         assertThat(transferred.recipientId()).isEqualTo("cust-2");
