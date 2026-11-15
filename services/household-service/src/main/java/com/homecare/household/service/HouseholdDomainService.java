@@ -1,21 +1,13 @@
 package com.homecare.household.service;
 
-import java.time.Instant;
-import java.time.LocalDate;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
-
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
 
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.event.DomainEventContracts;
 import com.homecare.common.web.EtagSupport;
+import com.homecare.common.web.PageResponse;
 import com.homecare.household.client.ProviderOrgClient;
 import com.homecare.household.dto.HouseholdDtos.CareRecordResponse;
 import com.homecare.household.dto.HouseholdDtos.CreateCareRecordRequest;
@@ -47,9 +39,19 @@ import com.homecare.household.repository.HouseholdOutboxEventRepository;
 import com.homecare.household.repository.HouseholdRepository;
 import com.homecare.household.repository.MaintenanceScheduleRepository;
 import com.homecare.household.repository.WarrantyRepository;
-
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
-import tools.jackson.databind.ObjectMapper;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -114,6 +116,9 @@ public class HouseholdDomainService {
     @Transactional
     public void deleteHousehold(String ownerProfileId, UUID householdId) {
         Household h = requireOwnedHousehold(ownerProfileId, householdId);
+        for (var device : deviceRepository.findByHouseholdIdOrderByCreatedAtDesc(householdId)) {
+            deleteDevice(ownerProfileId, device.getId());
+        }
         householdRepository.delete(h);
     }
 
@@ -193,7 +198,29 @@ public class HouseholdDomainService {
     @Transactional
     public void deleteDevice(String ownerProfileId, UUID deviceId) {
         Device device = requireOwnedDevice(ownerProfileId, deviceId);
+        careRecordRepository.deleteByDeviceId(deviceId);
+        scheduleRepository.deleteByDeviceId(deviceId);
+        warrantyRepository.deleteByDeviceId(deviceId);
         deviceRepository.delete(device);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<WarrantyResponse> warrantiesPage(String user, UUID org, boolean admin, boolean operator, int page, int size) {
+        var pageable = pageRequest(page, size, "endsOn");
+        if (operator && !admin && (org == null || !providerOrgClient.verifyOrganizationMembership(org, user))) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        var result = warrantyRepository.search(admin || operator ? null : user, admin || operator ? org : null, pageable);
+        return PageResponse.of(result.map(this::toWarrantyResponse).getContent(), page, size, result.getTotalElements());
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<MaintenanceScheduleResponse> schedulesPage(String user, int page, int size) {
+        var result = scheduleRepository.findByOwnerProfileId(user, pageRequest(page, size, "dueOn"));
+        return PageResponse.of(result.map(this::toScheduleResponse).getContent(), page, size, result.getTotalElements());
+    }
+
+    private Pageable pageRequest(int page, int size, String field) {
+        if (page < 1 || size < 1 || size > 100) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        return PageRequest.of(page - 1, size, Sort.by(field, "id"));
     }
 
     @Transactional

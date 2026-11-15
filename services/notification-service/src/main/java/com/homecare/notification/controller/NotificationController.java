@@ -1,8 +1,20 @@
 package com.homecare.notification.controller;
 
-import java.util.List;
-import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 
+import com.homecare.common.web.ApiMessages;
+import com.homecare.common.web.ApiResponse;
+import com.homecare.common.web.PageResponse;
+import com.homecare.common.web.servlet.ServletApiResponseFactory;
+import com.homecare.notification.dto.NotificationDtos.DeviceRegistrationResponse;
+import com.homecare.notification.dto.NotificationDtos.NotificationResponse;
+import com.homecare.notification.dto.NotificationDtos.RegisterDeviceRequest;
+import com.homecare.notification.service.NotificationInboxService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -17,19 +29,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.homecare.common.web.ApiMessages;
-import com.homecare.common.web.ApiResponse;
-import com.homecare.common.web.PageResponse;
-import com.homecare.common.web.servlet.ServletApiResponseFactory;
-import com.homecare.notification.dto.NotificationDtos.DeviceRegistrationResponse;
-import com.homecare.notification.dto.NotificationDtos.NotificationResponse;
-import com.homecare.notification.dto.NotificationDtos.RegisterDeviceRequest;
-import com.homecare.notification.service.NotificationInboxService;
-
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
-
 @RestController
 @RequestMapping("/api/v1")
 @Validated
@@ -38,6 +37,16 @@ public class NotificationController {
 
     private final NotificationInboxService service;
     private final ServletApiResponseFactory responseFactory;
+
+    @GetMapping("/notifications/unread-count")
+    public ResponseEntity<?> unreadCount(@AuthenticationPrincipal Jwt jwt, HttpServletRequest request) {
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.RETRIEVED, Map.of("count", service.unreadCount(jwt.getSubject())), request));
+    }
+
+    @PostMapping("/notifications/read-all")
+    public ResponseEntity<?> readAll(@AuthenticationPrincipal Jwt jwt, HttpServletRequest request) {
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.UPDATED, Map.of("updated", service.markAllRead(jwt.getSubject())), request));
+    }
 
     @GetMapping("/notifications")
     public ResponseEntity<ApiResponse<PageResponse<NotificationResponse>>> listNotifications(

@@ -1,21 +1,6 @@
 package com.homecare.booking.service;
 
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import tools.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
 
 import com.homecare.booking.client.HouseholdVerificationClient;
 import com.homecare.booking.client.HouseholdVerificationClient.WarrantyVerificationResult;
@@ -46,8 +31,22 @@ import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.VerifyOfferingResponse;
-
-import lombok.RequiredArgsConstructor;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 @RequiredArgsConstructor
@@ -210,9 +209,7 @@ public class BookingLifecycleService {
                 assignedTechId = parseUuidOrNull(alloc.getTechnicianId());
                 assignedTechProfileId = alloc.getTechnicianProfileId();
                 assignedTechName = alloc.getTechnicianName();
-                if (providerId == null) {
-                    providerId = parseUuidOrNull(alloc.getProviderId());
-                }
+                providerId = parseUuidOrNull(alloc.getProviderId());
                 saga.setSagaStatus("ALLOCATED");
                 saga.setCurrentStep("COMPLETED");
                 saga.setProviderId(providerId);
@@ -294,31 +291,27 @@ public class BookingLifecycleService {
             UUID orgScopeId,
             int page,
             int size) {
-        int safePage = Math.max(1, page);
-        int safeSize = Math.max(1, Math.min(size, PageResponse.MAX_PAGE_SIZE));
-        Pageable pageable = PageRequest.of(safePage - 1, safeSize);
-        Page<BookingEntity> result;
-        if (isGlobalAdmin) {
-            result = orgScopeId != null
-                    ? bookingRepository.findByProviderIdOrderByCreatedAtDesc(orgScopeId, pageable)
-                    : bookingRepository.findAllByOrderByCreatedAtDesc(pageable);
-        } else if (isOrgOperator) {
-            requireOrgMembership(orgScopeId, actorProfileId);
-            result = bookingRepository.findByProviderIdOrderByCreatedAtDesc(orgScopeId, pageable);
-        } else if (isTechnician) {
-            if (orgScopeId != null) {
-                requireOrgMembership(orgScopeId, actorProfileId);
-                result = bookingRepository.findByProviderIdOrderByCreatedAtDesc(orgScopeId, pageable);
-            } else {
-                result = bookingRepository.findByAssignedTechnicianProfileIdOrderByCreatedAtDesc(actorProfileId, pageable);
-            }
-        } else {
-            result = bookingRepository.findByRequesterProfileIdOrderByCreatedAtDesc(actorProfileId, pageable);
-        }
-        List<BookingResponse> items = result.getContent().stream().map(this::toBookingResponse).toList();
-        return PageResponse.of(items, safePage, safeSize, result.getTotalElements());
+        return listBookingsPage(actorProfileId, isGlobalAdmin, isOrgOperator, isTechnician, orgScopeId, page, size, null);
     }
 
+    @Transactional(readOnly = true)
+    public PageResponse<BookingResponse> listBookingsPage(String actorProfileId, boolean isGlobalAdmin,
+            boolean isOrgOperator, boolean isTechnician, UUID orgScopeId, int page, int size, String status) {
+        if (page < 1 || size < 1 || size > 100) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        if (status != null && !Set.of("REQUESTED", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "CANCELLED").contains(status)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        }
+        String requester = null;
+        String technician = null;
+        UUID provider = null;
+        if (isGlobalAdmin) provider = orgScopeId;
+        else if (isOrgOperator) { requireOrgMembership(orgScopeId, actorProfileId); provider = orgScopeId; }
+        else if (isTechnician) technician = actorProfileId;
+        else requester = actorProfileId;
+        Pageable pageable = PageRequest.of(page - 1, size, Sort.by("createdAt").descending().and(Sort.by("id")));
+        var result = bookingRepository.search(requester, technician, provider, status, pageable);
+        return PageResponse.of(result.map(this::toBookingResponse).getContent(), page, size, result.getTotalElements());
+    }
     @Transactional(readOnly = true)
     public List<BookingResponse> listBookings(String actorProfileId, boolean isTechOrAdmin) {
         return listBookings(actorProfileId, isTechOrAdmin, null);
@@ -544,15 +537,40 @@ public class BookingLifecycleService {
                 .build());
     }
 
+    @Transactional
+    public BookingResponse assignTechnician(UUID bookingId, UUID technicianId, String actor, boolean admin,
+            UUID organizationId, String ifMatch) {
+        var booking = bookingRepository.lockById(bookingId).orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
+        if (!admin) {
+            requireOrgMembership(organizationId, actor);
+            if (!organizationId.equals(booking.getProviderId())) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        EtagSupport.verifyIfMatch(ifMatch, booking.getVersion());
+        if (!"REQUESTED".equals(booking.getStatus())) throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
+        var result = providerGrpcClient.assignTechnician(bookingId, booking.getServiceId(), booking.getDeviceType(),
+                booking.getPreferredStart(), booking.getPreferredEnd(), booking.getProviderId(), technicianId);
+        if (!result.getAllocated() || !technicianId.toString().equals(result.getTechnicianId())
+                || !booking.getProviderId().toString().equals(result.getProviderId())) throw new DomainException(CommonErrorCode.CONFLICT);
+        booking.setAssignedTechnicianId(technicianId); booking.setAssignedTechnicianProfileId(result.getTechnicianProfileId());
+        booking.setAssignedTechnicianName(result.getTechnicianName()); booking.setStatus("ASSIGNED");
+        booking.setAllocationStatus("ALLOCATED"); booking.setUpdatedAt(Instant.now());
+        var saved = bookingRepository.saveAndFlush(booking);
+        sagaRepository.findByBookingId(bookingId).ifPresent(saga -> {
+            saga.setSagaStatus("ALLOCATED"); saga.setCurrentStep("COMPLETED"); saga.setAssignedTechnicianId(technicianId);
+            saga.setFailureReason(null); saga.setCompletedAt(Instant.now()); saga.setUpdatedAt(Instant.now()); sagaRepository.save(saga);
+        });
+        recordHistory(bookingId, "REQUESTED", "ASSIGNED", actor, "Manually assigned technician");
+        publishDomainEvent("booking.assigned.v1", saved);
+        return toBookingResponse(saved);
+    }
+
     private void publishDomainEvent(String eventType, BookingEntity booking) {
         Instant now = Instant.now();
         UUID eventId = UUID.randomUUID();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("bookingId", booking.getId());
         data.put("requesterProfileId", booking.getRequesterProfileId());
-        data.put("technicianProfileId", booking.getAssignedTechnicianProfileId() == null
-                ? "demo-technician"
-                : booking.getAssignedTechnicianProfileId());
+        data.put("technicianProfileId", booking.getAssignedTechnicianProfileId());
         data.put("serviceName", booking.getServiceName());
         data.put("status", booking.getStatus());
         data.put("bookingType", booking.getBookingType());

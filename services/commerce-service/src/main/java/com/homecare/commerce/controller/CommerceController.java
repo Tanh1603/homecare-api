@@ -1,24 +1,5 @@
 package com.homecare.commerce.controller;
 
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.validation.annotation.Validated;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderRequest;
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderReturnRequest;
 import com.homecare.commerce.dto.CommerceDtos.CreatePaymentAttemptRequest;
@@ -38,10 +19,26 @@ import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
-
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -56,13 +53,18 @@ public class CommerceController {
     @GetMapping("/products")
     public ResponseEntity<ApiResponse<PageResponse<ProductResponse>>> listProducts(
             @RequestParam(required = false) String category,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Long minPrice,
+            @RequestParam(required = false) Long maxPrice,
+            @RequestParam(required = false) UUID merchantId,
+            @RequestParam(required = false) Boolean inStock,
+            @RequestParam(required = false) String sort,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<ProductResponse> items = service.listProducts(category);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                PageResponse.of(items, page, size, items.size()),
+                service.productsPage(category, q, merchantId, minPrice, maxPrice, inStock, sort, page, size),
                 httpRequest));
     }
 
@@ -104,6 +106,9 @@ public class CommerceController {
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
             @RequestParam(required = false) UUID organizationId,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String sort,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
@@ -112,20 +117,20 @@ public class CommerceController {
         boolean orgOperator = SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
                 jwt, new String[]{RbacConstants.ROLE_ORGANIZATION}, RbacConstants.PERM_ORDER_FULFILL);
         UUID effectiveOrgId = organizationId != null ? organizationId : orgIdHeader;
-        List<OrderResponse> items = service.listOrdersForPortal(
-                jwt.getSubject(), effectiveOrgId, globalAdmin, orgOperator);
+        var result = service.ordersPage(jwt.getSubject(), effectiveOrgId, globalAdmin, orgOperator, status, q, sort, page, size);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                PageResponse.of(items, page, size, items.size()),
+                result,
                 httpRequest));
     }
 
     @GetMapping("/orders/{orderId}")
     public ResponseEntity<ApiResponse<OrderResponse>> getOrder(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgId,
             @PathVariable UUID orderId,
             HttpServletRequest httpRequest) {
-        OrderResponse order = service.getOrder(jwt.getSubject(), orderId);
+        OrderResponse order = service.getOrderForPortal(jwt.getSubject(), orderId, orgId, isGlobalAdmin(jwt));
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(order.version()))
                 .body(responseFactory.ok(ApiMessages.RETRIEVED, order, httpRequest));

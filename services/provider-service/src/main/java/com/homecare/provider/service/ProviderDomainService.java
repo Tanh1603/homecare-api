@@ -1,24 +1,19 @@
 package com.homecare.provider.service;
 
-import java.time.Instant;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
-
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import lombok.RequiredArgsConstructor;
 
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.web.EtagSupport;
+import com.homecare.common.web.PageResponse;
 import com.homecare.provider.dto.ProviderDtos.CreateScheduleWindowRequest;
+import com.homecare.provider.dto.ProviderDtos.OfferingInput;
+import com.homecare.provider.dto.ProviderDtos.ProviderInput;
 import com.homecare.provider.dto.ProviderDtos.ProviderResponse;
 import com.homecare.provider.dto.ProviderDtos.ScheduleWindowResponse;
 import com.homecare.provider.dto.ProviderDtos.ServiceOfferingResponse;
+import com.homecare.provider.dto.ProviderDtos.TechnicianInput;
 import com.homecare.provider.dto.ProviderDtos.TechnicianResponse;
 import com.homecare.provider.dto.ProviderDtos.UpdateScheduleWindowRequest;
 import com.homecare.provider.entity.ProviderEntity;
@@ -27,9 +22,9 @@ import com.homecare.provider.entity.ServiceOffering;
 import com.homecare.provider.entity.Technician;
 import com.homecare.provider.entity.TechnicianAllocation;
 import com.homecare.provider.exception.ProviderErrorCode;
-import com.homecare.provider.organization.entity.OrgRole;
 import com.homecare.provider.organization.entity.OrganizationMemberEntity;
 import com.homecare.provider.organization.entity.OrganizationStatus;
+import com.homecare.provider.organization.entity.OrgRole;
 import com.homecare.provider.organization.repository.OrganizationMemberRepository;
 import com.homecare.provider.organization.repository.OrganizationRepository;
 import com.homecare.provider.repository.ProviderRepository;
@@ -37,12 +32,137 @@ import com.homecare.provider.repository.ScheduleWindowRepository;
 import com.homecare.provider.repository.ServiceOfferingRepository;
 import com.homecare.provider.repository.TechnicianAllocationRepository;
 import com.homecare.provider.repository.TechnicianRepository;
-
-import lombok.RequiredArgsConstructor;
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
 public class ProviderDomainService {
+
+    public PageResponse<ServiceOfferingResponse> offeringsPage(String category, UUID providerId, String q, int page, int size) {
+        var result = offeringRepository.search(blankToNull(category), providerId, blankToNull(q), pageRequest(page, size));
+        return PageResponse.of(result.map(this::toOfferingResponse).getContent(), page, size, result.getTotalElements());
+    }
+
+    public PageResponse<ProviderResponse> providersPage(String city, String q, int page, int size) {
+        var result = providerRepository.search(blankToNull(city), blankToNull(q), pageRequest(page, size));
+        return PageResponse.of(result.map(this::toProviderResponse).getContent(), page, size, result.getTotalElements());
+    }
+
+    public PageResponse<TechnicianResponse> techniciansPage(UUID providerId, String q, int page, int size) {
+        var result = technicianRepository.search(providerId, blankToNull(q), pageRequest(page, size));
+        return PageResponse.of(result.map(this::toTechnicianResponse).getContent(), page, size, result.getTotalElements());
+    }
+
+    private String blankToNull(String value) { return value == null || value.isBlank() ? null : value.trim(); }
+    private Pageable pageRequest(int page, int size) {
+        if (page < 1 || size < 1 || size > 100) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        return PageRequest.of(page - 1, size, Sort.by("createdAt").descending().and(Sort.by("id")));
+    }
+
+    public void requireProviderManager(UUID providerId, UUID organizationId, String userId, boolean admin) {
+        ProviderEntity provider = providerRepository.findById(providerId)
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.PROVIDER_NOT_FOUND));
+        if (admin) return;
+        if (organizationId == null || !organizationId.equals(provider.getOrganizationId())) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        var org = organizationRepository.findById(organizationId).filter(o -> o.getStatus() == OrganizationStatus.APPROVED);
+        var member = organizationMemberRepository.findByOrganizationIdAndUserId(organizationId, userId)
+                .filter(m -> "ACTIVE".equals(m.getStatus()))
+                .filter(m -> m.getRole() == OrgRole.ORG_OWNER || m.getRole() == OrgRole.ORG_ADMIN);
+        if (org.isEmpty() || member.isEmpty()) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+    }
+
+    @Transactional
+    public ProviderResponse updateProvider(UUID id, ProviderInput input, UUID orgId, String user, boolean admin) {
+        requireProviderManager(id, orgId, user, admin);
+        var p = providerRepository.findById(id).orElseThrow();
+        if (input.name() != null) p.setName(input.name());
+        if (input.description() != null) p.setDescription(input.description());
+        if (input.city() != null) p.setCity(input.city());
+        if (input.phone() != null) p.setPhone(input.phone());
+        return toProviderResponse(providerRepository.save(p));
+    }
+
+    @Transactional
+    public ServiceOfferingResponse saveOffering(UUID id, OfferingInput input, UUID orgId, String user, boolean admin) {
+        var item = id == null ? new ServiceOffering() : offeringRepository.findById(id).orElseThrow(() -> new DomainException(ProviderErrorCode.SERVICE_NOT_FOUND));
+        UUID provider = id == null ? input.providerId() : item.getProviderId();
+        if (provider == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        requireProviderManager(provider, orgId, user, admin);
+        if (input.providerId() != null && !provider.equals(input.providerId())) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        if (id == null) {
+            if (input.name() == null || input.category() == null || input.basePrice() == null || input.estimatedDurationMinutes() == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+            item.setId(UUID.randomUUID()); item.setProviderId(provider); item.setActive(true); item.setCreatedAt(Instant.now());
+        }
+        if (input.name() != null) item.setName(input.name());
+        if (input.category() != null) item.setCategory(input.category());
+        if (input.description() != null) item.setDescription(input.description());
+        if (input.basePrice() != null) item.setBasePrice(input.basePrice());
+        if (input.estimatedDurationMinutes() != null) item.setEstimatedDurationMinutes(input.estimatedDurationMinutes());
+        if (input.active() != null) item.setActive(input.active());
+        return toOfferingResponse(offeringRepository.save(item));
+    }
+
+    @Transactional
+    public void deleteOffering(UUID id, UUID orgId, String user, boolean admin) {
+        var item = offeringRepository.findById(id).orElseThrow(() -> new DomainException(ProviderErrorCode.SERVICE_NOT_FOUND));
+        requireProviderManager(item.getProviderId(), orgId, user, admin);
+        item.setActive(false); offeringRepository.save(item);
+    }
+
+    @Transactional
+    public TechnicianResponse saveTechnician(UUID id, TechnicianInput input, UUID orgId, String user, boolean admin) {
+        var item = id == null ? new Technician() : technicianRepository.findById(id).orElseThrow(() -> new DomainException(ProviderErrorCode.TECHNICIAN_NOT_FOUND));
+        UUID provider = id == null ? input.providerId() : item.getProviderId();
+        if (provider == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        requireProviderManager(provider, orgId, user, admin);
+        if (input.providerId() != null && !provider.equals(input.providerId())) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        if (id == null) {
+            if (input.profileId() == null || input.fullName() == null || input.specialties() == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+            item.setId(UUID.randomUUID()); item.setProviderId(provider); item.setStatus("ACTIVE"); item.setCreatedAt(Instant.now());
+        }
+        if (input.profileId() != null && id != null && !input.profileId().equals(item.getProfileId())) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        if (input.profileId() != null) item.setProfileId(input.profileId());
+        if (input.fullName() != null) item.setFullName(input.fullName());
+        if (input.specialties() != null) item.setSpecialties(String.join(",", input.specialties()));
+        if (input.experienceYears() != null) item.setExperienceYears(input.experienceYears());
+        if (input.status() != null) {
+            if ("INACTIVE".equals(input.status()) && item.getActiveAllocations() > 0) throw new DomainException(ProviderErrorCode.SCHEDULE_ALLOCATION_CONFLICT);
+            item.setStatus(input.status());
+        }
+        return toTechnicianResponse(technicianRepository.save(item));
+    }
+
+    @Transactional
+    public void deleteTechnician(UUID id, UUID orgId, String user, boolean admin) {
+        var item = technicianRepository.findById(id).orElseThrow(() -> new DomainException(ProviderErrorCode.TECHNICIAN_NOT_FOUND));
+        requireProviderManager(item.getProviderId(), orgId, user, admin);
+        if (item.getActiveAllocations() > 0) throw new DomainException(ProviderErrorCode.SCHEDULE_ALLOCATION_CONFLICT);
+        item.setStatus("INACTIVE"); technicianRepository.save(item);
+    }
+
+    public TechnicianResponse me(String user) { return toTechnicianResponse(resolveTechnicianOrDemo("me", user)); }
+
+    @Transactional
+    public void deleteSchedule(String technicianId, UUID windowId, String user, UUID orgId, boolean admin, String ifMatch) {
+        var tech = resolveTechnicianOrDemo(technicianId, user);
+        if (!user.equals(tech.getProfileId())) requireProviderManager(tech.getProviderId(), orgId, user, admin);
+        var window = scheduleWindowRepository.findById(windowId).orElseThrow(() -> new DomainException(ProviderErrorCode.SCHEDULE_WINDOW_NOT_FOUND));
+        if (!window.getTechnicianId().equals(tech.getId())) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        EtagSupport.verifyIfMatch(ifMatch, window.getVersion());
+        if (window.getAllocatedBookingId() != null) throw new DomainException(ProviderErrorCode.SCHEDULE_ALLOCATION_CONFLICT);
+        scheduleWindowRepository.delete(window);
+    }
 
     private static final Set<String> VALID_SCHEDULE_STATUSES = Set.of("AVAILABLE", "UNAVAILABLE", "BLOCKED", "BOOKED");
 
@@ -260,9 +380,21 @@ public class ProviderDomainService {
             Instant preferredEnd,
             UUID preferredProviderId,
             boolean strictProviderMatch) {
+        return allocateTechnicianForBooking(intentId, bookingId, serviceId, deviceType, preferredStart, preferredEnd, preferredProviderId, strictProviderMatch, null);
+    }
+
+    @Transactional
+    public AllocationOutcome allocateTechnicianForBooking(String intentId, UUID bookingId, UUID serviceId,
+            String deviceType, Instant preferredStart, Instant preferredEnd, UUID preferredProviderId,
+            boolean strictProviderMatch, UUID technicianId) {
+        if (!preferredEnd.isAfter(preferredStart)) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         Optional<TechnicianAllocation> existing = allocationRepository.findByIntentId(intentId);
         if (existing.isPresent()) {
             TechnicianAllocation alloc = existing.get();
+            if (!"ALLOCATED".equals(alloc.getStatus()) || !bookingId.equals(alloc.getBookingId())
+                    || (technicianId != null && !technicianId.equals(alloc.getTechnicianId()))) {
+                return new AllocationOutcome(false, null, "", "", null, null, "ALLOCATION_CONFLICT");
+            }
             Technician tech = technicianRepository.findById(alloc.getTechnicianId()).orElseThrow();
             return new AllocationOutcome(
                     true,
@@ -297,6 +429,9 @@ public class ProviderDomainService {
         }
 
         List<Technician> eligible = candidates.stream()
+                .filter(t -> technicianId == null || technicianId.equals(t.getId()))
+                .filter(t -> providerRepository.findById(t.getProviderId())
+                        .filter(p -> EntityStatus.ACTIVE.name().equals(p.getStatus())).isPresent())
                 .filter(t -> matchesSpecialty(t, requiredSpecialty))
                 .filter(t -> !scheduleWindowRepository.findAvailableCovering(
                         t.getId(), preferredStart, preferredEnd).isEmpty())
@@ -320,6 +455,23 @@ public class ProviderDomainService {
         }
 
         Technician chosen = eligible.getFirst();
+        chosen = technicianRepository.lockById(chosen.getId()).orElseThrow();
+        var available = scheduleWindowRepository.findAvailableCovering(chosen.getId(), preferredStart, preferredEnd);
+        if (available.isEmpty() || !allocationRepository.findActiveOverlapping(chosen.getId(), preferredStart, preferredEnd).isEmpty()) {
+            return new AllocationOutcome(false, null, "", "", targetProviderId, null, "NO_AVAILABLE_TECHNICIAN");
+        }
+        ScheduleWindow window = available.getFirst();
+        if (window.getStartsAt().isBefore(preferredStart)) {
+            scheduleWindowRepository.save(ScheduleWindow.builder().id(UUID.randomUUID()).technicianId(chosen.getId())
+                    .startsAt(window.getStartsAt()).endsAt(preferredStart).status("AVAILABLE").createdAt(Instant.now()).build());
+        }
+        if (window.getEndsAt().isAfter(preferredEnd)) {
+            scheduleWindowRepository.save(ScheduleWindow.builder().id(UUID.randomUUID()).technicianId(chosen.getId())
+                    .startsAt(preferredEnd).endsAt(window.getEndsAt()).status("AVAILABLE").createdAt(Instant.now()).build());
+        }
+        window.setStartsAt(preferredStart); window.setEndsAt(preferredEnd);
+        window.setAllocatedBookingId(bookingId); window.setStatus("BOOKED");
+        scheduleWindowRepository.save(window);
         chosen.setActiveAllocations(chosen.getActiveAllocations() + 1);
         technicianRepository.save(chosen);
 
@@ -347,6 +499,32 @@ public class ProviderDomainService {
 
     public double aiRankScore(Technician t) {
         return (t.getRatingAvg() * 20.0) + (t.getExperienceYears() * 5.0) - (t.getActiveAllocations() * 10.0);
+    }
+
+    @Transactional
+    public void releaseBooking(UUID bookingId) {
+        var allocation = allocationRepository.lockByBookingId(bookingId).orElse(null);
+        if (allocation == null || !"ALLOCATED".equals(allocation.getStatus())) return;
+        var tech = technicianRepository.lockById(allocation.getTechnicianId()).orElseThrow();
+        tech.setActiveAllocations(Math.max(0, tech.getActiveAllocations() - 1));
+        technicianRepository.save(tech);
+        for (var window : scheduleWindowRepository.findByAllocatedBookingId(bookingId)) {
+            window.setAllocatedBookingId(null); window.setStatus("AVAILABLE");
+            scheduleWindowRepository.save(window);
+        }
+        ScheduleWindow previous = null;
+        for (var window : scheduleWindowRepository.findByTechnicianIdOrderByStartsAtAsc(tech.getId())) {
+            if (!"AVAILABLE".equals(window.getStatus()) || window.getAllocatedBookingId() != null) {
+                previous = null;
+            } else if (previous != null && previous.getEndsAt().equals(window.getStartsAt())) {
+                previous.setEndsAt(window.getEndsAt());
+                scheduleWindowRepository.save(previous);
+                scheduleWindowRepository.delete(window);
+            } else {
+                previous = window;
+            }
+        }
+        allocation.setStatus("RELEASED"); allocationRepository.save(allocation);
     }
 
     public double aiRankScoreWithStoreAffinity(Technician t, UUID targetProviderId) {

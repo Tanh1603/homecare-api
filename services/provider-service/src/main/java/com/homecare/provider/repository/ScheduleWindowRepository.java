@@ -1,17 +1,16 @@
 package com.homecare.provider.repository;
 
+import com.homecare.provider.entity.ScheduleWindow;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
-
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import com.homecare.provider.entity.ScheduleWindow;
-
 public interface ScheduleWindowRepository extends JpaRepository<ScheduleWindow, UUID> {
     List<ScheduleWindow> findByTechnicianIdOrderByStartsAtAsc(UUID technicianId);
+    List<ScheduleWindow> findByAllocatedBookingId(UUID bookingId);
 
     @Query("""
             select w from ScheduleWindow w

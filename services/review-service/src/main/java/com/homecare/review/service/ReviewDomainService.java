@@ -1,12 +1,5 @@
 package com.homecare.review.service;
 
-import java.time.Instant;
-import java.util.List;
-import java.util.UUID;
-
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
@@ -20,8 +13,12 @@ import com.homecare.review.dto.ReviewDtos.UpdateReviewRequest;
 import com.homecare.review.entity.ReviewEntity;
 import com.homecare.review.exception.ReviewErrorCode;
 import com.homecare.review.repository.ReviewRepository;
-
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -148,5 +145,29 @@ public class ReviewDomainService {
                 r.getStatus(),
                 r.getCreatedAt(),
                 r.getUpdatedAt());
+    }
+
+    private ReviewEntity requireProductReview(String user, UUID productId, UUID reviewId) {
+        var review = reviewRepository.findById(reviewId).orElseThrow(() -> new DomainException(ReviewErrorCode.REVIEW_NOT_FOUND));
+        if (!"PRODUCT_ORDER_LINE".equals(review.getTargetType()) || !productId.equals(review.getTargetId()) || !"PUBLISHED".equals(review.getStatus())) {
+            throw new DomainException(ReviewErrorCode.REVIEW_NOT_FOUND);
+        }
+        if (!user.equals(review.getAuthorProfileId())) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        return review;
+    }
+
+    @Transactional
+    public ReviewResponse updateProductReview(String user, UUID productId, UUID reviewId, UpdateReviewRequest input) {
+        var review = requireProductReview(user, productId, reviewId);
+        if (input.rating() != null) review.setRating(input.rating());
+        if (input.comment() != null && !input.comment().isBlank()) review.setComment(input.comment().trim());
+        review.setUpdatedAt(Instant.now());
+        return toResponse(reviewRepository.save(review));
+    }
+
+    @Transactional
+    public void deleteProductReview(String user, UUID productId, UUID reviewId) {
+        var review = requireProductReview(user, productId, reviewId);
+        review.setStatus("DELETED"); review.setUpdatedAt(Instant.now()); reviewRepository.save(review);
     }
 }

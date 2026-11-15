@@ -1,21 +1,6 @@
 package com.homecare.review.controller;
 
-import java.util.List;
-import java.util.UUID;
-
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.validation.annotation.Validated;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import lombok.RequiredArgsConstructor;
 
 import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
@@ -26,10 +11,24 @@ import com.homecare.review.dto.ReviewDtos.CreateServiceReviewRequest;
 import com.homecare.review.dto.ReviewDtos.ReviewResponse;
 import com.homecare.review.dto.ReviewDtos.UpdateReviewRequest;
 import com.homecare.review.service.ReviewDomainService;
-
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
+import java.util.List;
+import java.util.UUID;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -39,6 +38,18 @@ public class ReviewController {
 
     private final ReviewDomainService service;
     private final ServletApiResponseFactory responseFactory;
+
+    @PatchMapping("/products/{productId}/reviews/{reviewId}")
+    public ResponseEntity<?> updateProductReview(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID productId,
+            @PathVariable UUID reviewId, @Valid @RequestBody UpdateReviewRequest input, HttpServletRequest request) {
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.UPDATED, service.updateProductReview(jwt.getSubject(), productId, reviewId, input), request));
+    }
+
+    @DeleteMapping("/products/{productId}/reviews/{reviewId}")
+    public ResponseEntity<?> deleteProductReview(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID productId, @PathVariable UUID reviewId) {
+        service.deleteProductReview(jwt.getSubject(), productId, reviewId);
+        return ResponseEntity.noContent().build();
+    }
 
     @PostMapping("/service-reviews")
     public ResponseEntity<ApiResponse<ReviewResponse>> createServiceReview(

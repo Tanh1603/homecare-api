@@ -6,14 +6,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-import java.util.List;
-import java.util.UUID;
-
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
-
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.DomainException;
 import com.homecare.provider.entity.ProviderEntity;
@@ -22,15 +14,20 @@ import com.homecare.provider.organization.dto.OrganizationDtos.AddMemberRequest;
 import com.homecare.provider.organization.dto.OrganizationDtos.MyOrganizationMembershipResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.RegisterOrganizationRequest;
-import com.homecare.provider.organization.entity.OrgRole;
 import com.homecare.provider.organization.entity.OrganizationStatus;
 import com.homecare.provider.organization.entity.OrganizationType;
+import com.homecare.provider.organization.entity.OrgRole;
 import com.homecare.provider.organization.entity.ProviderOutboxEventEntity;
 import com.homecare.provider.organization.repository.OrganizationMemberRepository;
 import com.homecare.provider.organization.repository.ProviderOutboxEventRepository;
 import com.homecare.provider.organization.security.OrgContext;
 import com.homecare.provider.repository.ProviderRepository;
-
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest
@@ -53,7 +50,7 @@ class OrganizationDomainServiceTest {
     private ObjectMapper objectMapper;
 
     @Test
-    void lifecyclePendingApproveCreateInactiveProviderAndSuspendWithoutDeleting() {
+    void lifecyclePendingApproveActivatesProviderAndSuspendWithoutDeleting() {
         String ownerId = "supabase-user-" + UUID.randomUUID();
         OrganizationResponse pending = organizationService.registerOrganization(
                 ownerId,
@@ -75,7 +72,7 @@ class OrganizationDomainServiceTest {
         assertThat(approved.status()).isEqualTo(OrganizationStatus.APPROVED);
 
         ProviderEntity createdProvider = providerRepository.findByOrganizationId(pending.id()).orElseThrow();
-        assertThat(createdProvider.getStatus()).isEqualTo(EntityStatus.INACTIVE.name());
+        assertThat(createdProvider.getStatus()).isEqualTo(EntityStatus.ACTIVE.name());
 
         List<ProviderOutboxEventEntity> events = outboxRepository.findAll().stream()
                 .filter(e -> e.getAggregateId().equals(pending.id()))
@@ -86,6 +83,8 @@ class OrganizationDomainServiceTest {
         assertThat(suspended.status()).isEqualTo(OrganizationStatus.SUSPENDED);
         ProviderEntity afterSuspend = providerRepository.findByOrganizationId(pending.id()).orElseThrow();
         assertThat(afterSuspend.getStatus()).isEqualTo(EntityStatus.INACTIVE.name());
+        organizationService.approveOrganization(pending.id(), "admin-1");
+        assertThat(providerRepository.findByOrganizationId(pending.id()).orElseThrow().getStatus()).isEqualTo("ACTIVE");
     }
 
     @Test

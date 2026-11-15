@@ -1,17 +1,11 @@
 package com.homecare.commerce.service;
 
+import com.homecare.common.error.DomainException;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
-
+import com.homecare.commerce.client.ProviderOrgClient;
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderRequest;
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderReturnRequest;
 import com.homecare.commerce.dto.CommerceDtos.OrderLineRequest;
@@ -24,11 +18,20 @@ import com.homecare.commerce.entity.InventoryReservationEntity;
 import com.homecare.commerce.repository.CommerceOutboxEventRepository;
 import com.homecare.commerce.repository.InventoryReservationRepository;
 import com.homecare.common.domain.EntityStatus;
-import com.homecare.common.error.DomainException;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest
 @ActiveProfiles("test")
 class CommerceAndVnpayTest {
+    @MockitoBean
+    private ProviderOrgClient providerOrgClient;
 
     @Autowired
     private CommerceDomainService service;

@@ -36,6 +36,7 @@ message AllocateTechnicianRequest {
   string device_type = 6;
   string provider_id = 7;
   bool strict_provider_match = 8;
+  string technician_id = 9;
 }
 
 message AllocateTechnicianResponse {

@@ -1,24 +1,5 @@
 package com.homecare.provider.controller;
 
-import java.util.List;
-import java.util.UUID;
-
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.validation.annotation.Validated;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.security.RbacConstants;
@@ -35,10 +16,26 @@ import com.homecare.provider.dto.ProviderDtos.ServiceOfferingResponse;
 import com.homecare.provider.dto.ProviderDtos.TechnicianResponse;
 import com.homecare.provider.dto.ProviderDtos.UpdateScheduleWindowRequest;
 import com.homecare.provider.service.ProviderDomainService;
-
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import java.util.List;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -52,13 +49,14 @@ public class ProviderPublicAndTechController {
     @GetMapping("/services")
     public ResponseEntity<ApiResponse<PageResponse<ServiceOfferingResponse>>> listServices(
             @RequestParam(required = false) String category,
+            @RequestParam(required = false) UUID providerId,
+            @RequestParam(required = false) String q,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<ServiceOfferingResponse> items = service.listOfferings(category);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                PageResponse.of(items, page, size, items.size()),
+                service.offeringsPage(category, providerId, q, page, size),
                 httpRequest));
     }
 
@@ -74,13 +72,14 @@ public class ProviderPublicAndTechController {
 
     @GetMapping("/providers")
     public ResponseEntity<ApiResponse<PageResponse<ProviderResponse>>> listProviders(
+            @RequestParam(required = false) String city,
+            @RequestParam(required = false) String q,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<ProviderResponse> items = service.listProviders();
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                PageResponse.of(items, page, size, items.size()),
+                service.providersPage(city, q, page, size),
                 httpRequest));
     }
 
@@ -97,13 +96,13 @@ public class ProviderPublicAndTechController {
     @GetMapping("/technicians")
     public ResponseEntity<ApiResponse<PageResponse<TechnicianResponse>>> listTechnicians(
             @RequestParam(required = false) UUID providerId,
+            @RequestParam(required = false) String q,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<TechnicianResponse> items = service.listTechnicians(providerId);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                PageResponse.of(items, page, size, items.size()),
+                service.techniciansPage(providerId, q, page, size),
                 httpRequest));
     }
 

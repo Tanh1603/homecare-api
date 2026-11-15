@@ -29,7 +29,7 @@ spring:
             - id: review-service-route
               uri: ${REVIEW_URL:http://localhost:8086}
               predicates:
-                - Path=/api/v1/service-reviews,/api/v1/service-reviews/**,/api/v1/providers/*/service-reviews,/api/v1/products/*/reviews
+                - Path=/api/v1/service-reviews,/api/v1/service-reviews/**,/api/v1/providers/*/service-reviews,/api/v1/products/*/reviews,/api/v1/products/*/reviews/**
             - id: provider-service-route
               uri: ${PROVIDER_URL:http://localhost:8083}
               predicates:

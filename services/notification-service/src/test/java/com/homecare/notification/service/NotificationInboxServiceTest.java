@@ -1,26 +1,57 @@
 package com.homecare.notification.service;
 
+import com.homecare.notification.repository.ProcessedEventRepository;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.util.List;
-
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
-
 import com.homecare.common.error.DomainException;
-
 import com.homecare.notification.dto.NotificationDtos.DeviceRegistrationResponse;
 import com.homecare.notification.dto.NotificationDtos.NotificationResponse;
 import com.homecare.notification.dto.NotificationDtos.RegisterDeviceRequest;
 import com.homecare.notification.repository.DeviceRegistrationRepository;
-import com.homecare.notification.repository.ProcessedEventRepository;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors;
+import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 @SpringBootTest
 @ActiveProfiles("test")
 class NotificationInboxServiceTest {
+    @Autowired WebApplicationContext webContext;
+
+    @Test
+    void cancelledBookingNotifiesBothRecipientsAndReadAllIsScoped() throws Exception {
+        String eventId = UUID.randomUUID().toString();
+        String user = "cancel-customer-" + eventId;
+        String tech = "cancel-tech-" + eventId;
+        String event = """
+            {"eventId":"%s","eventType":"booking.cancelled.v1","data":{"requesterProfileId":"%s","technicianProfileId":"%s","bookingId":"booking-1"}}
+            """.formatted(eventId, user, tech);
+        consumer.onDomainEvent(event); consumer.onDomainEvent(event);
+        assertThat(inboxService.listInbox(user)).hasSize(1);
+        assertThat(inboxService.listInbox(tech)).hasSize(1);
+        var mvc = MockMvcBuilders.webAppContextSetup(webContext)
+                .apply(SecurityMockMvcConfigurers.springSecurity()).build();
+        var auth = SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject(user));
+        mvc.perform(MockMvcRequestBuilders.get("/api/v1/notifications/unread-count").with(auth))
+                .andExpect(MockMvcResultMatchers.jsonPath("$.data.count").value(1));
+        mvc.perform(MockMvcRequestBuilders.post("/api/v1/notifications/read-all").with(auth))
+                .andExpect(MockMvcResultMatchers.status().isOk());
+        mvc.perform(MockMvcRequestBuilders.post("/api/v1/notifications/read-all").with(auth))
+                .andExpect(MockMvcResultMatchers.status().isOk());
+        mvc.perform(MockMvcRequestBuilders.get("/api/v1/notifications/unread-count").with(auth))
+                .andExpect(MockMvcResultMatchers.jsonPath("$.data.count").value(0));
+        assertThat(inboxService.listInbox(tech).getFirst().read()).isFalse();
+    }
 
     @Autowired
     private NotificationInboxService inboxService;

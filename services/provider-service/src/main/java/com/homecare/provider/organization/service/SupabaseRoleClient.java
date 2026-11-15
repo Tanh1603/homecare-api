@@ -1,20 +1,25 @@
 package com.homecare.provider.organization.service;
 
+import static com.homecare.common.error.CommonErrorCode.INTERNAL_ERROR;
+import static com.homecare.common.error.CommonErrorCode.RESOURCE_NOT_FOUND;
+import static com.homecare.common.error.CommonErrorCode.VALIDATION_FAILED;
+
+import com.homecare.common.error.DomainException;
+import com.homecare.provider.organization.dto.OrganizationDtos.AdminUserResponse;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException.NotFound;
 import org.springframework.web.client.RestClient;
-
-import com.homecare.provider.organization.dto.OrganizationDtos.AdminUserResponse;
 
 @Service
 public class SupabaseRoleClient {
@@ -109,6 +114,25 @@ public class SupabaseRoleClient {
         } catch (Exception ex) {
             log.warn("[ADMIN-USERS] Failed to query Supabase Auth Admin API: {}", ex.getMessage());
             return List.of();
+        }
+    }
+
+    public void updateUserStatus(UUID userId, String status) {
+        if (!List.of("ACTIVE", "SUSPENDED").contains(status)) {
+            throw new DomainException(VALIDATION_FAILED);
+        }
+        if (!isConfigured()) {
+            throw new DomainException(INTERNAL_ERROR,
+                    "User administration is not configured.");
+        }
+        try {
+            restClient.put().uri("/auth/v1/admin/users/{id}", userId)
+                    .header("apikey", secretKey).header("Authorization", "Bearer " + secretKey)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("ban_duration", "SUSPENDED".equals(status) ? "876000h" : "none"))
+                    .retrieve().toBodilessEntity();
+        } catch (NotFound ex) {
+            throw new DomainException(RESOURCE_NOT_FOUND);
         }
     }
 

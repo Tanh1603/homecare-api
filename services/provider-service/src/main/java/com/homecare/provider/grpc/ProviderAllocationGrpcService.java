@@ -1,9 +1,5 @@
 package com.homecare.provider.grpc;
 
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.UUID;
-
 import com.homecare.provider.dto.ProviderDtos.ServiceOfferingResponse;
 import com.homecare.provider.service.ProviderDomainService;
 import com.homecare.provider.service.ProviderDomainService.AllocationOutcome;
@@ -14,8 +10,10 @@ import com.homecare.provider.v1.VerifyOfferingRequest;
 import com.homecare.provider.v1.VerifyOfferingResponse;
 import com.homecare.provider.v1.VerifyOrganizationMembershipRequest;
 import com.homecare.provider.v1.VerifyOrganizationMembershipResponse;
-
 import io.grpc.stub.StreamObserver;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import net.devh.boot.grpc.server.service.GrpcService;
 
@@ -70,7 +68,8 @@ public class ProviderAllocationGrpcService extends ProviderAllocationServiceGrpc
                 start,
                 end,
                 preferredProviderId,
-                request.getStrictProviderMatch());
+                request.getStrictProviderMatch(),
+                request.getTechnicianId().isBlank() ? null : UUID.fromString(request.getTechnicianId()));
 
         AllocateTechnicianResponse.Builder builder = AllocateTechnicianResponse.newBuilder()
                 .setIntentId(request.getIntentId())

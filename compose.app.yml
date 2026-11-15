@@ -99,6 +99,7 @@ services:
     env_file:
       - ./services/commerce-service/.env
     environment:
+      PROVIDER_GRPC_ADDRESS: "static://provider-service:9083"
       HOMECARE_SECURITY_ENFORCE_GATEWAY: "true"
       INTERNAL_GATEWAY_SECRET: "homecare-internal-secret-2026"
     expose:

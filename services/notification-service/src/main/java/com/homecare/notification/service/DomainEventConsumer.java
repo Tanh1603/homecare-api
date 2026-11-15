@@ -1,16 +1,15 @@
 package com.homecare.notification.service;
 
-import java.util.Map;
+import tools.jackson.databind.ObjectMapper;
 
+import com.homecare.common.event.DomainEventContracts;
+import java.util.List;
+import java.util.Map;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
-
-import com.homecare.common.event.DomainEventContracts;
-
-import lombok.RequiredArgsConstructor;
-import tools.jackson.databind.ObjectMapper;
 
 @Component
 @RequiredArgsConstructor
@@ -35,6 +34,12 @@ public class DomainEventConsumer {
                     : Map.of();
 
             switch (eventType) {
+                case "booking.cancelled.v1" -> {
+                    for (String field : List.of("requesterProfileId", "technicianProfileId")) {
+                        inboxService.recordIfAbsent(eventId, stringField(data, field), eventType,
+                                "Lịch hẹn đã hủy", "Lịch hẹn dịch vụ đã được hủy.", Map.of("bookingId", stringField(data, "bookingId")));
+                    }
+                }
                 case "booking.requested.v1" -> inboxService.recordIfAbsent(
                         eventId,
                         stringField(data, "requesterProfileId"),

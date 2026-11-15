@@ -1,6 +1,7 @@
 package com.homecare.gateway;
 
 import static org.assertj.core.api.Assertions.assertThat;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
@@ -15,5 +16,7 @@ class ComposeConfigValidationTest {
         assertThat(script).contains("household_db", "provider_db",
                 "booking_db", "commerce_db", "review_db", "notification_db");
         assertThat(app).contains("9083:9083"); // gRPC port for provider-service
+        String commerce = app.substring(app.indexOf("  commerce-service:"), app.indexOf("  review-service:"));
+        assertThat(commerce).contains("PROVIDER_GRPC_ADDRESS: \"static://provider-service:9083\"");
     }
 }

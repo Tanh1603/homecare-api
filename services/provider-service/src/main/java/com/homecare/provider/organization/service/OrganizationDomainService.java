@@ -1,15 +1,5 @@
 package com.homecare.provider.organization.service;
 
-import java.time.Instant;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.event.DomainEventContracts;
@@ -20,18 +10,26 @@ import com.homecare.provider.organization.dto.OrganizationDtos.MyOrganizationMem
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationMemberResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.RegisterOrganizationRequest;
-import com.homecare.provider.organization.entity.OrgRole;
 import com.homecare.provider.organization.entity.OrganizationEntity;
 import com.homecare.provider.organization.entity.OrganizationMemberEntity;
 import com.homecare.provider.organization.entity.OrganizationStatus;
 import com.homecare.provider.organization.entity.OrganizationType;
+import com.homecare.provider.organization.entity.OrgRole;
 import com.homecare.provider.organization.entity.ProviderOutboxEventEntity;
 import com.homecare.provider.organization.repository.OrganizationMemberRepository;
 import com.homecare.provider.organization.repository.OrganizationRepository;
 import com.homecare.provider.organization.repository.ProviderOutboxEventRepository;
+import com.homecare.provider.organization.security.OrgContext;
 import com.homecare.provider.repository.ProviderRepository;
-
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
@@ -137,6 +135,10 @@ public class OrganizationDomainService {
         OrganizationEntity org = organizationRepository.findById(orgId)
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
         if (org.getStatus() == OrganizationStatus.APPROVED) {
+            providerRepository.findByOrganizationId(orgId).ifPresent(provider -> {
+                provider.setStatus(EntityStatus.ACTIVE.name());
+                providerRepository.save(provider);
+            });
             return toOrgResponse(org);
         }
         if (org.getStatus() == OrganizationStatus.REJECTED) {
@@ -160,9 +162,14 @@ public class OrganizationDomainService {
                         .city(saved.getCity())
                         .phone(saved.getPhone())
                         .ratingAvg(0.0)
-                        .status(EntityStatus.INACTIVE.name())
+                        .status(EntityStatus.ACTIVE.name())
                         .createdAt(now)
                         .build());
+            } else {
+                providerRepository.findByOrganizationId(saved.getId()).ifPresent(provider -> {
+                    provider.setStatus(EntityStatus.ACTIVE.name());
+                    providerRepository.save(provider);
+                });
             }
         }
 
@@ -288,8 +295,8 @@ public class OrganizationDomainService {
         if (newRole == OrgRole.ORG_OWNER) {
             throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN, "Cannot promote member to ORG_OWNER.");
         }
-        com.homecare.provider.organization.security.OrgContext ctx =
-                com.homecare.provider.organization.security.OrgContext.get();
+        OrgContext ctx =
+                OrgContext.get();
         if (ctx != null && targetUserId.equals(ctx.userId())) {
             throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN, "Cannot modify your own organization role.");
         }

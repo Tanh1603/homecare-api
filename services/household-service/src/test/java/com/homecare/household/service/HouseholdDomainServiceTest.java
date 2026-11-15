@@ -1,18 +1,10 @@
 package com.homecare.household.service;
 
+import com.homecare.household.repository.HouseholdOutboxEventRepository;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
-
-import java.time.LocalDate;
-import java.util.List;
-import java.util.UUID;
-
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.DomainException;
@@ -32,11 +24,53 @@ import com.homecare.household.dto.HouseholdDtos.VerifyDeviceReferenceResponse;
 import com.homecare.household.dto.HouseholdDtos.VerifyWarrantyResponse;
 import com.homecare.household.dto.HouseholdDtos.WarrantyResponse;
 import com.homecare.household.entity.HouseholdOutboxEvent;
-import com.homecare.household.repository.HouseholdOutboxEventRepository;
+import com.homecare.household.repository.DeviceRepository;
+import com.homecare.household.repository.MaintenanceScheduleRepository;
+import com.homecare.household.repository.WarrantyRepository;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors;
+import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 @SpringBootTest
 @ActiveProfiles("test")
 class HouseholdDomainServiceTest {
+    @Autowired WebApplicationContext webContext;
+    @Autowired WarrantyRepository warranties;
+    @Autowired MaintenanceScheduleRepository schedules;
+    @Autowired DeviceRepository devices;
+
+    @Test
+    void customerListsAndHouseholdDeleteAreOwnerScopedAndCascade() throws Exception {
+        String owner = UUID.randomUUID().toString();
+        var household = service.createHousehold(owner, new CreateHouseholdRequest("Home", "Address", null));
+        var device = service.createDevice(owner, new CreateDeviceRequest(household.id(), "AC", "AC", "Brand", "Model", null, LocalDate.now()));
+        var warranty = service.createWarranty(owner, device.id(), new CreateWarrantyRequest("Vendor", LocalDate.now(), LocalDate.now().plusYears(1), null, null));
+        service.createSchedule(owner, device.id(), new CreateMaintenanceScheduleRequest("Maintenance", 1, LocalDate.now().plusDays(1)));
+        var mvc = MockMvcBuilders.webAppContextSetup(webContext)
+                .apply(SecurityMockMvcConfigurers.springSecurity()).build();
+        var auth = SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject(owner));
+        for (String path : List.of("/api/v1/warranties", "/api/v1/maintenance-schedules")) {
+            mvc.perform(MockMvcRequestBuilders.get(path).with(auth))
+                    .andExpect(MockMvcResultMatchers.status().isOk())
+                    .andExpect(MockMvcResultMatchers.jsonPath("$.data.items.length()").value(1));
+        }
+        assertThatThrownBy(() -> service.deleteHousehold("outsider", household.id())).isInstanceOf(DomainException.class);
+        service.deleteHousehold(owner, household.id());
+        assertThat(devices.findById(device.id())).isEmpty();
+        assertThat(warranties.findById(warranty.id())).isEmpty();
+        assertThat(schedules.findByDeviceIdOrderByDueOnAsc(device.id())).isEmpty();
+    }
 
     @Autowired
     private HouseholdDomainService service;

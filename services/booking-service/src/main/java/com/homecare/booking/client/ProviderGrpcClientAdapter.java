@@ -1,14 +1,5 @@
 package com.homecare.booking.client;
 
-import java.time.Instant;
-import java.util.UUID;
-import java.util.concurrent.TimeUnit;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
-
 import com.homecare.grpc.interceptor.WorkloadAuthClientInterceptor;
 import com.homecare.provider.v1.AllocateTechnicianRequest;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
@@ -17,10 +8,16 @@ import com.homecare.provider.v1.VerifyOfferingRequest;
 import com.homecare.provider.v1.VerifyOfferingResponse;
 import com.homecare.provider.v1.VerifyOrganizationMembershipRequest;
 import com.homecare.provider.v1.VerifyOrganizationMembershipResponse;
-
 import io.grpc.Metadata;
 import io.grpc.stub.MetadataUtils;
+import java.time.Instant;
+import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 import net.devh.boot.grpc.client.inject.GrpcClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 @Component
 public class ProviderGrpcClientAdapter {
@@ -96,6 +93,17 @@ public class ProviderGrpcClientAdapter {
                     organizationId, userId, e.getMessage());
             return false;
         }
+    }
+
+    public AllocateTechnicianResponse assignTechnician(UUID bookingId, UUID serviceId, String deviceType,
+            Instant start, Instant end, UUID providerId, UUID technicianId) {
+        return withInternalMetadata(providerStub).withDeadlineAfter(3, TimeUnit.SECONDS)
+                .allocateTechnician(AllocateTechnicianRequest.newBuilder().setIntentId("alloc-" + bookingId)
+                        .setBookingId(bookingId.toString()).setServiceId(serviceId.toString())
+                        .setDeviceType(deviceType == null ? "" : deviceType)
+                        .setPreferredStartIso(start.toString()).setPreferredEndIso(end.toString())
+                        .setProviderId(providerId.toString()).setStrictProviderMatch(true)
+                        .setTechnicianId(technicianId.toString()).build());
     }
 
     private ProviderAllocationServiceGrpc.ProviderAllocationServiceBlockingStub withInternalMetadata(

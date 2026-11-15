@@ -1,19 +1,9 @@
 package com.homecare.notification.service;
 
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
+import tools.jackson.databind.ObjectMapper;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import static com.homecare.common.event.DomainEventContracts.FIELD_EVENT_ID;
+import static com.homecare.common.event.DomainEventContracts.FIELD_EVENT_TYPE;
 
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
@@ -27,9 +17,23 @@ import com.homecare.notification.exception.NotificationErrorCode;
 import com.homecare.notification.repository.DeviceRegistrationRepository;
 import com.homecare.notification.repository.NotificationRepository;
 import com.homecare.notification.repository.ProcessedEventRepository;
-
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
-import tools.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @RequiredArgsConstructor
@@ -93,7 +97,7 @@ public class NotificationInboxService {
                     .read(false)
                     .createdAt(now)
                     .build());
-        } catch (org.springframework.dao.DataIntegrityViolationException ex) {
+        } catch (DataIntegrityViolationException ex) {
             log.debug("Duplicate notification ignored for dedupeKey={}", dedupeKey);
             return;
         }
@@ -104,16 +108,16 @@ public class NotificationInboxService {
             data.putAll(extraData);
         }
         if (eventType != null) {
-            data.put(com.homecare.common.event.DomainEventContracts.FIELD_EVENT_TYPE, eventType);
+            data.put(FIELD_EVENT_TYPE, eventType);
         }
         if (eventId != null) {
-            data.put(com.homecare.common.event.DomainEventContracts.FIELD_EVENT_ID, eventId);
+            data.put(FIELD_EVENT_ID, eventId);
         }
 
         // Only dispatch push to RabbitMQ after database transaction has successfully committed
-        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
-            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                    new org.springframework.transaction.support.TransactionSynchronization() {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(
+                    new TransactionSynchronization() {
                         @Override
                         public void afterCommit() {
                             dispatchPushNotificationEvent(recipientId, title, body, data);
@@ -150,6 +154,12 @@ public class NotificationInboxService {
                 .map(this::toResponse)
                 .toList();
     }
+
+    @Transactional(readOnly = true)
+    public long unreadCount(String recipientId) { return notificationRepository.countByRecipientIdAndReadFalse(recipientId); }
+
+    @Transactional
+    public int markAllRead(String recipientId) { return notificationRepository.markAllRead(recipientId, Instant.now().truncatedTo(ChronoUnit.MILLIS)); }
 
     @Transactional
     public NotificationResponse markAsRead(String recipientId, UUID notificationId) {
