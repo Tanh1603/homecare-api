@@ -118,4 +118,22 @@ class CommercePortalTest {
         assertThat(service.getOrder(user, order.id()).status()).isEqualTo("CANCELLED");
         assertThat(service.getProduct(product).availableQty()).isEqualTo(initial);
     }
+
+    @Test void orgOperatorWithoutOrgHeaderUsesPersonalOrderAndReturnScope() throws Exception {
+        String user = "org-buyer-" + UUID.randomUUID();
+        var product = CommerceDataInitializer.PRODUCT_AC_FILTER_ID;
+        var ownOrder = service.createOrder(user, new CreateOrderRequest(List.of(new OrderLineRequest(product, 1)), "Address"));
+        var otherOrder = service.createOrder("other-buyer-" + UUID.randomUUID(),
+                new CreateOrderRequest(List.of(new OrderLineRequest(product, 1)), "Address"));
+        var orgAuth = jwt().jwt(j -> j.subject(user).claim("user_roles", List.of("ORGANIZATION")));
+
+        mvc.perform(get("/api/v1/orders").with(orgAuth))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(ownOrder.id().toString()));
+        mvc.perform(get("/api/v1/orders/" + ownOrder.id() + "/returns").with(orgAuth))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/orders/" + otherOrder.id() + "/returns").with(orgAuth))
+                .andExpect(status().isForbidden());
+    }
 }

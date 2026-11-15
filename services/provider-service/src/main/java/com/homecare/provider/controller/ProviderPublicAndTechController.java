@@ -124,7 +124,7 @@ public class ProviderPublicAndTechController {
         String sub = jwt != null ? jwt.getSubject() : null;
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.listScheduleWindows(technicianId, sub),
+                service.listScheduleWindows(technicianId, sub, isGlobalAdmin(jwt)),
                 httpRequest));
     }
 
@@ -136,7 +136,7 @@ public class ProviderPublicAndTechController {
             HttpServletRequest httpRequest) {
         verifyScheduleManager(jwt);
         String sub = jwt != null ? jwt.getSubject() : null;
-        ScheduleWindowResponse created = service.createScheduleWindow(technicianId, sub, request);
+        ScheduleWindowResponse created = service.createScheduleWindow(technicianId, sub, request, isGlobalAdmin(jwt));
         return ResponseEntity.status(HttpStatus.CREATED)
                 .header(HttpHeaders.ETAG, EtagSupport.format(created.version()))
                 .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
@@ -152,10 +152,16 @@ public class ProviderPublicAndTechController {
             HttpServletRequest httpRequest) {
         verifyScheduleManager(jwt);
         String sub = jwt != null ? jwt.getSubject() : null;
-        ScheduleWindowResponse updated = service.updateScheduleWindow(technicianId, sub, windowId, ifMatch, request);
+        ScheduleWindowResponse updated = service.updateScheduleWindow(
+                technicianId, sub, windowId, ifMatch, request, isGlobalAdmin(jwt));
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
                 .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    private boolean isGlobalAdmin(Jwt jwt) {
+        return jwt != null && SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ADMIN_ALL);
     }
 
     private void verifyScheduleManager(Jwt jwt) {

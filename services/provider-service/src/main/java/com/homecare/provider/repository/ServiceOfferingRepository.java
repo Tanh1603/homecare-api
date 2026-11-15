@@ -12,6 +12,7 @@ import org.springframework.data.jpa.repository.Query;
 public interface ServiceOfferingRepository extends JpaRepository<ServiceOffering, UUID> {
     @Query("""
         select s from ServiceOffering s where s.active = true
+        and exists (select 1 from ProviderEntity p where p.id = s.providerId and p.status = 'ACTIVE')
         and (:category is null or lower(s.category) = lower(:category))
         and (:providerId is null or s.providerId = :providerId)
         and (:q is null or lower(s.name) like lower(concat('%', :q, '%')))

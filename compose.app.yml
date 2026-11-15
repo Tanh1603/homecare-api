@@ -43,8 +43,7 @@ services:
       INTERNAL_GATEWAY_SECRET: "homecare-internal-secret-2026"
     expose:
       - "8083"
-    ports:
-      - "9083:9083"
+      - "9083"
     restart: unless-stopped
     deploy:
       resources:

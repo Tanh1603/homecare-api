@@ -20,6 +20,7 @@ import com.homecare.household.dto.HouseholdDtos.HouseholdResponse;
 import com.homecare.household.dto.HouseholdDtos.MaintenanceScheduleResponse;
 import com.homecare.household.dto.HouseholdDtos.UpdateDeviceRequest;
 import com.homecare.household.dto.HouseholdDtos.UpdateMaintenanceScheduleRequest;
+import com.homecare.household.dto.HouseholdDtos.UpdateWarrantyRequest;
 import com.homecare.household.dto.HouseholdDtos.VerifyDeviceReferenceResponse;
 import com.homecare.household.dto.HouseholdDtos.VerifyWarrantyResponse;
 import com.homecare.household.dto.HouseholdDtos.WarrantyResponse;
@@ -220,5 +221,51 @@ class HouseholdDomainServiceTest {
 
         when(providerOrgClient.verifyOrganizationMembership(orgId, "valid-org-user")).thenReturn(true);
         assertThat(service.listWarrantiesForOrganization("valid-org-user", orgId, false)).hasSize(1);
+    }
+
+    @Test
+    void preventsWarrantyForgeryProtectsStoreWarrantiesAndAllowsOrgOperatorPersonalWarranties() {
+        String owner = "kc-warranty-security-user";
+        UUID fakeOrgId = UUID.randomUUID();
+        var household = service.createHousehold(owner, new CreateHouseholdRequest("Home", "Address", null));
+        var device = service.createDevice(owner, new CreateDeviceRequest(household.id(), "AC", "AC", "Daikin", "M1", null, LocalDate.now()));
+
+        WarrantyResponse manualWarranty = service.createWarranty(
+                owner,
+                device.id(),
+                new CreateWarrantyRequest("Manual", LocalDate.now(), LocalDate.now().plusYears(1), null, null, fakeOrgId));
+        assertThat(manualWarranty.organizationId()).isNull();
+        assertThat(manualWarranty.source()).isEqualTo("MANUAL");
+
+        VerifyWarrantyResponse eligibility = service.verifyWarrantyEligibility(manualWarranty.id(), owner);
+        assertThat(eligibility.valid()).isFalse();
+        assertThat(eligibility.expired()).isFalse();
+        assertThat(eligibility.status()).isEqualTo("NOT_STORE_WARRANTY");
+
+        // Org operator without org scope sees their own personal warranties
+        var personalPage = service.warrantiesPage(owner, null, false, true, 1, 20);
+        assertThat(personalPage.items()).extracting(WarrantyResponse::id).contains(manualWarranty.id());
+
+        // Auto-activated store warranty cannot be updated or deleted by owner
+        UUID storeOrgId = UUID.randomUUID();
+        String deliveredEventJson = """
+                {"eventId":"%s","eventType":"order.line.delivered.v1","data":{"orderId":"%s","orderLineId":"%s","buyerProfileId":"%s","organizationId":"%s","merchantName":"Store X","productId":"%s","productName":"Filter","category":"WATER_PURIFIER","brand":"B","productType":"MAJOR_PART","warrantyMonths":12,"returnWindowDays":15}}
+                """.formatted(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), owner, storeOrgId, UUID.randomUUID()).strip();
+        eventConsumer.onDomainEvent(deliveredEventJson);
+
+        WarrantyResponse storeWarranty = service.listWarranties(owner, service.listDevices(owner, null).stream()
+                        .filter(d -> d.deviceType().equals("WATER_PURIFIER")).findFirst().orElseThrow().id())
+                .getFirst();
+        assertThatThrownBy(() -> service.updateWarranty(
+                owner,
+                storeWarranty.id(),
+                new UpdateWarrantyRequest("Tampered", null, LocalDate.now().plusYears(10), null, null, null)))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
+        assertThatThrownBy(() -> service.deleteWarranty(owner, storeWarranty.id()))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
     }
 }

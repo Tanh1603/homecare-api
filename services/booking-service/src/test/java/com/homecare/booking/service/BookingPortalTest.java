@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.assertj.core.api.Assertions;
+import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
@@ -114,6 +115,74 @@ class BookingPortalTest {
                 .header("If-Match", EtagSupport.format(completed.getVersion()))
                 .contentType("application/json").content("{\"technicianId\":\"" + technician + "\"}"))
                 .andExpect(status().isConflict());
+    }
+
+    @Test void orgOperatorWithoutOrgHeaderUsesPersonalBookingScope() throws Exception {
+        String user = "org-personal-" + UUID.randomUUID();
+        var own = save(user, "REQUESTED");
+        var other = save("other-" + UUID.randomUUID(), "REQUESTED");
+        var orgAuth = jwt().jwt(j -> j.subject(user).claim("user_roles", List.of("ORGANIZATION")));
+
+        mvc.perform(get("/api/v1/bookings").with(orgAuth))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(own.getId().toString()));
+        mvc.perform(get("/api/v1/bookings/" + own.getId()).with(orgAuth))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/bookings/" + other.getId()).with(orgAuth))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/bookings/" + other.getId() + "/cancel").with(orgAuth)
+                .header("If-Match", EtagSupport.format(other.getVersion())))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/bookings/" + own.getId() + "/cancel").with(orgAuth)
+                .header("If-Match", EtagSupport.format(own.getVersion())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("CANCELLED"));
+    }
+
+    @Test void technicianWithoutOrgHeaderSeesPersonalAndAssignedBookingsAndSupportsScopeFilter() throws Exception {
+        String techUser = "tech-dual-" + UUID.randomUUID();
+        Instant now = Instant.now();
+        var personal = save(techUser, "REQUESTED");
+        var assigned = bookings.saveAndFlush(BookingEntity.builder()
+                .id(UUID.randomUUID())
+                .requesterProfileId("customer-" + UUID.randomUUID())
+                .assignedTechnicianProfileId(techUser)
+                .serviceId(UUID.randomUUID()).serviceName("Assigned Test").providerId(UUID.randomUUID())
+                .preferredStart(now.plusSeconds(3600)).preferredEnd(now.plusSeconds(7200))
+                .address("Assigned address").status("ASSIGNED").allocationStatus("ALLOCATED")
+                .createdAt(now).updatedAt(now).build());
+        save("unrelated-" + UUID.randomUUID(), "REQUESTED");
+
+        var techAuth = jwt().jwt(j -> j.subject(techUser).claim("user_roles", List.of("TECHNICIAN")));
+        var customerAuth = jwt().jwt(j -> j.subject("plain-customer-" + UUID.randomUUID()));
+
+        // Default (no scope) returns both personal booking and assigned job
+        mvc.perform(get("/api/v1/bookings").with(techAuth))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(2))
+                .andExpect(jsonPath("$.data.items[*].id", Matchers.containsInAnyOrder(
+                        personal.getId().toString(), assigned.getId().toString())));
+
+        // scope=CUSTOMER returns only personal booking
+        mvc.perform(get("/api/v1/bookings?scope=CUSTOMER").with(techAuth))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(personal.getId().toString()));
+
+        // scope=TECHNICIAN returns only assigned job
+        mvc.perform(get("/api/v1/bookings?scope=TECHNICIAN").with(techAuth))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(assigned.getId().toString()));
+
+        // Non-technician requesting scope=TECHNICIAN is rejected
+        mvc.perform(get("/api/v1/bookings?scope=TECHNICIAN").with(customerAuth))
+                .andExpect(status().isForbidden());
+
+        // Invalid scope fails validation
+        mvc.perform(get("/api/v1/bookings?scope=INVALID").with(techAuth))
+                .andExpect(status().isBadRequest());
     }
     private BookingEntity save(String user, String status) {
         var now = Instant.now();

@@ -283,31 +283,37 @@ public class BookingLifecycleService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<BookingResponse> listBookingsPage(
-            String actorProfileId,
-            boolean isGlobalAdmin,
-            boolean isOrgOperator,
-            boolean isTechnician,
-            UUID orgScopeId,
-            int page,
-            int size) {
-        return listBookingsPage(actorProfileId, isGlobalAdmin, isOrgOperator, isTechnician, orgScopeId, page, size, null);
-    }
-
-    @Transactional(readOnly = true)
     public PageResponse<BookingResponse> listBookingsPage(String actorProfileId, boolean isGlobalAdmin,
-            boolean isOrgOperator, boolean isTechnician, UUID orgScopeId, int page, int size, String status) {
+            boolean isOrgOperator, boolean isTechnician, UUID orgScopeId, int page, int size, String status, String scope) {
         if (page < 1 || size < 1 || size > 100) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         if (status != null && !Set.of("REQUESTED", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "CANCELLED").contains(status)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        }
+        String normalizedScope = scope != null && !scope.isBlank() ? scope.trim().toUpperCase() : null;
+        if (normalizedScope != null && !Set.of("CUSTOMER", "TECHNICIAN").contains(normalizedScope)) {
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         }
         String requester = null;
         String technician = null;
         UUID provider = null;
-        if (isGlobalAdmin) provider = orgScopeId;
-        else if (isOrgOperator) { requireOrgMembership(orgScopeId, actorProfileId); provider = orgScopeId; }
-        else if (isTechnician) technician = actorProfileId;
-        else requester = actorProfileId;
+        if (isGlobalAdmin && normalizedScope == null) {
+            provider = orgScopeId;
+        } else if (isOrgOperator && orgScopeId != null) {
+            requireOrgMembership(orgScopeId, actorProfileId);
+            provider = orgScopeId;
+        } else if ("CUSTOMER".equals(normalizedScope)) {
+            requester = actorProfileId;
+        } else if ("TECHNICIAN".equals(normalizedScope)) {
+            if (!isTechnician) {
+                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            }
+            technician = actorProfileId;
+        } else if (isTechnician) {
+            requester = actorProfileId;
+            technician = actorProfileId;
+        } else {
+            requester = actorProfileId;
+        }
         Pageable pageable = PageRequest.of(page - 1, size, Sort.by("createdAt").descending().and(Sort.by("id")));
         var result = bookingRepository.search(requester, technician, provider, status, pageable);
         return PageResponse.of(result.map(this::toBookingResponse).getContent(), page, size, result.getTotalElements());
@@ -350,7 +356,10 @@ public class BookingLifecycleService {
         if (isGlobalAdmin) {
             return toBookingResponse(booking);
         }
-        if (isOrgOperator) {
+        if (orgScopeId == null && booking.getRequesterProfileId().equals(actorProfileId)) {
+            return toBookingResponse(booking);
+        }
+        if (isOrgOperator && orgScopeId != null) {
             requireOrgMembership(orgScopeId, actorProfileId);
             if (!orgScopeId.equals(booking.getProviderId())) {
                 throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
@@ -364,15 +373,11 @@ public class BookingLifecycleService {
                 matchesOrg = orgScopeId.equals(booking.getProviderId());
             }
             boolean matchesTech = actorProfileId.equals(booking.getAssignedTechnicianProfileId());
-            if (!matchesOrg && !matchesTech && !booking.getRequesterProfileId().equals(actorProfileId)) {
-                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            if (matchesOrg || matchesTech) {
+                return toBookingResponse(booking);
             }
-            return toBookingResponse(booking);
         }
-        if (!booking.getRequesterProfileId().equals(actorProfileId)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
-        return toBookingResponse(booking);
+        throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
     }
 
     @Transactional
@@ -394,14 +399,16 @@ public class BookingLifecycleService {
             CancelBookingRequest request,
             UUID orgScopeId) {
         BookingEntity booking = requireBooking(bookingId);
-        if (!isAdmin && !booking.getRequesterProfileId().equals(actorProfileId)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
-        if (orgScopeId != null && isAdmin) {
+        if (orgScopeId != null) {
+            if (!isAdmin) {
+                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            }
             requireOrgMembership(orgScopeId, actorProfileId);
             if (!orgScopeId.equals(booking.getProviderId())) {
                 throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
             }
+        } else if (!isAdmin && !booking.getRequesterProfileId().equals(actorProfileId)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
         EtagSupport.verifyIfMatch(ifMatchHeader, booking.getVersion());
         if ("IN_PROGRESS".equals(booking.getStatus())

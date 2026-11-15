@@ -16,6 +16,7 @@ import org.springframework.data.jpa.repository.Query;
 public interface TechnicianRepository extends JpaRepository<Technician, UUID> {
     @Query("""
         select t from Technician t where t.status = 'ACTIVE'
+        and exists (select 1 from ProviderEntity p where p.id = t.providerId and p.status = 'ACTIVE')
         and (:providerId is null or t.providerId = :providerId)
         and (:q is null or lower(t.fullName) like lower(concat('%', :q, '%')))
         """)

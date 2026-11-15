@@ -30,12 +30,13 @@ public class ProviderAllocationGrpcService extends ProviderAllocationServiceGrpc
         try {
             UUID serviceId = UUID.fromString(request.getServiceId());
             ServiceOfferingResponse offering = domainService.getOffering(serviceId);
+            boolean providerActive = domainService.isProviderActive(offering.providerId());
             VerifyOfferingResponse response = VerifyOfferingResponse.newBuilder()
                     .setServiceId(offering.id().toString())
                     .setProviderId(offering.providerId().toString())
                     .setName(offering.name())
                     .setBasePrice(offering.basePrice())
-                    .setActive(offering.active())
+                    .setActive(offering.active() && providerActive)
                     .setCategory(offering.category())
                     .setEstimatedDurationMinutes(offering.estimatedDurationMinutes())
                     .setProviderName(offering.providerName())

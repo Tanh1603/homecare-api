@@ -7,8 +7,10 @@ import static com.homecare.common.error.CommonErrorCode.VALIDATION_FAILED;
 import com.homecare.common.error.DomainException;
 import com.homecare.provider.organization.dto.OrganizationDtos.AdminUserResponse;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -106,7 +108,7 @@ public class SupabaseRoleClient {
                         asString(userMeta.get("name")),
                         email != null && email.contains("@") ? email.substring(0, email.indexOf('@')) : id);
                 String role = resolveHighestRole(appMeta, userMeta);
-                String status = user.get("banned_until") != null ? "SUSPENDED" : "ACTIVE";
+                String status = isUserSuspended(user, appMeta) ? "SUSPENDED" : "ACTIVE";
                 Instant createdAt = parseInstant(asString(user.get("created_at")));
                 result.add(new AdminUserResponse(id, fullName, email != null ? email : "", role, status, createdAt));
             }
@@ -125,14 +127,33 @@ public class SupabaseRoleClient {
             throw new DomainException(INTERNAL_ERROR,
                     "User administration is not configured.");
         }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ban_duration", "SUSPENDED".equals(status) ? "876000h" : "none");
+        body.put("app_metadata", Map.of("user_status", status));
         try {
             restClient.put().uri("/auth/v1/admin/users/{id}", userId)
                     .header("apikey", secretKey).header("Authorization", "Bearer " + secretKey)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("ban_duration", "SUSPENDED".equals(status) ? "876000h" : "none"))
+                    .body(body)
                     .retrieve().toBodilessEntity();
         } catch (NotFound ex) {
             throw new DomainException(RESOURCE_NOT_FOUND);
+        }
+    }
+
+    private boolean isUserSuspended(Map<?, ?> user, Map<?, ?> appMeta) {
+        String metaStatus = asString(appMeta.get("user_status"));
+        if ("SUSPENDED".equalsIgnoreCase(metaStatus) || "BANNED".equalsIgnoreCase(metaStatus)) {
+            return true;
+        }
+        String bannedUntil = asString(user.get("banned_until"));
+        if (bannedUntil == null || bannedUntil.isBlank() || "null".equalsIgnoreCase(bannedUntil)) {
+            return false;
+        }
+        try {
+            return OffsetDateTime.parse(bannedUntil).toInstant().isAfter(Instant.now());
+        } catch (Exception ex) {
+            return false;
         }
     }
 

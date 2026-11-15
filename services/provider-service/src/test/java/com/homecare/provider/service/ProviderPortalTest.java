@@ -1,10 +1,23 @@
 package com.homecare.provider.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+import com.homecare.provider.entity.ProviderEntity;
+import com.homecare.provider.entity.ScheduleWindow;
+import com.homecare.provider.entity.ServiceOffering;
+import com.homecare.provider.entity.Technician;
+import com.homecare.provider.grpc.ProviderAllocationGrpcService;
+import com.homecare.provider.repository.ProviderRepository;
+import com.homecare.provider.repository.ScheduleWindowRepository;
+import com.homecare.provider.repository.ServiceOfferingRepository;
+import com.homecare.provider.repository.TechnicianRepository;
+import com.homecare.provider.v1.VerifyOfferingRequest;
+import com.homecare.provider.v1.VerifyOfferingResponse;
+import io.grpc.stub.StreamObserver;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -24,6 +37,12 @@ import tools.jackson.databind.ObjectMapper;
 @ActiveProfiles("test")
 class ProviderPortalTest {
     @Autowired WebApplicationContext context;
+    @Autowired ProviderRepository providerRepository;
+    @Autowired ServiceOfferingRepository offeringRepository;
+    @Autowired TechnicianRepository technicianRepository;
+    @Autowired ScheduleWindowRepository scheduleWindowRepository;
+    @Autowired ProviderDomainService domainService;
+    @Autowired ProviderAllocationGrpcService grpcService;
     MockMvc mvc;
     @BeforeEach void setup() { mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build(); }
 
@@ -94,5 +113,104 @@ class ProviderPortalTest {
         String path = "/api/v1/technicians/me/schedules/" + tree.path("id").asText();
         mvc.perform(delete(path).with(auth)).andExpect(status().is(428));
         mvc.perform(delete(path).with(auth).header("If-Match", created.getResponse().getHeader("ETag"))).andExpect(status().isNoContent());
+    }
+
+    @Test void techniciansMeRequiresAuthAndAdminSchedulesWorkAndMaskBookingId() throws Exception {
+        mvc.perform(get("/api/v1/technicians/me")).andExpect(status().isUnauthorized());
+
+        Instant now = Instant.now();
+        UUID allocatedBookingId = UUID.randomUUID();
+        ScheduleWindow booked = scheduleWindowRepository.save(ScheduleWindow.builder()
+                .id(UUID.randomUUID())
+                .technicianId(ProviderDataInitializer.DEMO_TECH_ID)
+                .startsAt(now.plusSeconds(86400L * 90))
+                .endsAt(now.plusSeconds(86400L * 90 + 3600))
+                .status("BOOKED")
+                .allocatedBookingId(allocatedBookingId)
+                .createdAt(now)
+                .build());
+
+        try {
+            var adminAuth = jwt().jwt(j -> j.subject("admin-1").claim("user_roles", List.of("ADMIN")));
+            Instant adminStart = now.plusSeconds(86400L * 95);
+            mvc.perform(post("/api/v1/technicians/" + ProviderDataInitializer.DEMO_TECH_ID + "/schedules")
+                    .with(adminAuth)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"startsAt\":\"" + adminStart + "\",\"endsAt\":\"" + adminStart.plusSeconds(3600) + "\"}"))
+                    .andExpect(status().isCreated());
+
+            // Outsider / customer sees schedule slots with allocatedBookingId masked to null
+            mvc.perform(get("/api/v1/technicians/" + ProviderDataInitializer.DEMO_TECH_ID + "/schedules")
+                    .with(jwt().jwt(j -> j.subject("other-customer"))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data[?(@.id=='" + booked.getId() + "')].allocatedBookingId").value(Matchers.hasItem(Matchers.nullValue())));
+
+            // Admin sees allocatedBookingId
+            mvc.perform(get("/api/v1/technicians/" + ProviderDataInitializer.DEMO_TECH_ID + "/schedules")
+                    .with(adminAuth))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data[?(@.id=='" + booked.getId() + "')].allocatedBookingId").value(Matchers.hasItem(allocatedBookingId.toString())));
+        } finally {
+            scheduleWindowRepository.deleteById(booked.getId());
+        }
+    }
+
+    @Test void inactiveProviderHidesOfferingsTechniciansAndDeniesMembershipAndGrpcVerify() throws Exception {
+        Instant now = Instant.now();
+        UUID inactiveProviderId = UUID.randomUUID();
+        String techProfile = "suspended-tech-" + UUID.randomUUID();
+        providerRepository.save(ProviderEntity.builder()
+                .id(inactiveProviderId)
+                .organizationId(inactiveProviderId)
+                .ownerProfileId("suspended-owner")
+                .name("Suspended Provider Co")
+                .city("TP. Hồ Chí Minh")
+                .phone("0900000999")
+                .ratingAvg(4.0)
+                .status("INACTIVE")
+                .createdAt(now)
+                .build());
+        ServiceOffering hiddenOffering = offeringRepository.save(ServiceOffering.builder()
+                .id(UUID.randomUUID())
+                .providerId(inactiveProviderId)
+                .name("HiddenSuspendedService")
+                .category("AC")
+                .basePrice(100_000L)
+                .estimatedDurationMinutes(60)
+                .active(true)
+                .createdAt(now)
+                .build());
+        technicianRepository.save(Technician.builder()
+                .id(UUID.randomUUID())
+                .providerId(inactiveProviderId)
+                .profileId(techProfile)
+                .fullName("HiddenSuspendedTech")
+                .specialties("AC")
+                .experienceYears(3)
+                .ratingAvg(4.5)
+                .activeAllocations(0)
+                .status("ACTIVE")
+                .createdAt(now)
+                .build());
+
+        mvc.perform(get("/api/v1/services?q=HiddenSuspendedService"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(0));
+        mvc.perform(get("/api/v1/technicians?q=HiddenSuspendedTech"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(0));
+
+        assertThat(domainService.resolveMembershipRole(inactiveProviderId, techProfile)).isEmpty();
+
+        final VerifyOfferingResponse[] holder = new VerifyOfferingResponse[1];
+        grpcService.verifyOffering(
+                VerifyOfferingRequest.newBuilder().setServiceId(hiddenOffering.getId().toString()).build(),
+                new StreamObserver<>() {
+                    @Override public void onNext(VerifyOfferingResponse value) { holder[0] = value; }
+                    @Override public void onError(Throwable t) {}
+                    @Override public void onCompleted() {}
+                });
+        assertThat(holder[0]).isNotNull();
+        assertThat(holder[0].getActive()).isFalse();
     }
 }

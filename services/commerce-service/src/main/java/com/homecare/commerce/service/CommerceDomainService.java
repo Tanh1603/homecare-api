@@ -109,11 +109,16 @@ public class CommerceDomainService {
     public PageResponse<OrderResponse> ordersPage(String user, UUID organizationId, boolean admin,
             boolean operator, String status, String q, String sort, int page, int size) {
         UUID merchant = null;
-        if (organizationId != null && (admin || operator)) {
+        if (organizationId != null) {
+            if (!admin && !operator) {
+                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            }
             var m = merchantRepository.findByOrganizationId(organizationId).orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN));
-            requireMerchant(m.getId(), organizationId, user, admin); merchant = m.getId();
-        } else if (operator && !admin) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        var result = orderRepository.search(admin || operator ? null : user, merchant, status, q, pageRequest(page, size, sort, false));
+            requireMerchant(m.getId(), organizationId, user, admin);
+            merchant = m.getId();
+        }
+        boolean orgOrAdminScope = admin || (operator && merchant != null);
+        var result = orderRepository.search(orgOrAdminScope ? null : user, merchant, status, q, pageRequest(page, size, sort, false));
         return PageResponse.of(result.map(this::toOrderResponse).getContent(), page, size, result.getTotalElements());
     }
 
@@ -658,12 +663,12 @@ public class CommerceDomainService {
             UUID orderId) {
         OrderEntity order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
-        if (!isPrivileged) {
-            if (!order.getBuyerProfileId().equals(callerProfileId)) {
-                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-            }
-        } else if (!isGlobalAdmin) {
+        if (isGlobalAdmin) {
+            // global admin allowed
+        } else if (orgIdHeader != null && isPrivileged) {
             verifyActiveMerchantScope(callerProfileId, order, orgIdHeader, false);
+        } else if (!order.getBuyerProfileId().equals(callerProfileId)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
         return returnRequestRepository.findByOrderIdOrderByCreatedAtDesc(orderId)
                 .stream()

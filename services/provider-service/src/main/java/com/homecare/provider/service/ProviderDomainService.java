@@ -233,6 +233,13 @@ public class ProviderDomainService {
     }
 
     @Transactional(readOnly = true)
+    public boolean isProviderActive(UUID providerId) {
+        return providerId != null && providerRepository.findById(providerId)
+                .filter(p -> EntityStatus.ACTIVE.name().equalsIgnoreCase(p.getStatus()))
+                .isPresent();
+    }
+
+    @Transactional(readOnly = true)
     public boolean verifyOrganizationMembership(UUID orgId, String userId) {
         return resolveMembershipRole(orgId, userId).isPresent();
     }
@@ -260,32 +267,43 @@ public class ProviderDomainService {
         boolean isActiveTech = technicianRepository.findByProfileId(userId)
                 .filter(t -> EntityStatus.ACTIVE.name().equalsIgnoreCase(t.getStatus()))
                 .map(t -> orgId.equals(t.getProviderId()))
-                .orElse(false);
+                .orElse(false)
+                && isProviderActive(orgId);
         return isActiveTech ? Optional.of("TECHNICIAN") : Optional.empty();
     }
 
-    private void verifyCanManageTechnicianSchedule(Technician tech, String jwtSubject) {
+    private boolean hasOrgRole(UUID providerId, String jwtSubject, Set<String> allowedRoles) {
+        return jwtSubject != null && !jwtSubject.isBlank()
+                && resolveMembershipRole(providerId, jwtSubject).filter(allowedRoles::contains).isPresent();
+    }
+
+    private void verifyCanManageTechnicianSchedule(Technician tech, String jwtSubject, boolean isGlobalAdmin) {
         if (jwtSubject == null || jwtSubject.isBlank()) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
-        if (jwtSubject.equals(tech.getProfileId())) {
+        if (isGlobalAdmin || jwtSubject.equals(tech.getProfileId())) {
             return;
         }
-        String role = resolveMembershipRole(tech.getProviderId(), jwtSubject).orElse(null);
-        boolean isOrgManager = OrgRole.ORG_OWNER.name().equals(role)
-                || OrgRole.ORG_ADMIN.name().equals(role)
-                || "PROVIDER_OWNER".equals(role);
+        boolean isOrgManager = hasOrgRole(
+                tech.getProviderId(),
+                jwtSubject,
+                Set.of(OrgRole.ORG_OWNER.name(), OrgRole.ORG_ADMIN.name(), "PROVIDER_OWNER"));
         if (!isOrgManager) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
     }
 
     @Transactional(readOnly = true)
-    public List<ScheduleWindowResponse> listScheduleWindows(String technicianIdOrMe, String jwtSubject) {
+    public List<ScheduleWindowResponse> listScheduleWindows(
+            String technicianIdOrMe, String jwtSubject, boolean isGlobalAdmin) {
         Technician tech = resolveTechnicianOrDemo(technicianIdOrMe, jwtSubject);
+        boolean includeBookingId = isGlobalAdmin
+                || (jwtSubject != null && !jwtSubject.isBlank() && (jwtSubject.equals(tech.getProfileId())
+                || hasOrgRole(tech.getProviderId(), jwtSubject, Set.of(
+                        OrgRole.ORG_OWNER.name(), OrgRole.ORG_ADMIN.name(), OrgRole.ORG_STAFF.name(), "PROVIDER_OWNER"))));
         return scheduleWindowRepository.findByTechnicianIdOrderByStartsAtAsc(tech.getId())
                 .stream()
-                .map(this::toScheduleResponse)
+                .map(w -> toScheduleResponse(w, includeBookingId))
                 .toList();
     }
 
@@ -293,9 +311,10 @@ public class ProviderDomainService {
     public ScheduleWindowResponse createScheduleWindow(
             String technicianIdOrMe,
             String jwtSubject,
-            CreateScheduleWindowRequest request) {
+            CreateScheduleWindowRequest request,
+            boolean isGlobalAdmin) {
         Technician tech = resolveTechnicianOrDemo(technicianIdOrMe, jwtSubject);
-        verifyCanManageTechnicianSchedule(tech, jwtSubject);
+        verifyCanManageTechnicianSchedule(tech, jwtSubject, isGlobalAdmin);
         if (!request.endsAt().isAfter(request.startsAt())) {
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "endsAt must be after startsAt.");
         }
@@ -321,9 +340,10 @@ public class ProviderDomainService {
             String jwtSubject,
             UUID windowId,
             String ifMatchHeader,
-            UpdateScheduleWindowRequest request) {
+            UpdateScheduleWindowRequest request,
+            boolean isGlobalAdmin) {
         Technician tech = resolveTechnicianOrDemo(technicianIdOrMe, jwtSubject);
-        verifyCanManageTechnicianSchedule(tech, jwtSubject);
+        verifyCanManageTechnicianSchedule(tech, jwtSubject, isGlobalAdmin);
         ScheduleWindow window = scheduleWindowRepository.findById(windowId)
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.SCHEDULE_WINDOW_NOT_FOUND));
         if (!window.getTechnicianId().equals(tech.getId())) {
@@ -596,13 +616,17 @@ public class ProviderDomainService {
     }
 
     private ScheduleWindowResponse toScheduleResponse(ScheduleWindow w) {
+        return toScheduleResponse(w, true);
+    }
+
+    private ScheduleWindowResponse toScheduleResponse(ScheduleWindow w, boolean includeBookingId) {
         return new ScheduleWindowResponse(
                 w.getId(),
                 w.getTechnicianId(),
                 w.getStartsAt(),
                 w.getEndsAt(),
                 w.getStatus(),
-                w.getAllocatedBookingId(),
+                includeBookingId ? w.getAllocatedBookingId() : null,
                 w.getVersion());
     }
 }

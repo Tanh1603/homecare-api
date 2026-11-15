@@ -207,8 +207,12 @@ public class HouseholdDomainService {
     @Transactional(readOnly = true)
     public PageResponse<WarrantyResponse> warrantiesPage(String user, UUID org, boolean admin, boolean operator, int page, int size) {
         var pageable = pageRequest(page, size, "endsOn");
-        if (operator && !admin && (org == null || !providerOrgClient.verifyOrganizationMembership(org, user))) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        var result = warrantyRepository.search(admin || operator ? null : user, admin || operator ? org : null, pageable);
+        if (org != null && !admin && (!operator || !providerOrgClient.verifyOrganizationMembership(org, user))) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        var result = org != null
+                ? warrantyRepository.search(null, org, pageable)
+                : warrantyRepository.search(admin ? null : user, null, pageable);
         return PageResponse.of(result.map(this::toWarrantyResponse).getContent(), page, size, result.getTotalElements());
     }
 
@@ -235,7 +239,7 @@ public class HouseholdDomainService {
                 .id(UUID.randomUUID())
                 .deviceId(device.getId())
                 .ownerProfileId(ownerProfileId)
-                .organizationId(request.organizationId())
+                .organizationId(null)
                 .source("MANUAL")
                 .providerName(request.providerName().trim())
                 .startsOn(request.startsOn())
@@ -380,11 +384,7 @@ public class HouseholdDomainService {
 
     @Transactional
     public WarrantyResponse updateWarranty(String ownerProfileId, UUID warrantyId, UpdateWarrantyRequest request) {
-        Warranty w = warrantyRepository.findById(warrantyId)
-                .orElseThrow(() -> new DomainException(HouseholdErrorCode.WARRANTY_NOT_FOUND));
-        if (!w.getOwnerProfileId().equals(ownerProfileId)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this warranty.");
-        }
+        Warranty w = requireMutableOwnedWarranty(ownerProfileId, warrantyId);
         LocalDate newStarts = request.startsOn() != null ? request.startsOn() : w.getStartsOn();
         LocalDate newEnds = request.endsOn() != null ? request.endsOn() : w.getEndsOn();
         if (newEnds.isBefore(newStarts)) {
@@ -411,12 +411,20 @@ public class HouseholdDomainService {
 
     @Transactional
     public void deleteWarranty(String ownerProfileId, UUID warrantyId) {
+        Warranty w = requireMutableOwnedWarranty(ownerProfileId, warrantyId);
+        warrantyRepository.delete(w);
+    }
+
+    private Warranty requireMutableOwnedWarranty(String ownerProfileId, UUID warrantyId) {
         Warranty w = warrantyRepository.findById(warrantyId)
                 .orElseThrow(() -> new DomainException(HouseholdErrorCode.WARRANTY_NOT_FOUND));
         if (!w.getOwnerProfileId().equals(ownerProfileId)) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this warranty.");
         }
-        warrantyRepository.delete(w);
+        if ("ORDER_AUTO_ACTIVATED".equalsIgnoreCase(w.getSource())) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Store-issued warranties cannot be modified or deleted.");
+        }
+        return w;
     }
 
     @Transactional
@@ -596,6 +604,18 @@ public class HouseholdDomainService {
         Warranty w = warrantyOpt.get();
         Device device = deviceRepository.findById(w.getDeviceId()).orElse(null);
         String deviceType = device != null ? device.getDeviceType() : "AC";
+        if (!"ORDER_AUTO_ACTIVATED".equalsIgnoreCase(w.getSource()) || w.getOrganizationId() == null) {
+            return new VerifyWarrantyResponse(
+                    false,
+                    false,
+                    w.getId(),
+                    w.getDeviceId(),
+                    deviceType,
+                    null,
+                    w.getProviderName(),
+                    w.getEndsOn(),
+                    "NOT_STORE_WARRANTY");
+        }
         boolean isExpired = w.getEndsOn().isBefore(LocalDate.now()) || !EntityStatus.ACTIVE.name().equalsIgnoreCase(w.getStatus());
         if (isExpired) {
             return new VerifyWarrantyResponse(

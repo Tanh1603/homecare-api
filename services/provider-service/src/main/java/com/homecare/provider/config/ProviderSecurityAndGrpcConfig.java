@@ -69,6 +69,7 @@ public class ProviderSecurityAndGrpcConfig {
                                 "/swagger-ui.html")
                         .permitAll()
                         .requestMatchers(HttpMethod.GET,
+                                "/api/v1/technicians/me",
                                 "/api/v1/technicians/me/**",
                                 "/api/v1/technicians/*/schedules")
                         .authenticated()

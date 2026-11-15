@@ -60,7 +60,7 @@ class AllocationWindowTest {
     @Test void releasedIntervalCanBeBookedTogetherWithItsAdjacentFreeTime() {
         Instant start = Instant.now().truncatedTo(SECONDS).plus(45, DAYS);
         service.createScheduleWindow("me", "demo-technician",
-                new CreateScheduleWindowRequest(start, start.plusSeconds(3600)));
+                new CreateScheduleWindowRequest(start, start.plusSeconds(3600)), false);
         UUID booking = UUID.randomUUID();
         var allocated = service.allocateTechnicianForBooking("merge-" + booking, booking,
                 ProviderDataInitializer.SERVICE_AC_CLEAN_ID, "AC", start, start.plusSeconds(1800),
