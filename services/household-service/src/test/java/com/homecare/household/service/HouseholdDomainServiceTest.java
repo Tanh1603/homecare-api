@@ -160,6 +160,9 @@ class HouseholdDomainServiceTest {
         List<HouseholdOutboxEvent> outboxEvents = outboxEventRepository.findAll();
         assertThat(outboxEvents).isNotEmpty();
         assertThat(outboxEvents.getFirst().getEventType()).isEqualTo("maintenance.reminder.due.v1");
+        UUID expectedDetId = UUID.nameUUIDFromBytes(
+                ("maint-due-" + schedule.id() + "-" + schedule.dueOn()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertThat(outboxEvents).extracting(HouseholdOutboxEvent::getId).contains(expectedDetId);
 
         assertThatThrownBy(() -> service.updateSchedule(
                 ownerA,

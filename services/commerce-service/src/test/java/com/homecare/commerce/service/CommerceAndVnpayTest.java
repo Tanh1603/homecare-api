@@ -17,6 +17,7 @@ import com.homecare.commerce.dto.CommerceDtos.ResolveOrderReturnRequest;
 import com.homecare.commerce.entity.InventoryReservationEntity;
 import com.homecare.commerce.repository.CommerceOutboxEventRepository;
 import com.homecare.commerce.repository.InventoryReservationRepository;
+import com.homecare.commerce.repository.OrderReturnRequestRepository;
 import com.homecare.common.domain.EntityStatus;
 import java.util.HashMap;
 import java.util.List;
@@ -24,6 +25,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
@@ -44,6 +46,12 @@ class CommerceAndVnpayTest {
 
     @Autowired
     private CommerceOutboxEventRepository outboxEventRepository;
+
+    @Autowired
+    private OrderReturnRequestRepository returnRequestRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Test
     void enforcesSingleMerchantReservesStockVerifiesVnpayIpnAndFulfillsOrderLines() {
@@ -143,6 +151,10 @@ class CommerceAndVnpayTest {
         assertThat(service.handleVnpayIpn(ipnParams).get("RspCode")).isEqualTo("00");
 
         service.fulfillOrderLine("demo-organization", order.id(), lineId);
+        assertThatThrownBy(() -> service.fulfillOrderLine("demo-organization", order.id(), lineId))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("ORDER_INVALID_STATE");
 
         assertThatThrownBy(() -> service.createOrderReturnRequest(
                 "buyer-return-1",
@@ -170,6 +182,11 @@ class CommerceAndVnpayTest {
                 .extracting("errorCode")
                 .isEqualTo("RETURN_QUANTITY_EXCEEDED");
 
+        // Simulate legacy pre-migration row with version = NULL, then backfill and resolve
+        jdbcTemplate.execute("ALTER TABLE order_return_requests ALTER COLUMN version SET NULL");
+        jdbcTemplate.update("UPDATE order_return_requests SET version = NULL WHERE id = ?", createdReturn.id());
+        assertThat(returnRequestRepository.backfillNullVersions()).isEqualTo(1);
+
         OrderReturnResponse approved = service.resolveOrderReturnRequest(
                 "demo-organization",
                 order.id(),
@@ -182,6 +199,31 @@ class CommerceAndVnpayTest {
 
         OrderResponse updatedOrder = service.getOrder("buyer-return-1", order.id());
         assertThat(updatedOrder.lines().getFirst().fulfillmentStatus()).isEqualTo("RETURNED");
+        assertThatThrownBy(() -> service.fulfillOrderLine("demo-organization", order.id(), lineId))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("ORDER_INVALID_STATE");
+    }
+
+    @Test
+    void coalescesDuplicateCartLinesInSortedProductOrderAndGeneratesDistinctTxnRefs() {
+        OrderResponse order = service.createOrder(
+                "buyer-coalesce-1",
+                new CreateOrderRequest(
+                        List.of(
+                                new OrderLineRequest(CommerceDataInitializer.PRODUCT_WRENCH_SCREW_KIT_ID, 1),
+                                new OrderLineRequest(CommerceDataInitializer.PRODUCT_AC_FILTER_ID, 2),
+                                new OrderLineRequest(CommerceDataInitializer.PRODUCT_WRENCH_SCREW_KIT_ID, 3)),
+                        "99 Pasteur, Q1"));
+        assertThat(order.lines()).hasSize(2);
+        assertThat(order.lines().get(0).productId()).isEqualTo(CommerceDataInitializer.PRODUCT_AC_FILTER_ID);
+        assertThat(order.lines().get(0).quantity()).isEqualTo(2);
+        assertThat(order.lines().get(1).productId()).isEqualTo(CommerceDataInitializer.PRODUCT_WRENCH_SCREW_KIT_ID);
+        assertThat(order.lines().get(1).quantity()).isEqualTo(4);
+
+        PaymentAttemptResponse attempt1 = service.createPaymentAttempt("buyer-coalesce-1", order.id());
+        PaymentAttemptResponse attempt2 = service.createPaymentAttempt("buyer-coalesce-1", order.id());
+        assertThat(attempt1.txnRef()).isNotEqualTo(attempt2.txnRef());
     }
 
     @Test

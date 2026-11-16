@@ -547,10 +547,12 @@ public class BookingLifecycleService {
     @Transactional
     public BookingResponse assignTechnician(UUID bookingId, UUID technicianId, String actor, boolean admin,
             UUID organizationId, String ifMatch) {
-        var booking = bookingRepository.lockById(bookingId).orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
         if (!admin) {
             requireOrgMembership(organizationId, actor);
-            if (booking.getProviderId() != null && !organizationId.equals(booking.getProviderId())) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        var booking = bookingRepository.lockById(bookingId).orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
+        if (!admin && booking.getProviderId() != null && !organizationId.equals(booking.getProviderId())) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
         EtagSupport.verifyIfMatch(ifMatch, booking.getVersion());
         if (!"REQUESTED".equals(booking.getStatus())) throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);

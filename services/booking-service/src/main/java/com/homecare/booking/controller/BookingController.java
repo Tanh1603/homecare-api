@@ -56,13 +56,11 @@ public class BookingController {
         String sub = jwt.getSubject();
         BookingResponse created;
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
-            String payloadSummary = request.serviceId() + "|" + request.deviceId() + "|"
-                    + request.preferredStart() + "|" + request.address();
             created = idempotencyService.execute(
                     sub,
                     "POST:/api/v1/bookings",
                     idempotencyKey,
-                    payloadSummary,
+                    request.toString(),
                     () -> service.createBooking(sub, request));
         } else {
             created = service.createBooking(sub, request);

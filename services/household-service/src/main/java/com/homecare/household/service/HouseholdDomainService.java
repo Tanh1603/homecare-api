@@ -39,6 +39,7 @@ import com.homecare.household.repository.HouseholdOutboxEventRepository;
 import com.homecare.household.repository.HouseholdRepository;
 import com.homecare.household.repository.MaintenanceScheduleRepository;
 import com.homecare.household.repository.WarrantyRepository;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
@@ -649,7 +650,11 @@ public class HouseholdDomainService {
         for (MaintenanceSchedule schedule : due) {
             schedule.setNotifiedAt(now);
             scheduleRepository.save(schedule);
-            UUID eventId = UUID.randomUUID();
+            UUID eventId = UUID.nameUUIDFromBytes(
+                    ("maint-due-" + schedule.getId() + "-" + schedule.getDueOn()).getBytes(StandardCharsets.UTF_8));
+            if (outboxEventRepository.existsById(eventId)) {
+                continue;
+            }
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("scheduleId", schedule.getId());
             data.put("deviceId", schedule.getDeviceId());

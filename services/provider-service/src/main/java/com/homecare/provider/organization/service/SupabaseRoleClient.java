@@ -6,6 +6,7 @@ import static com.homecare.common.error.CommonErrorCode.VALIDATION_FAILED;
 
 import com.homecare.common.error.DomainException;
 import com.homecare.provider.organization.dto.OrganizationDtos.AdminUserResponse;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -19,6 +20,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException.NotFound;
 import org.springframework.web.client.RestClient;
@@ -40,7 +42,10 @@ public class SupabaseRoleClient {
         this.supabaseUrl = supabaseUrl;
         this.secretKey = secretKey;
         this.organizationRoleId = organizationRoleId;
-        this.restClient = RestClient.builder().baseUrl(supabaseUrl).build();
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(Duration.ofSeconds(3));
+        requestFactory.setReadTimeout(Duration.ofSeconds(5));
+        this.restClient = RestClient.builder().baseUrl(supabaseUrl).requestFactory(requestFactory).build();
     }
 
     public void grantOrganizationRole(String userId) {

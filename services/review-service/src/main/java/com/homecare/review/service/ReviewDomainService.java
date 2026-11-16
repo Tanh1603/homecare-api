@@ -27,7 +27,6 @@ public class ReviewDomainService {
     private final ReviewRepository reviewRepository;
     private final EvidenceVerificationClient verificationClient;
 
-    @Transactional
     public ReviewResponse createServiceReview(String authorProfileId, CreateServiceReviewRequest request) {
         if (reviewRepository.findBySourceId(request.bookingId()).isPresent()) {
             throw new DomainException(ReviewErrorCode.REVIEW_ALREADY_EXISTS);
@@ -58,7 +57,6 @@ public class ReviewDomainService {
         return toResponse(saved);
     }
 
-    @Transactional
     public ReviewResponse createProductReview(
             String authorProfileId,
             UUID productId,

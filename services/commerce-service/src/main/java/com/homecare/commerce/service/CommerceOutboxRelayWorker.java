@@ -41,8 +41,11 @@ public class CommerceOutboxRelayWorker {
                 event.setPublishedAt(Instant.now());
                 repository.save(event);
             } catch (Exception e) {
+                int nextRetry = event.getRetryCount() + 1;
+                event.setRetryCount(nextRetry);
+                event.setNextAttemptAt(Instant.now().plusSeconds(Math.min(300L, nextRetry * 15L)));
+                repository.save(event);
                 log.warn("Commerce outbox relay skipped/failed for event {}: {}", event.getId(), e.getMessage());
-                break;
             }
         }
     }

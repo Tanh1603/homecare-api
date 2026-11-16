@@ -3,8 +3,12 @@ package com.homecare.common.idempotency;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -14,6 +18,7 @@ import org.springframework.http.HttpStatus;
 public class IdempotencyService {
 
     private static final Pattern KEY_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{16,128}$");
+    private static final Duration DEFAULT_TTL = Duration.ofHours(24);
     private final Map<String, StoredOperation<?>> store = new ConcurrentHashMap<>();
 
     public static void validateKey(String idempotencyKey) {
@@ -33,12 +38,17 @@ public class IdempotencyService {
             String payloadJson,
             Supplier<T> action) {
         validateKey(idempotencyKey);
+        Instant now = Instant.now();
+        store.entrySet().removeIf(e -> !e.getValue().expiresAt().isAfter(now));
+
         String fingerprint = sha256Hex(payloadJson == null ? "" : payloadJson);
         String compositeKey = (actorScope == null ? "anon" : actorScope)
                 + "|" + operationScope
                 + "|" + idempotencyKey;
 
-        StoredOperation<?> existing = store.get(compositeKey);
+        StoredOperation<T> candidate = new StoredOperation<>(
+                fingerprint, new CompletableFuture<>(), now.plus(DEFAULT_TTL));
+        StoredOperation<?> existing = store.putIfAbsent(compositeKey, candidate);
         if (existing != null) {
             if (!existing.fingerprint().equals(fingerprint)) {
                 throw new IdempotencyException(
@@ -46,21 +56,25 @@ public class IdempotencyService {
                         "IDEMPOTENCY_KEY_REUSED",
                         "Idempotency-Key was already used with a different request payload.");
             }
-            return (T) existing.response();
+            try {
+                return (T) existing.future().join();
+            } catch (CompletionException ex) {
+                if (ex.getCause() instanceof RuntimeException re) {
+                    throw re;
+                }
+                throw ex;
+            }
         }
 
-        T result = action.get();
-        StoredOperation<?> previous = store.putIfAbsent(compositeKey, new StoredOperation<>(fingerprint, result));
-        if (previous != null) {
-            if (!previous.fingerprint().equals(fingerprint)) {
-                throw new IdempotencyException(
-                        HttpStatus.CONFLICT,
-                        "IDEMPOTENCY_KEY_REUSED",
-                        "Idempotency-Key was already used with a different request payload.");
-            }
-            return (T) previous.response();
+        try {
+            T result = action.get();
+            candidate.future().complete(result);
+            return result;
+        } catch (Throwable t) {
+            store.remove(compositeKey, candidate);
+            candidate.future().completeExceptionally(t);
+            throw t;
         }
-        return result;
     }
 
     public static String sha256Hex(String input) {
@@ -73,7 +87,7 @@ public class IdempotencyService {
         }
     }
 
-    private record StoredOperation<T>(String fingerprint, T response) {
+    private record StoredOperation<T>(String fingerprint, CompletableFuture<T> future, Instant expiresAt) {
     }
 
     public static class IdempotencyException extends RuntimeException {

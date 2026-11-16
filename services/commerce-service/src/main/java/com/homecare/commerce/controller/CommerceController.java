@@ -151,7 +151,7 @@ public class CommerceController {
                     sub,
                     "POST:/api/v1/orders/" + orderId + "/payment-attempts",
                     idempotencyKey,
-                    orderId.toString(),
+                    orderId + "|" + (returnUrl == null ? "" : returnUrl),
                     () -> service.createPaymentAttempt(sub, orderId, returnUrl));
         } else {
             attempt = service.createPaymentAttempt(sub, orderId, returnUrl);
