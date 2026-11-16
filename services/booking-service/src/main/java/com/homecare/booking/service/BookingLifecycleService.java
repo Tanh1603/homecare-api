@@ -113,17 +113,6 @@ public class BookingLifecycleService {
             throw new DomainException(BookingErrorCode.SERVICE_NOT_AVAILABLE);
         }
 
-        BookingAllocationSagaEntity saga = sagaRepository.save(BookingAllocationSagaEntity.builder()
-                .id(UUID.randomUUID())
-                .bookingId(bookingId)
-                .intentId(intentId)
-                .sagaStatus("STARTED")
-                .currentStep("VERIFY_OFFERING")
-                .retryCount(0)
-                .startedAt(now)
-                .updatedAt(now)
-                .build());
-
         int durationMins = offering.getEstimatedDurationMinutes() > 0
                 ? offering.getEstimatedDurationMinutes()
                 : 60;
@@ -160,11 +149,17 @@ public class BookingLifecycleService {
         }
 
         UUID providerId = targetProviderId;
-        saga.setSagaStatus("OFFERING_VERIFIED");
-        saga.setCurrentStep("ALLOCATE_TECHNICIAN");
-        saga.setProviderId(providerId);
-        saga.setUpdatedAt(Instant.now());
-        sagaRepository.save(saga);
+        BookingAllocationSagaEntity saga = sagaRepository.save(BookingAllocationSagaEntity.builder()
+                .id(UUID.randomUUID())
+                .bookingId(bookingId)
+                .intentId(intentId)
+                .sagaStatus("OFFERING_VERIFIED")
+                .currentStep("ALLOCATE_TECHNICIAN")
+                .providerId(providerId)
+                .retryCount(0)
+                .startedAt(now)
+                .updatedAt(Instant.now())
+                .build());
 
         String status = "REQUESTED";
         String allocationStatus = "ALLOCATION_PENDING";

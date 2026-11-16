@@ -7,6 +7,9 @@ import io.grpc.ServerInterceptor;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+
 public class WorkloadAuthServerInterceptor implements ServerInterceptor {
 
     private final String expectedWorkloadToken;
@@ -18,7 +21,10 @@ public class WorkloadAuthServerInterceptor implements ServerInterceptor {
     public void verifyMetadata(Metadata headers) {
         String provided = headers == null ? null : headers.get(WorkloadAuthClientInterceptor.WORKLOAD_TOKEN_KEY);
         if (expectedWorkloadToken == null || expectedWorkloadToken.isBlank()
-                || provided == null || !expectedWorkloadToken.equals(provided)) {
+                || provided == null
+                || !MessageDigest.isEqual(
+                        expectedWorkloadToken.getBytes(StandardCharsets.UTF_8),
+                        provided.getBytes(StandardCharsets.UTF_8))) {
             throw new StatusRuntimeException(
                     Status.UNAUTHENTICATED.withDescription("Missing or invalid X-Internal-Workload-Token"));
         }

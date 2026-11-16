@@ -180,5 +180,7 @@ class AllocationWindowTest {
         var consumer = context.getBean(ProviderBookingConsumer.class);
         assertThatCode(() -> consumer.onEvent("{\"eventType\":\"booking.created.v1\",\"data\":{}}"))
                 .doesNotThrowAnyException();
+        assertThatCode(() -> consumer.onEvent("{\"eventType\":\"booking.completed.v1\",\"data\":{\"bookingId\":\"not-a-uuid\"}}"))
+                .doesNotThrowAnyException();
     }
 }

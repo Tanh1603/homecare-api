@@ -85,9 +85,12 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
         if (lookup == null) {
             return Mono.just(false);
         }
-        return lookup.onErrorResume(exception -> {
-            log.warn("Redis blacklist lookup failed (fail-open) for key={}: {}", key, exception.getMessage());
-            return Mono.just(false);
-        });
+        return lookup
+                .defaultIfEmpty(false)
+                .timeout(java.time.Duration.ofMillis(500))
+                .onErrorResume(exception -> {
+                    log.warn("Redis blacklist lookup failed (fail-open) for key={}: {}", key, exception.getMessage());
+                    return Mono.just(false);
+                });
     }
 }

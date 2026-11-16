@@ -29,7 +29,7 @@ public class IdempotencyService {
     }
 
     public IdempotencyService(Duration ttl, int maxEntries) {
-        this.ttl = ttl;
+        this.ttl = java.util.Objects.requireNonNull(ttl, "ttl must not be null");
         this.maxEntries = Math.max(1, maxEntries);
     }
 
@@ -106,16 +106,16 @@ public class IdempotencyService {
 
     private void evictIfOverCapacity(Instant now, String protectedKey) {
         store.entrySet().removeIf(e -> !e.getKey().equals(protectedKey) && !e.getValue().expiresAt().isAfter(now));
-        while (store.size() > maxEntries) {
-            var oldest = store.entrySet().stream()
-                    .filter(e -> !e.getKey().equals(protectedKey))
-                    .min(java.util.Comparator.comparing(e -> e.getValue().expiresAt()))
-                    .orElse(null);
-            if (oldest == null) {
-                break;
-            }
-            store.remove(oldest.getKey(), oldest.getValue());
+        int excess = store.size() - maxEntries;
+        if (excess <= 0) {
+            return;
         }
+        store.entrySet().stream()
+                .filter(e -> !e.getKey().equals(protectedKey))
+                .sorted(java.util.Comparator.comparing(e -> e.getValue().expiresAt()))
+                .limit(excess)
+                .toList()
+                .forEach(e -> store.remove(e.getKey(), e.getValue()));
     }
 
     public static String sha256Hex(String input) {
