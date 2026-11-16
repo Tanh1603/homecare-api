@@ -16,7 +16,11 @@ import org.springframework.data.repository.query.Param;
 public interface TechnicianAllocationRepository extends JpaRepository<TechnicianAllocation, UUID> {
     Optional<TechnicianAllocation> findByIntentId(String intentId);
     @Lock(PESSIMISTIC_WRITE)
-    @Query("select a from TechnicianAllocation a where a.bookingId = :bookingId")
+    @Query("select a from TechnicianAllocation a where a.operationId = :operationId")
+    Optional<TechnicianAllocation> lockByOperationId(UUID operationId);
+
+    @Lock(PESSIMISTIC_WRITE)
+    @Query("select a from TechnicianAllocation a where a.bookingId = :bookingId and a.status = 'ALLOCATED'")
     Optional<TechnicianAllocation> lockByBookingId(UUID bookingId);
 
     @Query("""

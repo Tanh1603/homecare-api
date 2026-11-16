@@ -6,6 +6,8 @@ import com.homecare.provider.service.ProviderDomainService.AllocationOutcome;
 import com.homecare.provider.v1.AllocateTechnicianRequest;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.ProviderAllocationServiceGrpc;
+import com.homecare.provider.v1.ReleaseBookingRequest;
+import com.homecare.provider.v1.ReleaseBookingResponse;
 import com.homecare.provider.v1.VerifyOfferingRequest;
 import com.homecare.provider.v1.VerifyOfferingResponse;
 import com.homecare.provider.v1.VerifyOrganizationMembershipRequest;
@@ -62,6 +64,7 @@ public class ProviderAllocationGrpcService extends ProviderAllocationServiceGrpc
         UUID preferredProviderId = parseUuidOrNull(request.getProviderId());
 
         AllocationOutcome outcome = domainService.allocateTechnicianForBooking(
+                parseUuidOrNull(request.getOperationId()),
                 request.getIntentId(),
                 UUID.fromString(request.getBookingId()),
                 UUID.fromString(request.getServiceId()),
@@ -94,6 +97,20 @@ public class ProviderAllocationGrpcService extends ProviderAllocationServiceGrpc
         }
 
         responseObserver.onNext(builder.build());
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void releaseBooking(
+            ReleaseBookingRequest request,
+            StreamObserver<ReleaseBookingResponse> responseObserver) {
+        UUID bookingId = UUID.fromString(request.getBookingId());
+        UUID operationId = parseUuidOrNull(request.getOperationId());
+        var outcome = domainService.releaseBookingByOperation(bookingId, operationId, request.getReason());
+        responseObserver.onNext(ReleaseBookingResponse.newBuilder()
+                .setReleased(outcome.released())
+                .setStatus(outcome.status())
+                .build());
         responseObserver.onCompleted();
     }
 

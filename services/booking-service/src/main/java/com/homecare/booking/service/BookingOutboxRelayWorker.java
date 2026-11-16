@@ -23,6 +23,7 @@ import lombok.RequiredArgsConstructor;
 public class BookingOutboxRelayWorker {
 
     private static final Logger log = LoggerFactory.getLogger(BookingOutboxRelayWorker.class);
+    static final int MAX_RETRIES = 10;
 
     private final BookingOutboxEventRepository repository;
     private final RabbitTemplate rabbitTemplate;
@@ -43,9 +44,15 @@ public class BookingOutboxRelayWorker {
             } catch (Exception e) {
                 int nextRetry = event.getRetryCount() + 1;
                 event.setRetryCount(nextRetry);
-                event.setNextAttemptAt(Instant.now().plusSeconds(Math.min(300L, nextRetry * 15L)));
+                if (nextRetry >= MAX_RETRIES) {
+                    event.setStatus(EntityStatus.DEAD.name());
+                    event.setNextAttemptAt(null);
+                    log.error("Booking outbox event {} exhausted {} retries -> DEAD: {}", event.getId(), MAX_RETRIES, e.getMessage());
+                } else {
+                    event.setNextAttemptAt(Instant.now().plusSeconds(Math.min(300L, nextRetry * 15L)));
+                    log.warn("Booking outbox relay skipped/failed for event {}: {}", event.getId(), e.getMessage());
+                }
                 repository.save(event);
-                log.warn("Booking outbox relay skipped/failed for event {}: {}", event.getId(), e.getMessage());
             }
         }
     }

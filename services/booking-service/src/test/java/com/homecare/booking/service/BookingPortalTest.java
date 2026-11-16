@@ -72,7 +72,7 @@ class BookingPortalTest {
                 .contentType("application/json").content("{\"technicianId\":\"" + UUID.randomUUID() + "\"}"))
                 .andExpect(status().isForbidden());
         Mockito.verify(provider, Mockito.never()).assignTechnician(
-                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
                 ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any());
     }
 
@@ -81,7 +81,7 @@ class BookingPortalTest {
         Mockito.when(provider.verifyOffering(serviceId)).thenReturn(VerifyOfferingResponse.newBuilder()
                 .setActive(true).setServiceId(serviceId.toString()).setProviderId(preferred.toString())
                 .setName("Service").setCategory("AC").setBasePrice(100).setEstimatedDurationMinutes(60).build());
-        Mockito.when(provider.allocateTechnician(ArgumentMatchers.anyString(), ArgumentMatchers.any(),
+        Mockito.when(provider.allocateTechnician(ArgumentMatchers.any(), ArgumentMatchers.anyString(), ArgumentMatchers.any(),
                 ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(),
                 ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.anyBoolean()))
                 .thenReturn(AllocateTechnicianResponse.newBuilder().setAllocated(true)
@@ -107,7 +107,7 @@ class BookingPortalTest {
     @Test void adminAssignsRequestedBookingAndCannotAssignCompletedBooking() throws Exception {
         var booking = save("manual-customer", "REQUESTED");
         UUID technician = UUID.randomUUID();
-        Mockito.when(provider.assignTechnician(ArgumentMatchers.eq(booking.getId()), ArgumentMatchers.any(), ArgumentMatchers.any(),
+        Mockito.when(provider.assignTechnician(ArgumentMatchers.any(), ArgumentMatchers.eq(booking.getId()), ArgumentMatchers.any(), ArgumentMatchers.any(),
                 ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.eq(booking.getProviderId()), ArgumentMatchers.eq(technician)))
                 .thenReturn(AllocateTechnicianResponse.newBuilder().setAllocated(true)
                         .setTechnicianId(technician.toString()).setTechnicianProfileId("assigned-tech").setTechnicianName("Tech")
@@ -130,10 +130,10 @@ class BookingPortalTest {
         var booking = bookings.saveAndFlush(BookingEntity.builder().id(UUID.randomUUID()).requesterProfileId("no-provider-customer")
                 .serviceId(UUID.randomUUID()).serviceName("Test")
                 .preferredStart(now.plusSeconds(3600)).preferredEnd(now.plusSeconds(7200))
-                .address("Test address").status("REQUESTED").allocationStatus("ALLOCATION_FAILED")
+                .address("Test address").status("REQUESTED").allocationStatus("UNALLOCATED")
                 .createdAt(now).updatedAt(now).build());
         UUID technician = UUID.randomUUID(), actualProvider = UUID.randomUUID();
-        Mockito.when(provider.assignTechnician(ArgumentMatchers.eq(booking.getId()), ArgumentMatchers.any(), ArgumentMatchers.any(),
+        Mockito.when(provider.assignTechnician(ArgumentMatchers.any(), ArgumentMatchers.eq(booking.getId()), ArgumentMatchers.any(), ArgumentMatchers.any(),
                 ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.isNull(), ArgumentMatchers.eq(technician)))
                 .thenReturn(AllocateTechnicianResponse.newBuilder().setAllocated(true)
                         .setTechnicianId(technician.toString()).setTechnicianProfileId("assigned-tech").setTechnicianName("Tech")
@@ -150,12 +150,12 @@ class BookingPortalTest {
         var booking = bookings.saveAndFlush(BookingEntity.builder().id(UUID.randomUUID()).requesterProfileId("no-provider-customer-2")
                 .serviceId(UUID.randomUUID()).serviceName("Test")
                 .preferredStart(now.plusSeconds(3600)).preferredEnd(now.plusSeconds(7200))
-                .address("Test address").status("REQUESTED").allocationStatus("ALLOCATION_FAILED")
+                .address("Test address").status("REQUESTED").allocationStatus("UNALLOCATED")
                 .createdAt(now).updatedAt(now).build());
         UUID org = UUID.randomUUID(), technician = UUID.randomUUID();
         Mockito.when(provider.verify(org, "org-operator"))
                 .thenReturn(VerifiedMembership.of(org, "org-operator", "ORG_OWNER", true));
-        Mockito.when(provider.assignTechnician(ArgumentMatchers.eq(booking.getId()), ArgumentMatchers.any(), ArgumentMatchers.any(),
+        Mockito.when(provider.assignTechnician(ArgumentMatchers.any(), ArgumentMatchers.eq(booking.getId()), ArgumentMatchers.any(), ArgumentMatchers.any(),
                 ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.eq(org), ArgumentMatchers.eq(technician)))
                 .thenReturn(AllocateTechnicianResponse.newBuilder().setAllocated(true)
                         .setTechnicianId(technician.toString()).setTechnicianProfileId("assigned-tech").setTechnicianName("Tech")
@@ -357,7 +357,7 @@ class BookingPortalTest {
         return bookings.saveAndFlush(BookingEntity.builder().id(UUID.randomUUID()).requesterProfileId(user)
                 .serviceId(UUID.randomUUID()).serviceName("Test").providerId(UUID.randomUUID())
                 .preferredStart(now.plusSeconds(3600)).preferredEnd(now.plusSeconds(7200))
-                .address("Test address").status(status).allocationStatus("ALLOCATION_FAILED")
+                .address("Test address").status(status).allocationStatus("UNALLOCATED")
                 .createdAt(now).updatedAt(now).build());
     }
 }

@@ -8,7 +8,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.context.annotation.Bean;
@@ -37,8 +39,28 @@ public class CommerceOrganizationConsumer {
     private final ObjectMapper objectMapper;
 
     @Bean
+    public DirectExchange commerceEventsDlx() {
+        return new DirectExchange(DomainEventContracts.DLX, true, false);
+    }
+
+    @Bean
     public Queue commerceOrganizationQueue() {
-        return new Queue(QUEUE, true);
+        return QueueBuilder.durable(QUEUE)
+                .withArgument("x-dead-letter-exchange", DomainEventContracts.DLX)
+                .withArgument("x-dead-letter-routing-key", DomainEventContracts.dlqName(QUEUE))
+                .build();
+    }
+
+    @Bean
+    public Queue commerceOrganizationDlq() {
+        return QueueBuilder.durable(DomainEventContracts.dlqName(QUEUE)).build();
+    }
+
+    @Bean
+    public Binding bindCommerceOrgDlq(Queue commerceOrganizationDlq, DirectExchange commerceEventsDlx) {
+        return BindingBuilder.bind(commerceOrganizationDlq)
+                .to(commerceEventsDlx)
+                .with(DomainEventContracts.dlqName(QUEUE));
     }
 
     @Bean

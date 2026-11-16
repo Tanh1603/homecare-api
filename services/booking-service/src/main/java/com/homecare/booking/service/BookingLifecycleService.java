@@ -13,8 +13,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.homecare.booking.client.HouseholdVerificationClient;
 import com.homecare.booking.client.HouseholdVerificationClient.WarrantyVerificationResult;
@@ -26,6 +30,7 @@ import com.homecare.booking.dto.BookingDtos.CreateBookingRequest;
 import com.homecare.booking.dto.BookingDtos.CreateWorkUpdateRequest;
 import com.homecare.booking.dto.BookingDtos.VerifyBookingReviewEligibilityResponse;
 import com.homecare.booking.dto.BookingDtos.WorkUpdateResponse;
+import com.homecare.booking.entity.AssignmentAttemptEntity;
 import com.homecare.booking.entity.BookingAllocationSagaEntity;
 import com.homecare.booking.entity.BookingEntity;
 import com.homecare.booking.entity.BookingStatus;
@@ -33,6 +38,7 @@ import com.homecare.booking.entity.BookingHistoryEntry;
 import com.homecare.booking.entity.BookingOutboxEventEntity;
 import com.homecare.booking.entity.WorkUpdateEntity;
 import com.homecare.booking.exception.BookingErrorCode;
+import com.homecare.booking.repository.AssignmentAttemptRepository;
 import com.homecare.booking.repository.BookingAllocationSagaRepository;
 import com.homecare.booking.repository.BookingHistoryRepository;
 import com.homecare.booking.repository.BookingOutboxEventRepository;
@@ -66,10 +72,12 @@ public class BookingLifecycleService {
     private final BookingHistoryRepository historyRepository;
     private final WorkUpdateRepository workUpdateRepository;
     private final BookingAllocationSagaRepository sagaRepository;
+    private final AssignmentAttemptRepository attemptRepository;
     private final BookingOutboxEventRepository outboxEventRepository;
     private final ProviderGrpcClientAdapter providerGrpcClient;
     private final HouseholdVerificationClient householdVerificationClient;
     private final BookingAccessPolicy accessPolicy;
+    private final PlatformTransactionManager transactionManager;
     private final ObjectMapper objectMapper;
 
     @Transactional
@@ -170,13 +178,17 @@ public class BookingLifecycleService {
                 .build());
 
         String status = "REQUESTED";
-        String allocationStatus = "ALLOCATION_PENDING";
+        String allocationStatus = "UNALLOCATED";
         UUID assignedTechId = null;
         String assignedTechProfileId = null;
         String assignedTechName = null;
+        UUID operationId = UUID.randomUUID();
+        boolean reconciliationPending = false;
+        String pendingError = null;
 
         try {
             AllocateTechnicianResponse alloc = providerGrpcClient.allocateTechnician(
+                    operationId,
                     intentId,
                     bookingId,
                     request.serviceId(),
@@ -200,26 +212,26 @@ public class BookingLifecycleService {
                 saga.setCompletedAt(Instant.now());
                 sagaRepository.save(saga);
             } else {
-                allocationStatus = "ALLOCATION_FAILED";
+                allocationStatus = "UNALLOCATED";
                 String reason = alloc != null ? alloc.getFailureReason() : "NO_AVAILABLE_TECHNICIAN";
-                saga.setSagaStatus("COMPENSATING");
                 saga.setCurrentStep("COMPENSATE_TO_REQUESTED");
                 saga.setFailureReason(reason);
-                saga.setCompensationReason("Graceful AP degradation to REQUESTED / ALLOCATION_FAILED");
+                saga.setCompensationReason("No technician available; booking kept REQUESTED / UNALLOCATED");
                 saga.setSagaStatus("FAILED");
                 saga.setUpdatedAt(Instant.now());
                 saga.setCompletedAt(Instant.now());
                 sagaRepository.save(saga);
             }
         } catch (Exception e) {
-            log.warn("gRPC AllocateTechnician degraded for booking {}: {}", bookingId, e.getMessage());
-            allocationStatus = "ALLOCATION_FAILED";
-            saga.setSagaStatus("FAILED");
-            saga.setCurrentStep("COMPENSATE_TO_REQUESTED");
+            log.warn("gRPC AllocateTechnician ambiguous/timeout for booking {}: {}", bookingId, e.getMessage());
+            allocationStatus = "RECONCILIATION_PENDING";
+            reconciliationPending = true;
+            pendingError = e.getMessage();
+            saga.setSagaStatus("RECONCILIATION_PENDING");
+            saga.setCurrentStep("RECONCILE_ALLOCATION");
             saga.setFailureReason(e.getClass().getSimpleName());
-            saga.setCompensationReason("Graceful AP degradation on gRPC timeout/error");
+            saga.setCompensationReason("Ambiguous gRPC timeout/error; queued for reconciliation");
             saga.setUpdatedAt(Instant.now());
-            saga.setCompletedAt(Instant.now());
             sagaRepository.save(saga);
         }
 
@@ -247,6 +259,26 @@ public class BookingLifecycleService {
                 .createdAt(now)
                 .updatedAt(now)
                 .build());
+
+        if (reconciliationPending) {
+            attemptRepository.save(AssignmentAttemptEntity.builder()
+                    .operationId(operationId)
+                    .bookingId(bookingId)
+                    .serviceId(request.serviceId())
+                    .deviceType(finalDeviceType)
+                    .preferredStart(preferredStart)
+                    .preferredEnd(preferredEnd)
+                    .providerId(targetProviderId)
+                    .strictProviderMatch(strictProviderMatch)
+                    .technicianId(null)
+                    .status("RECONCILIATION_PENDING")
+                    .retryCount(0)
+                    .nextAttemptAt(Instant.now().plusSeconds(5))
+                    .lastError(pendingError)
+                    .createdAt(now)
+                    .updatedAt(now)
+                    .build());
+        }
 
         recordHistory(bookingId, null, "REQUESTED", requesterProfileId, "Booking requested (" + bookingType + ")");
         if ("ASSIGNED".equals(status)) {
@@ -420,42 +452,213 @@ public class BookingLifecycleService {
                 .build());
     }
 
-    @Transactional
+    private record ClaimedAssignment(
+            UUID operationId,
+            UUID claimToken,
+            UUID serviceId,
+            String deviceType,
+            Instant preferredStart,
+            Instant preferredEnd,
+            UUID targetProviderId) {}
+
+    // Never add @Transactional here: DB locks must NOT be held across gRPC calls.
     public BookingResponse assignTechnician(ActorContext actor, UUID bookingId, UUID technicianId, String ifMatch) {
-        var booking = bookingRepository.lockById(bookingId)
-                .orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
-        accessPolicy.assertCanAssign(actor, booking);
-        EtagSupport.verifyIfMatch(ifMatch, booking.getVersion());
-        if (!"REQUESTED".equals(booking.getStatus()))
-            throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
-        UUID targetProviderId = booking.getProviderId() != null
-                ? booking.getProviderId()
-                : (actor.mode() == AccessMode.ORGANIZATION ? actor.organizationId() : null);
-        var result = providerGrpcClient.assignTechnician(bookingId, booking.getServiceId(), booking.getDeviceType(),
-                booking.getPreferredStart(), booking.getPreferredEnd(), targetProviderId, technicianId);
-        if (!result.getAllocated() || !technicianId.toString().equals(result.getTechnicianId())
-                || (targetProviderId != null && !targetProviderId.toString().equals(result.getProviderId())))
-            throw new DomainException(CommonErrorCode.CONFLICT);
-        booking.setProviderId(parseUuidOrNull(result.getProviderId()));
-        booking.setAssignedTechnicianId(technicianId);
-        booking.setAssignedTechnicianProfileId(result.getTechnicianProfileId());
-        booking.setAssignedTechnicianName(result.getTechnicianName());
-        booking.setStatus("ASSIGNED");
-        booking.setAllocationStatus("ALLOCATED");
-        booking.setUpdatedAt(Instant.now());
-        var saved = bookingRepository.saveAndFlush(booking);
-        sagaRepository.findByBookingId(bookingId).ifPresent(saga -> {
-            saga.setSagaStatus("ALLOCATED");
-            saga.setCurrentStep("COMPLETED");
-            saga.setAssignedTechnicianId(technicianId);
-            saga.setFailureReason(null);
-            saga.setCompletedAt(Instant.now());
-            saga.setUpdatedAt(Instant.now());
-            sagaRepository.save(saga);
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+
+        ClaimedAssignment claim = tx.execute(status -> {
+            var booking = bookingRepository.findById(bookingId)
+                    .orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
+            accessPolicy.assertCanAssign(actor, booking);
+            EtagSupport.verifyIfMatch(ifMatch, booking.getVersion());
+            if (!"REQUESTED".equals(booking.getStatus()) || !"UNALLOCATED".equals(booking.getAllocationStatus())) {
+                throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
+            }
+            Instant now = Instant.now();
+            int claimed = bookingRepository.tryClaimForAllocation(bookingId, now);
+            if (claimed == 0) {
+                throw new DomainException(CommonErrorCode.CONFLICT);
+            }
+            UUID targetProviderId = booking.getProviderId() != null
+                    ? booking.getProviderId()
+                    : (actor.mode() == AccessMode.ORGANIZATION ? actor.organizationId() : null);
+            UUID operationId = UUID.randomUUID();
+            UUID claimToken = UUID.randomUUID();
+            attemptRepository.saveAndFlush(AssignmentAttemptEntity.builder()
+                    .operationId(operationId)
+                    .bookingId(bookingId)
+                    .serviceId(booking.getServiceId())
+                    .deviceType(booking.getDeviceType())
+                    .preferredStart(booking.getPreferredStart())
+                    .preferredEnd(booking.getPreferredEnd())
+                    .providerId(targetProviderId)
+                    .strictProviderMatch(targetProviderId != null)
+                    .technicianId(technicianId)
+                    .status("ALLOCATING")
+                    .claimToken(claimToken)
+                    .leaseUntil(now.plusSeconds(15))
+                    .retryCount(0)
+                    .createdAt(now)
+                    .updatedAt(now)
+                    .build());
+            return new ClaimedAssignment(
+                    operationId, claimToken, booking.getServiceId(), booking.getDeviceType(),
+                    booking.getPreferredStart(), booking.getPreferredEnd(), targetProviderId);
         });
-        recordHistory(bookingId, "REQUESTED", "ASSIGNED", actor.userId(), "Manually assigned technician");
-        publishDomainEvent("booking.assigned.v1", saved);
-        return toBookingResponse(saved);
+
+        AllocateTechnicianResponse result;
+        try {
+            result = providerGrpcClient.assignTechnician(
+                    claim.operationId(), bookingId, claim.serviceId(), claim.deviceType(),
+                    claim.preferredStart(), claim.preferredEnd(), claim.targetProviderId(), technicianId);
+        } catch (Exception ex) {
+            tx.executeWithoutResult(status -> {
+                Instant now = Instant.now();
+                int fenced = attemptRepository.scheduleRetryWithFence(
+                        claim.operationId(), claim.claimToken(), "ALLOCATING", "RECONCILIATION_PENDING",
+                        now.plusSeconds(5), ex.getMessage(), now);
+                if (fenced == 1) {
+                    bookingRepository.findById(bookingId).ifPresent(b -> {
+                        if ("ALLOCATING".equals(b.getAllocationStatus())) {
+                            b.setAllocationStatus("RECONCILIATION_PENDING");
+                            b.setUpdatedAt(now);
+                            bookingRepository.save(b);
+                        }
+                    });
+                }
+            });
+            throw new DomainException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "ALLOCATION_UNAVAILABLE", "Technician allocation timed out; reconciliation pending.");
+        }
+
+        if (result == null || !result.getAllocated()) {
+            tx.executeWithoutResult(status -> {
+                Instant now = Instant.now();
+                String reason = result != null ? result.getFailureReason() : "ALLOCATION_FAILED";
+                int fenced = attemptRepository.transitionWithFence(
+                        claim.operationId(), claim.claimToken(), "ALLOCATING", "FAILED", reason, now);
+                if (fenced == 1) {
+                    bookingRepository.findById(bookingId).ifPresent(b -> {
+                        if ("ALLOCATING".equals(b.getAllocationStatus())) {
+                            b.setAllocationStatus("UNALLOCATED");
+                            b.setUpdatedAt(now);
+                            bookingRepository.save(b);
+                        }
+                    });
+                }
+            });
+            throw new DomainException(CommonErrorCode.CONFLICT);
+        }
+
+        if (!technicianId.toString().equals(result.getTechnicianId())
+                || (claim.targetProviderId() != null && !claim.targetProviderId().toString().equals(result.getProviderId()))) {
+            compensateAllocation(tx, bookingId, claim.operationId(), claim.claimToken(), "ALLOCATING", "TECHNICIAN_MISMATCH");
+            throw new DomainException(CommonErrorCode.CONFLICT);
+        }
+
+        try {
+            BookingResponse assigned = tx.execute(status -> {
+                Instant now = Instant.now();
+                var booking = bookingRepository.lockById(bookingId)
+                        .orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
+                if (!"REQUESTED".equals(booking.getStatus())) {
+                    int fenced = attemptRepository.transitionKeepingLease(
+                            claim.operationId(), claim.claimToken(), "ALLOCATING", "COMPENSATION_PENDING",
+                            now.plusSeconds(15), "BOOKING_NOT_REQUESTED_" + booking.getStatus(), now);
+                    if (fenced == 1) {
+                        booking.setAllocationStatus("COMPENSATION_PENDING");
+                        booking.setUpdatedAt(now);
+                        bookingRepository.save(booking);
+                    }
+                    return null;
+                }
+                int fenced = attemptRepository.transitionWithFence(
+                        claim.operationId(), claim.claimToken(), "ALLOCATING", "ALLOCATED", null, now);
+                if (fenced == 0) {
+                    throw new DomainException(CommonErrorCode.CONFLICT);
+                }
+                booking.setProviderId(parseUuidOrNull(result.getProviderId()));
+                booking.setAssignedTechnicianId(technicianId);
+                booking.setAssignedTechnicianProfileId(result.getTechnicianProfileId());
+                booking.setAssignedTechnicianName(result.getTechnicianName());
+                booking.setStatus("ASSIGNED");
+                booking.setAllocationStatus("ALLOCATED");
+                booking.setUpdatedAt(now);
+                var saved = bookingRepository.saveAndFlush(booking);
+                sagaRepository.findByBookingId(bookingId).ifPresent(saga -> {
+                    saga.setSagaStatus("ALLOCATED");
+                    saga.setCurrentStep("COMPLETED");
+                    saga.setAssignedTechnicianId(technicianId);
+                    saga.setFailureReason(null);
+                    saga.setCompletedAt(now);
+                    saga.setUpdatedAt(now);
+                    sagaRepository.save(saga);
+                });
+                recordHistory(bookingId, "REQUESTED", "ASSIGNED", actor.userId(), "Manually assigned technician");
+                publishDomainEvent("booking.assigned.v1", saved);
+                return toBookingResponse(saved);
+            });
+            if (assigned == null) {
+                compensateAllocation(tx, bookingId, claim.operationId(), claim.claimToken(),
+                        "COMPENSATION_PENDING", "BOOKING_CANCELLED_DURING_ALLOCATION");
+                throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
+            }
+            return assigned;
+        } catch (DomainException ex) {
+            if (ex.status() == HttpStatus.CONFLICT || ex.errorCode().equals(BookingErrorCode.BOOKING_INVALID_STATE.name())) {
+                throw ex;
+            }
+            compensateAllocation(tx, bookingId, claim.operationId(), claim.claimToken(), "ALLOCATING", ex.getMessage());
+            throw ex;
+        } catch (RuntimeException ex) {
+            compensateAllocation(tx, bookingId, claim.operationId(), claim.claimToken(), "ALLOCATING", ex.getMessage());
+            throw ex;
+        }
+    }
+
+    private void compensateAllocation(
+            TransactionTemplate tx,
+            UUID bookingId,
+            UUID operationId,
+            UUID claimToken,
+            String expectedAttemptStatus,
+            String reason) {
+        try {
+            var rel = providerGrpcClient.releaseBooking(bookingId, operationId, reason);
+            if (rel != null && rel.getReleased()) {
+                tx.executeWithoutResult(status -> {
+                    Instant now = Instant.now();
+                    int fenced = attemptRepository.transitionWithFence(
+                            operationId, claimToken, expectedAttemptStatus, "COMPENSATED", reason, now);
+                    if (fenced == 1) {
+                        bookingRepository.findById(bookingId).ifPresent(b -> {
+                            if (!"CANCELLED".equals(b.getStatus())) {
+                                b.setStatus("REQUESTED");
+                            }
+                            b.setAllocationStatus("UNALLOCATED");
+                            b.setUpdatedAt(now);
+                            bookingRepository.save(b);
+                        });
+                    }
+                });
+                return;
+            }
+        } catch (Exception releaseEx) {
+            log.warn("Immediate ReleaseBooking failed for booking {} op {}: {}", bookingId, operationId, releaseEx.getMessage());
+        }
+        tx.executeWithoutResult(status -> {
+            Instant now = Instant.now();
+            int fenced = attemptRepository.scheduleRetryWithFence(
+                    operationId, claimToken, expectedAttemptStatus, "COMPENSATION_PENDING",
+                    now.plusSeconds(5), reason, now);
+            if (fenced == 1) {
+                bookingRepository.findById(bookingId).ifPresent(b -> {
+                    b.setAllocationStatus("COMPENSATION_PENDING");
+                    b.setUpdatedAt(now);
+                    bookingRepository.save(b);
+                });
+            }
+        });
     }
 
     private void publishDomainEvent(String eventType, BookingEntity booking) {

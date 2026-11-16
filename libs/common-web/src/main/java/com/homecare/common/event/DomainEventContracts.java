@@ -9,6 +9,11 @@ public final class DomainEventContracts {
     }
 
     public static final String EXCHANGE = "homecare.domain.events";
+    public static final String DLX = "homecare.events.dlx";
+
+    public static String dlqName(String queueName) {
+        return queueName + ".dlq";
+    }
 
     public static final String FIELD_EVENT_ID = "eventId";
     public static final String FIELD_EVENT_TYPE = "eventType";

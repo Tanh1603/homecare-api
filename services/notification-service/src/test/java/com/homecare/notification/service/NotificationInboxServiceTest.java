@@ -188,4 +188,14 @@ class NotificationInboxServiceTest {
                         .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject(raceRecipient))))
                 .andExpect(MockMvcResultMatchers.status().isForbidden());
     }
+
+    @Test
+    void rabbitQueuesDeclareDlxAndDlqWithoutLoops(
+            @Autowired org.springframework.amqp.core.Queue notificationInboxQueue,
+            @Autowired org.springframework.amqp.core.Queue notificationInboxDlq) {
+        assertThat(notificationInboxQueue.getArguments())
+                .containsEntry("x-dead-letter-exchange", com.homecare.common.event.DomainEventContracts.DLX)
+                .containsEntry("x-dead-letter-routing-key", DomainEventConsumer.QUEUE + ".dlq");
+        assertThat(notificationInboxDlq.getArguments()).doesNotContainKey("x-dead-letter-exchange");
+    }
 }
