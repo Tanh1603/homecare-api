@@ -1,6 +1,8 @@
 package com.homecare.booking.client;
 
 import com.homecare.common.error.DomainException;
+import com.homecare.common.security.OrganizationMembershipVerifier;
+import com.homecare.common.security.VerifiedMembership;
 import com.homecare.grpc.interceptor.WorkloadAuthClientInterceptor;
 import com.homecare.provider.v1.AllocateTechnicianRequest;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
@@ -23,7 +25,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 @Component
-public class ProviderGrpcClientAdapter {
+public class ProviderGrpcClientAdapter implements OrganizationMembershipVerifier {
 
     private static final Logger log = LoggerFactory.getLogger(ProviderGrpcClientAdapter.class);
     private static final Metadata.Key<String> WORKLOAD_TOKEN_KEY =
@@ -79,9 +81,10 @@ public class ProviderGrpcClientAdapter {
                 .allocateTechnician(builder.build());
     }
 
-    public boolean verifyOrganizationMembership(UUID organizationId, String userId) {
+    @Override
+    public VerifiedMembership verify(UUID organizationId, String userId) {
         if (organizationId == null || userId == null || userId.isBlank()) {
-            return false;
+            return VerifiedMembership.of(organizationId, userId, null, false);
         }
         try {
             VerifyOrganizationMembershipResponse response = withInternalMetadata(providerStub)
@@ -90,15 +93,19 @@ public class ProviderGrpcClientAdapter {
                             .setOrganizationId(organizationId.toString())
                             .setUserId(userId)
                             .build());
-            return response.getValid();
+            return VerifiedMembership.of(organizationId, userId, response.getRole(), response.getValid());
         } catch (StatusRuntimeException e) {
             throw new DomainException(HttpStatus.SERVICE_UNAVAILABLE,
                     "MEMBERSHIP_UNAVAILABLE", "Membership verification unavailable");
         } catch (Exception e) {
             log.warn("Provider org membership gRPC verification failed for org {} user {}: {}",
                     organizationId, userId, e.getMessage());
-            return false;
+            return VerifiedMembership.of(organizationId, userId, null, false);
         }
+    }
+
+    public boolean verifyOrganizationMembership(UUID organizationId, String userId) {
+        return verify(organizationId, userId).active();
     }
 
     public AllocateTechnicianResponse assignTechnician(UUID bookingId, UUID serviceId, String deviceType,

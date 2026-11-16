@@ -1,6 +1,20 @@
 package com.homecare.booking.service;
 
-import lombok.RequiredArgsConstructor;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.homecare.booking.client.HouseholdVerificationClient;
 import com.homecare.booking.client.HouseholdVerificationClient.WarrantyVerificationResult;
@@ -14,6 +28,7 @@ import com.homecare.booking.dto.BookingDtos.VerifyBookingReviewEligibilityRespon
 import com.homecare.booking.dto.BookingDtos.WorkUpdateResponse;
 import com.homecare.booking.entity.BookingAllocationSagaEntity;
 import com.homecare.booking.entity.BookingEntity;
+import com.homecare.booking.entity.BookingStatus;
 import com.homecare.booking.entity.BookingHistoryEntry;
 import com.homecare.booking.entity.BookingOutboxEventEntity;
 import com.homecare.booking.entity.WorkUpdateEntity;
@@ -23,29 +38,21 @@ import com.homecare.booking.repository.BookingHistoryRepository;
 import com.homecare.booking.repository.BookingOutboxEventRepository;
 import com.homecare.booking.repository.BookingRepository;
 import com.homecare.booking.repository.WorkUpdateRepository;
+import com.homecare.booking.security.BookingAccessPolicy;
+import com.homecare.booking.security.BookingReadScope;
+import com.homecare.booking.security.BookingSpecifications;
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.event.DomainEventContracts;
+import com.homecare.common.security.AccessMode;
+import com.homecare.common.security.ActorContext;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.VerifyOfferingResponse;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+
+import lombok.RequiredArgsConstructor;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
@@ -62,6 +69,7 @@ public class BookingLifecycleService {
     private final BookingOutboxEventRepository outboxEventRepository;
     private final ProviderGrpcClientAdapter providerGrpcClient;
     private final HouseholdVerificationClient householdVerificationClient;
+    private final BookingAccessPolicy accessPolicy;
     private final ObjectMapper objectMapper;
 
     @Transactional
@@ -257,39 +265,20 @@ public class BookingLifecycleService {
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<BookingResponse> listBookingsPage(String actorProfileId, boolean isGlobalAdmin,
-            boolean isOrgOperator, boolean isTechnician, UUID orgScopeId, int page, int size, String status, String scope) {
-        if (page < 1 || size < 1 || size > 100) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
-        if (status != null && !Set.of("REQUESTED", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "CANCELLED").contains(status)) {
+    public PageResponse<BookingResponse> listBookingsPage(
+            ActorContext actor, int page, int size, String status, String scope) {
+        if (page < 1 || size < 1 || size > 100)
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
-        }
-        String normalizedScope = scope != null && !scope.isBlank() ? scope.trim().toUpperCase() : null;
-        if (normalizedScope != null && !Set.of("CUSTOMER", "TECHNICIAN").contains(normalizedScope)) {
-            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
-        }
-        String requester = null;
-        String technician = null;
-        UUID provider = null;
-        if (isGlobalAdmin && normalizedScope == null) {
-            provider = orgScopeId;
-        } else if (isOrgOperator && orgScopeId != null) {
-            requireOrgMembership(orgScopeId, actorProfileId);
-            provider = orgScopeId;
-        } else if ("CUSTOMER".equals(normalizedScope)) {
-            requester = actorProfileId;
-        } else if ("TECHNICIAN".equals(normalizedScope)) {
-            if (!isTechnician) {
-                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        if (status != null) {
+            try {
+                BookingStatus.valueOf(status);
+            } catch (IllegalArgumentException ex) {
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
             }
-            technician = actorProfileId;
-        } else if (isTechnician) {
-            requester = actorProfileId;
-            technician = actorProfileId;
-        } else {
-            requester = actorProfileId;
         }
+        BookingReadScope readScope = accessPolicy.readScope(actor, scope);
         Pageable pageable = PageRequest.of(page - 1, size, Sort.by("createdAt").descending().and(Sort.by("id")));
-        var result = bookingRepository.search(requester, technician, provider, status, pageable);
+        var result = bookingRepository.findAll(BookingSpecifications.withScope(readScope, status), pageable);
         List<BookingEntity> content = result.getContent();
         if (content.isEmpty()) {
             return PageResponse.of(List.of(), page, size, result.getTotalElements());
@@ -308,81 +297,22 @@ public class BookingLifecycleService {
     }
 
     @Transactional(readOnly = true)
-    public BookingResponse getBooking(String actorProfileId, boolean isTechOrAdmin, UUID bookingId) {
-        return getBooking(actorProfileId, isTechOrAdmin, bookingId, null);
-    }
-
-    @Transactional(readOnly = true)
-    public BookingResponse getBooking(String actorProfileId, boolean isTechOrAdmin, UUID bookingId, UUID orgScopeId) {
-        return getBooking(actorProfileId, false, isTechOrAdmin && orgScopeId != null, isTechOrAdmin && orgScopeId == null, bookingId, orgScopeId);
-    }
-
-    @Transactional(readOnly = true)
-    public BookingResponse getBooking(
-            String actorProfileId,
-            boolean isGlobalAdmin,
-            boolean isOrgOperator,
-            boolean isTechnician,
-            UUID bookingId,
-            UUID orgScopeId) {
+    public BookingResponse getBooking(ActorContext actor, UUID bookingId) {
         BookingEntity booking = requireBooking(bookingId);
-        if (isGlobalAdmin) {
-            return toBookingResponse(booking);
+        if (!accessPolicy.isVisible(actor, booking)) {
+            throw new DomainException(BookingErrorCode.BOOKING_NOT_FOUND);
         }
-        if (orgScopeId == null && booking.getRequesterProfileId().equals(actorProfileId)) {
-            return toBookingResponse(booking);
-        }
-        if (isOrgOperator && orgScopeId != null) {
-            requireOrgMembership(orgScopeId, actorProfileId);
-            if (!orgScopeId.equals(booking.getProviderId())) {
-                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-            }
-            return toBookingResponse(booking);
-        }
-        if (isTechnician) {
-            boolean matchesOrg = false;
-            if (orgScopeId != null) {
-                requireOrgMembership(orgScopeId, actorProfileId);
-                matchesOrg = orgScopeId.equals(booking.getProviderId());
-            }
-            boolean matchesTech = actorProfileId.equals(booking.getAssignedTechnicianProfileId());
-            if (matchesOrg || matchesTech) {
-                return toBookingResponse(booking);
-            }
-        }
-        throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        return toBookingResponse(booking);
     }
 
     @Transactional
     public BookingResponse cancelBooking(
-            String actorProfileId,
-            boolean isAdmin,
+            ActorContext actor,
             UUID bookingId,
             String ifMatchHeader,
             CancelBookingRequest request) {
-        return cancelBooking(actorProfileId, isAdmin, bookingId, ifMatchHeader, request, null);
-    }
-
-    @Transactional
-    public BookingResponse cancelBooking(
-            String actorProfileId,
-            boolean isAdmin,
-            UUID bookingId,
-            String ifMatchHeader,
-            CancelBookingRequest request,
-            UUID orgScopeId) {
         BookingEntity booking = requireBooking(bookingId);
-        if (orgScopeId != null) {
-            if (!isAdmin) {
-                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-            }
-            requireOrgMembership(orgScopeId, actorProfileId);
-            if (!orgScopeId.equals(booking.getProviderId())) {
-                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-            }
-        } else if (!isAdmin && !booking.getRequesterProfileId().equals(actorProfileId)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
+        accessPolicy.assertCanCancel(actor, booking);
         EtagSupport.verifyIfMatch(ifMatchHeader, booking.getVersion());
         if ("IN_PROGRESS".equals(booking.getStatus())
                 || "COMPLETED".equals(booking.getStatus())
@@ -397,7 +327,7 @@ public class BookingLifecycleService {
                 bookingId,
                 previous,
                 "CANCELLED",
-                actorProfileId,
+                actor.userId(),
                 request != null && request.reason() != null ? request.reason() : "Customer cancelled");
         publishDomainEvent("booking.cancelled.v1", saved);
         return toBookingResponse(saved);
@@ -405,32 +335,12 @@ public class BookingLifecycleService {
 
     @Transactional
     public BookingResponse appendWorkUpdate(
-            String technicianProfileId,
-            UUID bookingId,
-            String ifMatchHeader,
-            CreateWorkUpdateRequest request) {
-        return appendWorkUpdate(technicianProfileId, false, null, bookingId, ifMatchHeader, request);
-    }
-
-    @Transactional
-    public BookingResponse appendWorkUpdate(
-            String actorProfileId,
-            boolean isOrgOrAdmin,
-            UUID orgScopeId,
+            ActorContext actor,
             UUID bookingId,
             String ifMatchHeader,
             CreateWorkUpdateRequest request) {
         BookingEntity booking = requireBooking(bookingId);
-        if (isOrgOrAdmin) {
-            if (orgScopeId != null) {
-                requireOrgMembership(orgScopeId, actorProfileId);
-                if (!orgScopeId.equals(booking.getProviderId())) {
-                    throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-                }
-            }
-        } else if (!actorProfileId.equals(booking.getAssignedTechnicianProfileId())) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
+        accessPolicy.assertCanAppendWorkUpdate(actor, booking);
         EtagSupport.verifyIfMatch(ifMatchHeader, booking.getVersion());
         String kind = request.kind().trim().toUpperCase();
         String previous = booking.getStatus();
@@ -441,7 +351,7 @@ public class BookingLifecycleService {
                     throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
                 }
                 booking.setStatus("IN_PROGRESS");
-                recordHistory(bookingId, previous, "IN_PROGRESS", actorProfileId,
+                recordHistory(bookingId, previous, "IN_PROGRESS", actor.userId(),
                         "[" + kind + "] " + (request.note() != null ? request.note() : ""));
             }
             case "NOTE" -> {
@@ -454,7 +364,7 @@ public class BookingLifecycleService {
                     throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
                 }
                 booking.setStatus("COMPLETED");
-                recordHistory(bookingId, previous, "COMPLETED", actorProfileId, request.note());
+                recordHistory(bookingId, previous, "COMPLETED", actor.userId(), request.note());
             }
             default -> throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         }
@@ -462,7 +372,7 @@ public class BookingLifecycleService {
         workUpdateRepository.save(WorkUpdateEntity.builder()
                 .id(UUID.randomUUID())
                 .bookingId(bookingId)
-                .technicianProfileId(actorProfileId)
+                .technicianProfileId(actor.userId())
                 .kind(kind)
                 .note(request.note())
                 .createdAt(Instant.now())
@@ -498,13 +408,6 @@ public class BookingLifecycleService {
                         "NOT_ELIGIBLE"));
     }
 
-    private void requireOrgMembership(UUID orgScopeId, String actorProfileId) {
-        if (orgScopeId == null || actorProfileId == null
-                || !providerGrpcClient.verifyOrganizationMembership(orgScopeId, actorProfileId)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
-    }
-
     private void recordHistory(UUID bookingId, String from, String to, String actorId, String reason) {
         historyRepository.save(BookingHistoryEntry.builder()
                 .id(UUID.randomUUID())
@@ -518,32 +421,39 @@ public class BookingLifecycleService {
     }
 
     @Transactional
-    public BookingResponse assignTechnician(UUID bookingId, UUID technicianId, String actor, boolean admin,
-            UUID organizationId, String ifMatch) {
-        if (!admin) {
-            requireOrgMembership(organizationId, actor);
-        }
-        var booking = bookingRepository.lockById(bookingId).orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
-        if (!admin && booking.getProviderId() != null && !organizationId.equals(booking.getProviderId())) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
+    public BookingResponse assignTechnician(ActorContext actor, UUID bookingId, UUID technicianId, String ifMatch) {
+        var booking = bookingRepository.lockById(bookingId)
+                .orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
+        accessPolicy.assertCanAssign(actor, booking);
         EtagSupport.verifyIfMatch(ifMatch, booking.getVersion());
-        if (!"REQUESTED".equals(booking.getStatus())) throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
-        UUID targetProviderId = booking.getProviderId() != null ? booking.getProviderId() : organizationId;
+        if (!"REQUESTED".equals(booking.getStatus()))
+            throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
+        UUID targetProviderId = booking.getProviderId() != null
+                ? booking.getProviderId()
+                : (actor.mode() == AccessMode.ORGANIZATION ? actor.organizationId() : null);
         var result = providerGrpcClient.assignTechnician(bookingId, booking.getServiceId(), booking.getDeviceType(),
                 booking.getPreferredStart(), booking.getPreferredEnd(), targetProviderId, technicianId);
         if (!result.getAllocated() || !technicianId.toString().equals(result.getTechnicianId())
-                || (targetProviderId != null && !targetProviderId.toString().equals(result.getProviderId()))) throw new DomainException(CommonErrorCode.CONFLICT);
+                || (targetProviderId != null && !targetProviderId.toString().equals(result.getProviderId())))
+            throw new DomainException(CommonErrorCode.CONFLICT);
         booking.setProviderId(parseUuidOrNull(result.getProviderId()));
-        booking.setAssignedTechnicianId(technicianId); booking.setAssignedTechnicianProfileId(result.getTechnicianProfileId());
-        booking.setAssignedTechnicianName(result.getTechnicianName()); booking.setStatus("ASSIGNED");
-        booking.setAllocationStatus("ALLOCATED"); booking.setUpdatedAt(Instant.now());
+        booking.setAssignedTechnicianId(technicianId);
+        booking.setAssignedTechnicianProfileId(result.getTechnicianProfileId());
+        booking.setAssignedTechnicianName(result.getTechnicianName());
+        booking.setStatus("ASSIGNED");
+        booking.setAllocationStatus("ALLOCATED");
+        booking.setUpdatedAt(Instant.now());
         var saved = bookingRepository.saveAndFlush(booking);
         sagaRepository.findByBookingId(bookingId).ifPresent(saga -> {
-            saga.setSagaStatus("ALLOCATED"); saga.setCurrentStep("COMPLETED"); saga.setAssignedTechnicianId(technicianId);
-            saga.setFailureReason(null); saga.setCompletedAt(Instant.now()); saga.setUpdatedAt(Instant.now()); sagaRepository.save(saga);
+            saga.setSagaStatus("ALLOCATED");
+            saga.setCurrentStep("COMPLETED");
+            saga.setAssignedTechnicianId(technicianId);
+            saga.setFailureReason(null);
+            saga.setCompletedAt(Instant.now());
+            saga.setUpdatedAt(Instant.now());
+            sagaRepository.save(saga);
         });
-        recordHistory(bookingId, "REQUESTED", "ASSIGNED", actor, "Manually assigned technician");
+        recordHistory(bookingId, "REQUESTED", "ASSIGNED", actor.userId(), "Manually assigned technician");
         publishDomainEvent("booking.assigned.v1", saved);
         return toBookingResponse(saved);
     }

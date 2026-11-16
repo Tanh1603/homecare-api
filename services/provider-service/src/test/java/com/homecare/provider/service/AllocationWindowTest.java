@@ -4,6 +4,8 @@ import static java.time.temporal.ChronoUnit.DAYS;
 import static java.time.temporal.ChronoUnit.SECONDS;
 import static org.assertj.core.api.Assertions.*;
 
+import com.homecare.common.security.AccessMode;
+import com.homecare.common.security.ActorContext;
 import com.homecare.provider.dto.ProviderDtos.CreateScheduleWindowRequest;
 import com.homecare.provider.repository.ProviderRepository;
 import com.homecare.provider.repository.ScheduleWindowRepository;
@@ -80,8 +82,9 @@ class AllocationWindowTest {
 
     @Test void releasedIntervalCanBeBookedTogetherWithItsAdjacentFreeTime() {
         Instant start = Instant.now().truncatedTo(SECONDS).plus(45, DAYS);
-        service.createScheduleWindow("me", "demo-technician",
-                new CreateScheduleWindowRequest(start, start.plusSeconds(3600)), false);
+        service.createScheduleWindow("me",
+                new ActorContext("demo-technician", AccessMode.PERSONAL, null, java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), java.util.Set.of()),
+                new CreateScheduleWindowRequest(start, start.plusSeconds(3600)));
         UUID booking = UUID.randomUUID();
         var allocated = service.allocateTechnicianForBooking("merge-" + booking, booking,
                 ProviderDataInitializer.SERVICE_AC_CLEAN_ID, "AC", start, start.plusSeconds(1800),

@@ -90,7 +90,9 @@ public class VnpaySandboxStrategy {
         });
         String canonical = buildCanonicalQuery(sorted);
         String expected = hmacSha512(hashSecret, canonical);
-        return expected.equalsIgnoreCase(providedHash.trim());
+        return java.security.MessageDigest.isEqual(
+                expected.toLowerCase(java.util.Locale.ROOT).getBytes(StandardCharsets.UTF_8),
+                providedHash.trim().toLowerCase(java.util.Locale.ROOT).getBytes(StandardCharsets.UTF_8));
     }
 
     public String signParamsForTest(Map<String, String> params) {

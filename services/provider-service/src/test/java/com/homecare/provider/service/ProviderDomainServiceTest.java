@@ -13,6 +13,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 
 import com.homecare.common.error.DomainException;
+import com.homecare.common.security.AccessMode;
+import com.homecare.common.security.ActorContext;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.provider.dto.ProviderDtos.CreateScheduleWindowRequest;
 import com.homecare.provider.dto.ProviderDtos.ScheduleWindowResponse;
@@ -57,9 +59,8 @@ class ProviderDomainServiceTest {
 
         assertThatThrownBy(() -> service.createScheduleWindow(
                 "me",
-                "demo-technician",
-                new CreateScheduleWindowRequest(start, end),
-                false))
+                personalActor("demo-technician"),
+                new CreateScheduleWindowRequest(start, end)))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("SCHEDULE_OVERLAP");
@@ -120,7 +121,7 @@ class ProviderDomainServiceTest {
         Instant e1 = s1.plus(2, ChronoUnit.HOURS);
 
         assertThatThrownBy(() -> service.createScheduleWindow(
-                "me", "unknown-user-sub", new CreateScheduleWindowRequest(s1, e1), false))
+                "me", personalActor("unknown-user-sub"), new CreateScheduleWindowRequest(s1, e1)))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("TECHNICIAN_NOT_FOUND");
@@ -129,9 +130,8 @@ class ProviderDomainServiceTest {
         Instant e2 = s2.plus(2, ChronoUnit.HOURS);
         assertThatThrownBy(() -> service.createScheduleWindow(
                 ProviderDataInitializer.DEMO_TECH_ID.toString(),
-                "stranger-tech-sub",
-                new CreateScheduleWindowRequest(s2, e2),
-                false))
+                personalActor("stranger-tech-sub"),
+                new CreateScheduleWindowRequest(s2, e2)))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("RESOURCE_FORBIDDEN");
@@ -139,28 +139,31 @@ class ProviderDomainServiceTest {
         Instant s3 = Instant.now().plus(42, ChronoUnit.DAYS);
         Instant e3 = s3.plus(2, ChronoUnit.HOURS);
         ScheduleWindowResponse win = service.createScheduleWindow(
-                "me", "demo-technician", new CreateScheduleWindowRequest(s3, e3), false);
+                "me", personalActor("demo-technician"), new CreateScheduleWindowRequest(s3, e3));
 
         assertThatThrownBy(() -> service.updateScheduleWindow(
                 "me",
-                "demo-technician",
+                personalActor("demo-technician"),
                 win.id(),
                 EtagSupport.format(win.version()),
-                new UpdateScheduleWindowRequest(win.endsAt(), win.startsAt(), null),
-                false))
+                new UpdateScheduleWindowRequest(win.endsAt(), win.startsAt(), null)))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("VALIDATION_FAILED");
 
         assertThatThrownBy(() -> service.updateScheduleWindow(
                 "me",
-                "demo-technician",
+                personalActor("demo-technician"),
                 win.id(),
                 EtagSupport.format(win.version()),
-                new UpdateScheduleWindowRequest(null, null, "HACKED_STATUS"),
-                false))
+                new UpdateScheduleWindowRequest(null, null, "HACKED_STATUS")))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("VALIDATION_FAILED");
+    }
+
+    private static ActorContext personalActor(String userId) {
+        return new ActorContext(userId, AccessMode.PERSONAL, null,
+                java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), java.util.Set.of());
     }
 }

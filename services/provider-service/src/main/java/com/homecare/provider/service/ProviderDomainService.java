@@ -5,8 +5,11 @@ import lombok.RequiredArgsConstructor;
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
+import com.homecare.common.security.AccessMode;
+import com.homecare.common.security.ActorContext;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
+import com.homecare.provider.security.ProviderAccessPolicy;
 import com.homecare.provider.dto.ProviderDtos.CreateScheduleWindowRequest;
 import com.homecare.provider.dto.ProviderDtos.OfferingInput;
 import com.homecare.provider.dto.ProviderDtos.ProviderInput;
@@ -18,6 +21,7 @@ import com.homecare.provider.dto.ProviderDtos.TechnicianResponse;
 import com.homecare.provider.dto.ProviderDtos.UpdateScheduleWindowRequest;
 import com.homecare.provider.entity.ProviderEntity;
 import com.homecare.provider.entity.ScheduleWindow;
+import com.homecare.provider.entity.ScheduleWindowStatus;
 import com.homecare.provider.entity.ServiceOffering;
 import com.homecare.provider.entity.Technician;
 import com.homecare.provider.entity.TechnicianAllocation;
@@ -85,21 +89,15 @@ public class ProviderDomainService {
         return PageRequest.of(page - 1, size, Sort.by("createdAt").descending().and(Sort.by("id")));
     }
 
-    public void requireProviderManager(UUID providerId, UUID organizationId, String userId, boolean admin) {
+    public void requireProviderManager(UUID providerId, ActorContext actor) {
         ProviderEntity provider = providerRepository.findById(providerId)
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.PROVIDER_NOT_FOUND));
-        if (admin) return;
-        if (organizationId == null || !organizationId.equals(provider.getOrganizationId())) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        var org = organizationRepository.findById(organizationId).filter(o -> o.getStatus() == OrganizationStatus.APPROVED);
-        var member = organizationMemberRepository.findByOrganizationIdAndUserId(organizationId, userId)
-                .filter(m -> "ACTIVE".equals(m.getStatus()))
-                .filter(m -> m.getRole() == OrgRole.ORG_OWNER || m.getRole() == OrgRole.ORG_ADMIN);
-        if (org.isEmpty() || member.isEmpty()) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        accessPolicy.assertCanManageProvider(actor, provider);
     }
 
     @Transactional
-    public ProviderResponse updateProvider(UUID id, ProviderInput input, UUID orgId, String user, boolean admin) {
-        requireProviderManager(id, orgId, user, admin);
+    public ProviderResponse updateProvider(UUID id, ProviderInput input, ActorContext actor) {
+        requireProviderManager(id, actor);
         var p = providerRepository.findById(id).orElseThrow();
         if (input.name() != null) p.setName(input.name());
         if (input.description() != null) p.setDescription(input.description());
@@ -109,11 +107,11 @@ public class ProviderDomainService {
     }
 
     @Transactional
-    public ServiceOfferingResponse saveOffering(UUID id, OfferingInput input, UUID orgId, String user, boolean admin) {
+    public ServiceOfferingResponse saveOffering(UUID id, OfferingInput input, ActorContext actor) {
         var item = id == null ? new ServiceOffering() : offeringRepository.findById(id).orElseThrow(() -> new DomainException(ProviderErrorCode.SERVICE_NOT_FOUND));
         UUID provider = id == null ? input.providerId() : item.getProviderId();
         if (provider == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
-        requireProviderManager(provider, orgId, user, admin);
+        requireProviderManager(provider, actor);
         if (input.providerId() != null && !provider.equals(input.providerId())) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         if (id == null) {
             if (input.name() == null || input.category() == null || input.basePrice() == null || input.estimatedDurationMinutes() == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
@@ -129,18 +127,18 @@ public class ProviderDomainService {
     }
 
     @Transactional
-    public void deleteOffering(UUID id, UUID orgId, String user, boolean admin) {
+    public void deleteOffering(UUID id, ActorContext actor) {
         var item = offeringRepository.findById(id).orElseThrow(() -> new DomainException(ProviderErrorCode.SERVICE_NOT_FOUND));
-        requireProviderManager(item.getProviderId(), orgId, user, admin);
+        requireProviderManager(item.getProviderId(), actor);
         item.setActive(false); offeringRepository.save(item);
     }
 
     @Transactional
-    public TechnicianResponse saveTechnician(UUID id, TechnicianInput input, UUID orgId, String user, boolean admin) {
+    public TechnicianResponse saveTechnician(UUID id, TechnicianInput input, ActorContext actor) {
         var item = id == null ? new Technician() : technicianRepository.findById(id).orElseThrow(() -> new DomainException(ProviderErrorCode.TECHNICIAN_NOT_FOUND));
         UUID provider = id == null ? input.providerId() : item.getProviderId();
         if (provider == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
-        requireProviderManager(provider, orgId, user, admin);
+        requireProviderManager(provider, actor);
         if (input.providerId() != null && !provider.equals(input.providerId())) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         if (id == null) {
             if (input.profileId() == null || input.fullName() == null || input.specialties() == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
@@ -159,9 +157,9 @@ public class ProviderDomainService {
     }
 
     @Transactional
-    public void deleteTechnician(UUID id, UUID orgId, String user, boolean admin) {
+    public void deleteTechnician(UUID id, ActorContext actor) {
         var item = technicianRepository.findById(id).orElseThrow(() -> new DomainException(ProviderErrorCode.TECHNICIAN_NOT_FOUND));
-        requireProviderManager(item.getProviderId(), orgId, user, admin);
+        requireProviderManager(item.getProviderId(), actor);
         if (item.getActiveAllocations() > 0) throw new DomainException(ProviderErrorCode.SCHEDULE_ALLOCATION_CONFLICT);
         item.setStatus("INACTIVE"); technicianRepository.save(item);
     }
@@ -170,17 +168,15 @@ public class ProviderDomainService {
     public TechnicianResponse me(String user) { return toTechnicianResponse(resolveTechnicianOrDemo("me", user)); }
 
     @Transactional
-    public void deleteSchedule(String technicianId, UUID windowId, String user, UUID orgId, boolean admin, String ifMatch) {
-        var tech = resolveTechnicianOrDemo(technicianId, user);
-        if (!user.equals(tech.getProfileId())) requireProviderManager(tech.getProviderId(), orgId, user, admin);
+    public void deleteSchedule(String technicianId, UUID windowId, ActorContext actor, String ifMatch) {
+        var tech = resolveTechnicianOrDemo(technicianId, actor.userId());
+        accessPolicy.assertCanManageTechnicianSchedule(actor, tech);
         var window = scheduleWindowRepository.findById(windowId).orElseThrow(() -> new DomainException(ProviderErrorCode.SCHEDULE_WINDOW_NOT_FOUND));
         if (!window.getTechnicianId().equals(tech.getId())) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         EtagSupport.verifyIfMatch(ifMatch, window.getVersion());
         if (window.getAllocatedBookingId() != null) throw new DomainException(ProviderErrorCode.SCHEDULE_ALLOCATION_CONFLICT);
         scheduleWindowRepository.delete(window);
     }
-
-    private static final Set<String> VALID_SCHEDULE_STATUSES = Set.of("AVAILABLE", "UNAVAILABLE", "BLOCKED", "BOOKED");
 
     private final ProviderRepository providerRepository;
     private final ServiceOfferingRepository offeringRepository;
@@ -189,6 +185,7 @@ public class ProviderDomainService {
     private final TechnicianAllocationRepository allocationRepository;
     private final OrganizationRepository organizationRepository;
     private final OrganizationMemberRepository organizationMemberRepository;
+    private final ProviderAccessPolicy accessPolicy;
     private final PlatformTransactionManager transactionManager;
 
     @Transactional(readOnly = true)
@@ -256,45 +253,20 @@ public class ProviderDomainService {
                 .map(p -> userId.equals(p.getOwnerProfileId()))
                 .orElse(false);
         if (isProviderOwner) {
-            return Optional.of("PROVIDER_OWNER");
+            return Optional.of(OrgRole.ORG_OWNER.name());
         }
         boolean isActiveTech = technicianRepository.findByProfileId(userId)
                 .filter(t -> EntityStatus.ACTIVE.name().equalsIgnoreCase(t.getStatus()))
                 .map(t -> orgId.equals(t.getProviderId()))
                 .orElse(false)
                 && isProviderActive(orgId);
-        return isActiveTech ? Optional.of("TECHNICIAN") : Optional.empty();
-    }
-
-    private boolean hasOrgRole(UUID providerId, String jwtSubject, Set<String> allowedRoles) {
-        return jwtSubject != null && !jwtSubject.isBlank()
-                && resolveMembershipRole(providerId, jwtSubject).filter(allowedRoles::contains).isPresent();
-    }
-
-    private void verifyCanManageTechnicianSchedule(Technician tech, String jwtSubject, boolean isGlobalAdmin) {
-        if (jwtSubject == null || jwtSubject.isBlank()) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
-        if (isGlobalAdmin || jwtSubject.equals(tech.getProfileId())) {
-            return;
-        }
-        boolean isOrgManager = hasOrgRole(
-                tech.getProviderId(),
-                jwtSubject,
-                Set.of(OrgRole.ORG_OWNER.name(), OrgRole.ORG_ADMIN.name(), "PROVIDER_OWNER"));
-        if (!isOrgManager) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
+        return isActiveTech ? Optional.of(OrgRole.ORG_TECHNICIAN.name()) : Optional.empty();
     }
 
     @Transactional(readOnly = true)
-    public List<ScheduleWindowResponse> listScheduleWindows(
-            String technicianIdOrMe, String jwtSubject, boolean isGlobalAdmin) {
-        Technician tech = resolveTechnicianOrDemo(technicianIdOrMe, jwtSubject);
-        boolean includeBookingId = isGlobalAdmin
-                || (jwtSubject != null && !jwtSubject.isBlank() && (jwtSubject.equals(tech.getProfileId())
-                || hasOrgRole(tech.getProviderId(), jwtSubject, Set.of(
-                        OrgRole.ORG_OWNER.name(), OrgRole.ORG_ADMIN.name(), OrgRole.ORG_STAFF.name(), "PROVIDER_OWNER"))));
+    public List<ScheduleWindowResponse> listScheduleWindows(String technicianIdOrMe, ActorContext actor) {
+        Technician tech = resolveTechnicianOrDemo(technicianIdOrMe, actor != null ? actor.userId() : null);
+        boolean includeBookingId = accessPolicy.canViewScheduleBookingIds(actor, tech);
         return scheduleWindowRepository.findByTechnicianIdOrderByStartsAtAsc(tech.getId())
                 .stream()
                 .map(w -> toScheduleResponse(w, includeBookingId))
@@ -304,14 +276,14 @@ public class ProviderDomainService {
     @Transactional
     public ScheduleWindowResponse createScheduleWindow(
             String technicianIdOrMe,
-            String jwtSubject,
-            CreateScheduleWindowRequest request,
-            boolean isGlobalAdmin) {
-        Technician tech = resolveTechnicianOrDemo(technicianIdOrMe, jwtSubject);
-        verifyCanManageTechnicianSchedule(tech, jwtSubject, isGlobalAdmin);
+            ActorContext actor,
+            CreateScheduleWindowRequest request) {
+        Technician tech = resolveTechnicianOrDemo(technicianIdOrMe, actor.userId());
+        accessPolicy.assertCanManageTechnicianSchedule(actor, tech);
         if (!request.endsAt().isAfter(request.startsAt())) {
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "endsAt must be after startsAt.");
         }
+        technicianRepository.lockById(tech.getId());
         List<ScheduleWindow> overlaps = scheduleWindowRepository.findOverlapping(
                 tech.getId(), request.startsAt(), request.endsAt());
         if (!overlaps.isEmpty()) {
@@ -322,7 +294,7 @@ public class ProviderDomainService {
                 .technicianId(tech.getId())
                 .startsAt(request.startsAt())
                 .endsAt(request.endsAt())
-                .status("AVAILABLE")
+                .status(ScheduleWindowStatus.AVAILABLE.name())
                 .createdAt(Instant.now())
                 .build());
         return toScheduleResponse(saved);
@@ -331,13 +303,13 @@ public class ProviderDomainService {
     @Transactional
     public ScheduleWindowResponse updateScheduleWindow(
             String technicianIdOrMe,
-            String jwtSubject,
+            ActorContext actor,
             UUID windowId,
             String ifMatchHeader,
-            UpdateScheduleWindowRequest request,
-            boolean isGlobalAdmin) {
-        Technician tech = resolveTechnicianOrDemo(technicianIdOrMe, jwtSubject);
-        verifyCanManageTechnicianSchedule(tech, jwtSubject, isGlobalAdmin);
+            UpdateScheduleWindowRequest request) {
+        Technician tech = resolveTechnicianOrDemo(technicianIdOrMe, actor.userId());
+        accessPolicy.assertCanManageTechnicianSchedule(actor, tech);
+        technicianRepository.lockById(tech.getId());
         ScheduleWindow window = scheduleWindowRepository.findById(windowId)
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.SCHEDULE_WINDOW_NOT_FOUND));
         if (!window.getTechnicianId().equals(tech.getId())) {
@@ -364,7 +336,9 @@ public class ProviderDomainService {
         }
         if (request.status() != null && !request.status().isBlank()) {
             String normalizedStatus = request.status().trim().toUpperCase();
-            if (!VALID_SCHEDULE_STATUSES.contains(normalizedStatus)) {
+            try {
+                ScheduleWindowStatus.valueOf(normalizedStatus);
+            } catch (IllegalArgumentException ex) {
                 throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Invalid schedule status.");
             }
             window.setStatus(normalizedStatus);

@@ -72,7 +72,7 @@ class NotificationInboxServiceTest {
     private DeviceRegistrationRepository deviceRegistrationRepository;
 
     @Test
-    void deduplicatesDomainEventsPersistsProcessedEventsAndEnforcesIdempotentMarkAsReadAndTokenOwnershipTransfer() {
+    void deduplicatesDomainEventsPersistsProcessedEventsAndEnforcesIdempotentMarkAsReadAndTokenOwnershipTransfer() throws Exception {
         String eventJson = """
                 {"eventId":"evt-1001","eventType":"booking.assigned.v1","data":{"requesterProfileId":"cust-1","technicianProfileId":"tech-1","serviceName":"Vệ sinh Máy lạnh"}}
                 """;
@@ -171,5 +171,21 @@ class NotificationInboxServiceTest {
                 .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
         assertThat(processedEventRepository.findByConsumerNameAndEventId(
                 NotificationInboxService.CONSUMER_NAME + ":" + raceRecipient, rollbackEventId)).isEmpty();
+
+        // Cross-recipient markAsRead is forbidden
+        var recipientPage = inboxService.inboxPage(raceRecipient, 1, 20);
+        UUID notificationId = recipientPage.items().getFirst().id();
+        assertThatThrownBy(() -> inboxService.markAsRead("other-recipient", notificationId))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
+
+        // Personal inbox rejects X-Organization-Id with 403
+        var mvc = MockMvcBuilders.webAppContextSetup(webContext)
+                .apply(SecurityMockMvcConfigurers.springSecurity()).build();
+        mvc.perform(MockMvcRequestBuilders.get("/api/v1/notifications")
+                        .header("X-Organization-Id", UUID.randomUUID())
+                        .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject(raceRecipient))))
+                .andExpect(MockMvcResultMatchers.status().isForbidden());
     }
 }

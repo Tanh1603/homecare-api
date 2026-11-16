@@ -10,12 +10,13 @@ import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 
 import com.homecare.commerce.entity.OrderEntity;
 
-public interface OrderRepository extends JpaRepository<OrderEntity, UUID> {
+public interface OrderRepository extends JpaRepository<OrderEntity, UUID>, JpaSpecificationExecutor<OrderEntity> {
     @Query("""
             select o from OrderEntity o where (:buyer is null or o.buyerProfileId = :buyer)
             and (:merchant is null or o.merchantId = :merchant)

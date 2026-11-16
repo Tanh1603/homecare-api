@@ -11,7 +11,12 @@ import com.homecare.booking.dto.BookingDtos.CreateBookingRequest;
 import com.homecare.booking.entity.BookingEntity;
 import com.homecare.booking.repository.BookingOutboxEventRepository;
 import com.homecare.booking.repository.BookingRepository;
+import com.homecare.common.security.AccessMode;
+import com.homecare.common.security.ActorContext;
+import com.homecare.common.security.RbacConstants;
+import com.homecare.common.security.VerifiedMembership;
 import com.homecare.common.web.EtagSupport;
+import java.util.Set;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.VerifyOfferingResponse;
 import java.time.Instant;
@@ -89,7 +94,10 @@ class BookingPortalTest {
 
     @Test void cancellationWithoutAssignmentDoesNotNotifyDemoTechnician() {
         var booking = save("unassigned-customer", "REQUESTED");
-        service.cancelBooking("unassigned-customer", false, booking.getId(),
+        service.cancelBooking(
+                new ActorContext("unassigned-customer", AccessMode.PERSONAL, null,
+                        Set.of(RbacConstants.ROLE_CUSTOMER), Set.of(), Set.of(), Set.of()),
+                booking.getId(),
                 EtagSupport.format(booking.getVersion()), null);
         Assertions.assertThat(outbox.findAll())
                 .filteredOn(e -> e.getAggregateId().equals(booking.getId()))
@@ -145,7 +153,8 @@ class BookingPortalTest {
                 .address("Test address").status("REQUESTED").allocationStatus("ALLOCATION_FAILED")
                 .createdAt(now).updatedAt(now).build());
         UUID org = UUID.randomUUID(), technician = UUID.randomUUID();
-        Mockito.when(provider.verifyOrganizationMembership(org, "org-operator")).thenReturn(true);
+        Mockito.when(provider.verify(org, "org-operator"))
+                .thenReturn(VerifiedMembership.of(org, "org-operator", "ORG_OWNER", true));
         Mockito.when(provider.assignTechnician(ArgumentMatchers.eq(booking.getId()), ArgumentMatchers.any(), ArgumentMatchers.any(),
                 ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.eq(org), ArgumentMatchers.eq(technician)))
                 .thenReturn(AllocateTechnicianResponse.newBuilder().setAllocated(true)
@@ -176,7 +185,7 @@ class BookingPortalTest {
         mvc.perform(get("/api/v1/bookings/" + own.getId()).with(orgAuth))
                 .andExpect(status().isOk());
         mvc.perform(get("/api/v1/bookings/" + other.getId()).with(orgAuth))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mvc.perform(post("/api/v1/bookings/" + other.getId() + "/cancel").with(orgAuth)
                 .header("If-Match", EtagSupport.format(other.getVersion())))
                 .andExpect(status().isForbidden());
@@ -190,7 +199,8 @@ class BookingPortalTest {
         var booking = save("cust-org-" + UUID.randomUUID(), "REQUESTED");
         UUID orgId = booking.getProviderId();
         UUID otherOrgId = UUID.randomUUID();
-        Mockito.when(provider.verifyOrganizationMembership(orgId, "org-staff")).thenReturn(true);
+        Mockito.when(provider.verify(orgId, "org-staff"))
+                .thenReturn(VerifiedMembership.of(orgId, "org-staff", "ORG_STAFF", true));
         var auth = jwt().jwt(j -> j.subject("org-staff").claim("user_roles", List.of("ORGANIZATION")));
 
         mvc.perform(get("/api/v1/bookings").with(auth).header("X-Organization-Id", orgId))
@@ -272,6 +282,75 @@ class BookingPortalTest {
                         .content("{\"kind\":\"ARRIVED\",\"note\":\"On site\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("IN_PROGRESS"));
+    }
+
+    @Test void enforcesTechnicianIsolationAndDualRoleReadContinuityInOrgMode() throws Exception {
+        UUID orgA = UUID.randomUUID();
+        UUID orgB = UUID.randomUUID();
+        String techA = "tech-a-" + UUID.randomUUID();
+        String techB = "tech-b-" + UUID.randomUUID();
+        var now = Instant.now();
+
+        // Tech A's personal booking placed at Org B
+        var personalInOrgB = bookings.saveAndFlush(BookingEntity.builder()
+                .id(UUID.randomUUID()).requesterProfileId(techA).providerId(orgB)
+                .serviceId(UUID.randomUUID()).serviceName("Personal OrgB")
+                .preferredStart(now.plusSeconds(3600)).preferredEnd(now.plusSeconds(7200))
+                .address("Addr B").status("REQUESTED").allocationStatus("ALLOCATION_FAILED")
+                .createdAt(now).updatedAt(now).build());
+        // Booking assigned to Tech A in Org A
+        var assignedToA = bookings.saveAndFlush(BookingEntity.builder()
+                .id(UUID.randomUUID()).requesterProfileId("cust-1").providerId(orgA)
+                .assignedTechnicianProfileId(techA).serviceId(UUID.randomUUID()).serviceName("Assigned A")
+                .preferredStart(now.plusSeconds(3600)).preferredEnd(now.plusSeconds(7200))
+                .address("Addr A1").status("ASSIGNED").allocationStatus("ALLOCATED")
+                .createdAt(now).updatedAt(now).build());
+        // Booking assigned to Tech B in Org A (must NOT be visible to Tech A)
+        var assignedToB = bookings.saveAndFlush(BookingEntity.builder()
+                .id(UUID.randomUUID()).requesterProfileId("cust-2").providerId(orgA)
+                .assignedTechnicianProfileId(techB).serviceId(UUID.randomUUID()).serviceName("Assigned B")
+                .preferredStart(now.plusSeconds(3600)).preferredEnd(now.plusSeconds(7200))
+                .address("Addr A2").status("ASSIGNED").allocationStatus("ALLOCATED")
+                .createdAt(now).updatedAt(now).build());
+
+        // ORG_TECHNICIAN-only (without global TECHNICIAN role), even with global booking:read
+        Mockito.when(provider.verify(orgA, techA))
+                .thenReturn(VerifiedMembership.of(orgA, techA, "ORG_TECHNICIAN", true));
+        var orgTechJwt = jwt().jwt(j -> j.subject(techA)
+                .claim("user_roles", List.of("CUSTOMER"))
+                .claim("permissions", List.of("booking:read")));
+
+        // 1. Tech A in OrgA can read own assigned booking & own personal booking in OrgB (#1)
+        mvc.perform(get("/api/v1/bookings/" + assignedToA.getId()).with(orgTechJwt).header("X-Organization-Id", orgA))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/bookings/" + personalInOrgB.getId()).with(orgTechJwt).header("X-Organization-Id", orgA))
+                .andExpect(status().isOk());
+
+        // 2. Tech A in OrgA CANNOT read Tech B's booking in OrgA (#7 -> 404)
+        mvc.perform(get("/api/v1/bookings/" + assignedToB.getId()).with(orgTechJwt).header("X-Organization-Id", orgA))
+                .andExpect(status().isNotFound());
+
+        // 3. Tech A in OrgA CANNOT cancel their personal booking in OrgB (403)
+        mvc.perform(post("/api/v1/bookings/" + personalInOrgB.getId() + "/cancel")
+                        .with(orgTechJwt).header("X-Organization-Id", orgA)
+                        .header("If-Match", EtagSupport.format(personalInOrgB.getVersion())))
+                .andExpect(status().isForbidden());
+
+        // 4. list?scope=CUSTOMER returns only personalInOrgB
+        mvc.perform(get("/api/v1/bookings?scope=CUSTOMER").with(orgTechJwt).header("X-Organization-Id", orgA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.pagination.totalItems").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(personalInOrgB.getId().toString()));
+
+        // 5. list?scope=TECHNICIAN works for ORG_TECHNICIAN in ORG mode and excludes Tech B's booking
+        mvc.perform(get("/api/v1/bookings?scope=TECHNICIAN").with(orgTechJwt).header("X-Organization-Id", orgA))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.pagination.totalItems").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(assignedToA.getId().toString()));
+
+        // 6. Invalid UUID X-Organization-Id returns 400
+        mvc.perform(get("/api/v1/bookings").with(orgTechJwt).header("X-Organization-Id", "not-a-uuid"))
+                .andExpect(status().isBadRequest());
     }
     private BookingEntity save(String user, String status) {
         var now = Instant.now();

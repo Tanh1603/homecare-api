@@ -1,27 +1,7 @@
 package com.homecare.booking.controller;
 
-import lombok.RequiredArgsConstructor;
-
-import com.homecare.booking.dto.BookingDtos.BookingResponse;
-import com.homecare.booking.dto.BookingDtos.CancelBookingRequest;
-import com.homecare.booking.dto.BookingDtos.CreateBookingRequest;
-import com.homecare.booking.dto.BookingDtos.CreateWorkUpdateRequest;
-import com.homecare.booking.service.BookingLifecycleService;
-import com.homecare.common.error.CommonErrorCode;
-import com.homecare.common.error.DomainException;
-import com.homecare.common.idempotency.IdempotencyService;
-import com.homecare.common.security.RbacConstants;
-import com.homecare.common.security.SupabaseJwtConverterSupport;
-import com.homecare.common.web.ApiMessages;
-import com.homecare.common.web.ApiResponse;
-import com.homecare.common.web.EtagSupport;
-import com.homecare.common.web.PageResponse;
-import com.homecare.common.web.servlet.ServletApiResponseFactory;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.Valid;
-import java.util.List;
 import java.util.UUID;
+
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -37,6 +17,27 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.homecare.booking.client.ProviderGrpcClientAdapter;
+import com.homecare.booking.dto.BookingDtos.BookingResponse;
+import com.homecare.booking.dto.BookingDtos.CancelBookingRequest;
+import com.homecare.booking.dto.BookingDtos.CreateBookingRequest;
+import com.homecare.booking.dto.BookingDtos.CreateWorkUpdateRequest;
+import com.homecare.booking.service.BookingLifecycleService;
+import com.homecare.common.idempotency.IdempotencyService;
+import com.homecare.common.security.ActorContext;
+import com.homecare.common.security.ActorContextResolver;
+import com.homecare.common.security.RbacConstants;
+import com.homecare.common.web.ApiMessages;
+import com.homecare.common.web.ApiResponse;
+import com.homecare.common.web.EtagSupport;
+import com.homecare.common.web.PageResponse;
+import com.homecare.common.web.servlet.ServletApiResponseFactory;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import lombok.RequiredArgsConstructor;
+
 @RestController
 @RequestMapping("/api/v1/bookings")
 @Validated
@@ -44,16 +45,19 @@ import org.springframework.web.bind.annotation.RestController;
 public class BookingController {
 
     private final BookingLifecycleService service;
+    private final ProviderGrpcClientAdapter providerGrpcClient;
     private final IdempotencyService idempotencyService;
     private final ServletApiResponseFactory responseFactory;
 
     @PostMapping
     public ResponseEntity<ApiResponse<BookingResponse>> createBooking(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody CreateBookingRequest request,
             HttpServletRequest httpRequest) {
-        String sub = jwt.getSubject();
+        String sub = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId))
+                .userId();
         BookingResponse created;
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
             created = idempotencyService.execute(
@@ -75,21 +79,12 @@ public class BookingController {
             @AuthenticationPrincipal Jwt jwt,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String scope,
-            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        boolean globalAdmin = isGlobalAdmin(jwt);
-        boolean orgOperator = isOrgOperator(jwt);
-        boolean technician = isTechnician(jwt);
-        PageResponse<BookingResponse> result = service.listBookingsPage(
-                jwt.getSubject(),
-                globalAdmin,
-                orgOperator,
-                technician,
-                orgIdHeader,
-                page,
-                size, status, scope);
+        ActorContext actor = resolveActor(jwt, rawOrgId);
+        PageResponse<BookingResponse> result = service.listBookingsPage(actor, page, size, status, scope);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
                 result,
@@ -99,18 +94,11 @@ public class BookingController {
     @GetMapping("/{bookingId}")
     public ResponseEntity<ApiResponse<BookingResponse>> getBooking(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID bookingId,
             HttpServletRequest httpRequest) {
-        boolean globalAdmin = isGlobalAdmin(jwt);
-        boolean orgOperator = isOrgOperator(jwt);
-        BookingResponse booking = service.getBooking(
-                jwt.getSubject(),
-                globalAdmin,
-                orgOperator,
-                isTechnician(jwt),
-                bookingId,
-                globalAdmin ? null : orgIdHeader);
+        ActorContext actor = resolveActor(jwt, rawOrgId);
+        BookingResponse booking = service.getBooking(actor, bookingId);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(booking.version()))
                 .body(responseFactory.ok(ApiMessages.RETRIEVED, booking, httpRequest));
@@ -119,37 +107,28 @@ public class BookingController {
     @PostMapping("/{bookingId}/cancel")
     public ResponseEntity<ApiResponse<BookingResponse>> cancelBooking(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID bookingId,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @RequestBody(required = false) CancelBookingRequest request,
             HttpServletRequest httpRequest) {
-        boolean globalAdmin = isGlobalAdmin(jwt);
-        boolean orgOperator = isOrgOperator(jwt);
-        BookingResponse updated = service.cancelBooking(
-                jwt.getSubject(),
-                globalAdmin || (orgOperator && orgIdHeader != null),
-                bookingId,
-                ifMatch,
-                request,
-                globalAdmin ? null : orgIdHeader);
+        ActorContext actor = resolveActor(jwt, rawOrgId);
+        BookingResponse updated = service.cancelBooking(actor, bookingId, ifMatch, request);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
                 .body(responseFactory.ok(ApiMessages.CANCELLED, updated, httpRequest));
     }
 
-    public record AssignRequest(@NotNull UUID technicianId) {}
+    public record AssignRequest(@NotNull UUID technicianId) {
+    }
 
     @PostMapping("/{bookingId}/assign")
     public ResponseEntity<?> assign(@PathVariable UUID bookingId, @AuthenticationPrincipal Jwt jwt,
-            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID organizationId,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @Valid @RequestBody AssignRequest input, HttpServletRequest request) {
-        if (!isGlobalAdmin(jwt) && !SupabaseJwtConverterSupport.hasAnyRoleOrPermission(jwt,
-                new String[]{RbacConstants.ROLE_ORGANIZATION}, RbacConstants.PERM_BOOKING_DISPATCH)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
-        var result = service.assignTechnician(bookingId, input.technicianId(), jwt.getSubject(), isGlobalAdmin(jwt), organizationId, ifMatch);
+        ActorContext actor = resolveActor(jwt, rawOrgId);
+        var result = service.assignTechnician(actor, bookingId, input.technicianId(), ifMatch);
         return ResponseEntity.ok().header(HttpHeaders.ETAG, EtagSupport.format(result.version()))
                 .body(responseFactory.ok(ApiMessages.UPDATED, result, request));
     }
@@ -157,51 +136,20 @@ public class BookingController {
     @PostMapping("/{bookingId}/work-updates")
     public ResponseEntity<ApiResponse<BookingResponse>> addWorkUpdate(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID bookingId,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @Valid @RequestBody CreateWorkUpdateRequest request,
             HttpServletRequest httpRequest) {
-        if (!isWorkUpdater(jwt)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
-        boolean globalAdmin = isGlobalAdmin(jwt);
-        boolean orgOperator = isOrgOperator(jwt);
-        BookingResponse updated = service.appendWorkUpdate(
-                jwt.getSubject(),
-                globalAdmin || (orgOperator && orgIdHeader != null),
-                globalAdmin ? null : orgIdHeader,
-                bookingId,
-                ifMatch,
-                request);
+        ActorContext actor = resolveActor(jwt, rawOrgId);
+        BookingResponse updated = service.appendWorkUpdate(actor, bookingId, ifMatch, request);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
                 .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
     }
 
-    private boolean isGlobalAdmin(Jwt jwt) {
-        return SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
-                jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ADMIN_ALL);
-    }
-
-    private boolean isOrgOperator(Jwt jwt) {
-        return SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
-                jwt,
-                new String[]{RbacConstants.ROLE_ORGANIZATION},
-                RbacConstants.PERM_BOOKING_DISPATCH, RbacConstants.PERM_BOOKING_READ);
-    }
-
-    private boolean isTechnician(Jwt jwt) {
-        return SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
-                jwt,
-                new String[]{RbacConstants.ROLE_TECHNICIAN},
-                RbacConstants.PERM_BOOKING_UPDATE_STATUS);
-    }
-
-    private boolean isWorkUpdater(Jwt jwt) {
-        return SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
-                jwt,
-                new String[]{RbacConstants.ROLE_TECHNICIAN, RbacConstants.ROLE_ORGANIZATION, RbacConstants.ROLE_ADMIN},
-                RbacConstants.PERM_BOOKING_UPDATE_STATUS, RbacConstants.PERM_BOOKING_DISPATCH, RbacConstants.PERM_ADMIN_ALL);
+    private ActorContext resolveActor(Jwt jwt, String rawOrgId) {
+        UUID orgId = ActorContextResolver.parseOrganizationId(rawOrgId);
+        return ActorContextResolver.resolve(jwt, orgId, providerGrpcClient);
     }
 }

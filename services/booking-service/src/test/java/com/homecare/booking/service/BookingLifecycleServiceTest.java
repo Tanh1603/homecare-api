@@ -30,7 +30,11 @@ import com.homecare.booking.entity.BookingAllocationSagaEntity;
 import com.homecare.booking.repository.BookingAllocationSagaRepository;
 import com.homecare.booking.repository.BookingOutboxEventRepository;
 import com.homecare.common.error.DomainException;
+import com.homecare.common.security.AccessMode;
+import com.homecare.common.security.ActorContext;
+import com.homecare.common.security.RbacConstants;
 import com.homecare.common.web.EtagSupport;
+import java.util.Set;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.VerifyOfferingResponse;
 
@@ -102,8 +106,18 @@ class BookingLifecycleServiceTest {
         assertThat(saga.getCurrentStep()).isEqualTo("COMPLETED");
         assertThat(outboxEventRepository.findAll()).isNotEmpty();
 
+        ActorContext customerActor = new ActorContext(
+                "customer-sub-1", AccessMode.PERSONAL, null,
+                Set.of(RbacConstants.ROLE_CUSTOMER), Set.of(), Set.of(), Set.of());
+        ActorContext otherCustomerActor = new ActorContext(
+                "other-customer-sub", AccessMode.PERSONAL, null,
+                Set.of(RbacConstants.ROLE_CUSTOMER), Set.of(), Set.of(), Set.of());
+        ActorContext techActor = new ActorContext(
+                "demo-technician", AccessMode.PERSONAL, null,
+                Set.of(RbacConstants.ROLE_TECHNICIAN), Set.of(), Set.of(), Set.of());
+
         assertThatThrownBy(() -> service.appendWorkUpdate(
-                "other-customer-sub",
+                otherCustomerActor,
                 created.id(),
                 EtagSupport.format(created.version()),
                 new CreateWorkUpdateRequest("COMPLETED", "Attempted hijack")))
@@ -112,23 +126,23 @@ class BookingLifecycleServiceTest {
                 .isEqualTo("RESOURCE_FORBIDDEN");
 
         assertThat(service.listBookingsPage(
-                "org-operator-sub", false, true, false, null, 1, 20, null, null).items())
+                new ActorContext("org-operator-sub", AccessMode.PERSONAL, null,
+                        Set.of(RbacConstants.ROLE_ORGANIZATION), Set.of(), Set.of(), Set.of()),
+                1, 20, null, null).items())
                 .isEmpty();
-        assertThat(service.listBookingsPage(
-                "customer-sub-1", false, true, false, null, 1, 20, null, null).items())
+        assertThat(service.listBookingsPage(customerActor, 1, 20, null, null).items())
                 .extracting(BookingResponse::id)
                 .contains(created.id());
 
         BookingResponse inProgress = service.appendWorkUpdate(
-                "demo-technician",
+                techActor,
                 created.id(),
                 EtagSupport.format(created.version()),
                 new CreateWorkUpdateRequest("STARTED", "Đã tới nhà khách hàng"));
         assertThat(inProgress.status()).isEqualTo("IN_PROGRESS");
 
         assertThatThrownBy(() -> service.cancelBooking(
-                "customer-sub-1",
-                false,
+                customerActor,
                 created.id(),
                 EtagSupport.format(inProgress.version()),
                 new CancelBookingRequest("Đổi ý")))
@@ -137,7 +151,7 @@ class BookingLifecycleServiceTest {
                 .isEqualTo("BOOKING_INVALID_STATE");
 
         BookingResponse completed = service.appendWorkUpdate(
-                "demo-technician",
+                techActor,
                 created.id(),
                 EtagSupport.format(inProgress.version()),
                 new CreateWorkUpdateRequest("COMPLETED", "Đã vệ sinh và nạp gas đầy đủ"));
@@ -314,9 +328,13 @@ class BookingLifecycleServiceTest {
                 new CreateBookingRequest(
                         serviceId, null, "AC", start, start.plus(1, ChronoUnit.HOURS), "123 Le Loi", null));
 
+        ActorContext demoTech = new ActorContext(
+                "demo-technician", AccessMode.PERSONAL, null,
+                Set.of(RbacConstants.ROLE_TECHNICIAN), Set.of(), Set.of(), Set.of());
+
         // (c) Missing If-Match must be rejected; jumping ASSIGNED -> COMPLETED must be rejected
         assertThatThrownBy(() -> service.appendWorkUpdate(
-                "demo-technician",
+                demoTech,
                 assigned.id(),
                 null,
                 new CreateWorkUpdateRequest("STARTED", "Arrived")))
@@ -325,7 +343,7 @@ class BookingLifecycleServiceTest {
                 .isEqualTo("PRECONDITION_REQUIRED");
 
         assertThatThrownBy(() -> service.appendWorkUpdate(
-                "demo-technician",
+                demoTech,
                 assigned.id(),
                 EtagSupport.format(assigned.version()),
                 new CreateWorkUpdateRequest("COMPLETED", "Skipped STARTED")))
@@ -333,23 +351,22 @@ class BookingLifecycleServiceTest {
                 .extracting("errorCode")
                 .isEqualTo("BOOKING_INVALID_STATE");
 
-        // (d) Spoofed X-Organization-Id must be rejected when actor is not a member of the org
-        assertThatThrownBy(() -> service.listBookingsPage(
-                "spoofing-org-operator", false, true, false, providerId, 1, 20, null, null))
+        // (d) Technician in same org without org-wide permission must NOT see another tech's booking (#7 -> 404)
+        ActorContext otherTechInOrg = new ActorContext(
+                "other-tech-in-org", AccessMode.ORGANIZATION, providerId,
+                Set.of(RbacConstants.ROLE_TECHNICIAN), Set.of(RbacConstants.PERM_BOOKING_READ),
+                Set.of("ORG_TECHNICIAN"), Set.of());
+        assertThat(service.listBookingsPage(otherTechInOrg, 1, 20, null, null).items()).isEmpty();
+        assertThatThrownBy(() -> service.getBooking(otherTechInOrg, assigned.id()))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
-                .isEqualTo("RESOURCE_FORBIDDEN");
+                .isEqualTo("BOOKING_NOT_FOUND");
 
-        assertThatThrownBy(() -> service.getBooking(
-                "spoofing-org-operator", false, true, false, assigned.id(), providerId))
-                .isInstanceOf(DomainException.class)
-                .extracting("errorCode")
-                .isEqualTo("RESOURCE_FORBIDDEN");
-
-        when(providerGrpcClient.verifyOrganizationMembership(providerId, "valid-org-operator"))
-                .thenReturn(true);
-        assertThat(service.getBooking(
-                "valid-org-operator", false, true, false, assigned.id(), providerId).id())
+        ActorContext validOrgOperator = new ActorContext(
+                "valid-org-operator", AccessMode.ORGANIZATION, providerId,
+                Set.of(RbacConstants.ROLE_ORGANIZATION), Set.of(),
+                Set.of("ORG_OWNER"), Set.of(RbacConstants.PERM_BOOKING_READ, RbacConstants.PERM_BOOKING_DISPATCH));
+        assertThat(service.getBooking(validOrgOperator, assigned.id()).id())
                 .isEqualTo(assigned.id());
 
         // REQUESTED -> IN_PROGRESS must be rejected
@@ -363,7 +380,7 @@ class BookingLifecycleServiceTest {
                 new CreateBookingRequest(
                         serviceId, null, "AC", start.plus(3, ChronoUnit.HOURS), null, "123 Le Loi", null));
         assertThatThrownBy(() -> service.appendWorkUpdate(
-                "valid-org-operator", true, providerId, requested.id(),
+                validOrgOperator, requested.id(),
                 EtagSupport.format(requested.version()),
                 new CreateWorkUpdateRequest("STARTED", "Trying without assigned tech")))
                 .isInstanceOf(DomainException.class)

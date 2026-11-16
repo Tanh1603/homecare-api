@@ -1,30 +1,9 @@
 package com.homecare.commerce.controller;
 
-import com.homecare.commerce.dto.CommerceDtos.CreateOrderRequest;
-import com.homecare.commerce.dto.CommerceDtos.CreateOrderReturnRequest;
-import com.homecare.commerce.dto.CommerceDtos.CreatePaymentAttemptRequest;
-import com.homecare.commerce.dto.CommerceDtos.OrderResponse;
-import com.homecare.commerce.dto.CommerceDtos.OrderReturnResponse;
-import com.homecare.commerce.dto.CommerceDtos.PaymentAttemptResponse;
-import com.homecare.commerce.dto.CommerceDtos.ProductResponse;
-import com.homecare.commerce.dto.CommerceDtos.ResolveOrderReturnRequest;
-import com.homecare.commerce.service.CommerceDomainService;
-import com.homecare.common.error.CommonErrorCode;
-import com.homecare.common.error.DomainException;
-import com.homecare.common.idempotency.IdempotencyService;
-import com.homecare.common.security.RbacConstants;
-import com.homecare.common.security.SupabaseJwtConverterSupport;
-import com.homecare.common.web.ApiMessages;
-import com.homecare.common.web.ApiResponse;
-import com.homecare.common.web.EtagSupport;
-import com.homecare.common.web.PageResponse;
-import com.homecare.common.web.servlet.ServletApiResponseFactory;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import lombok.RequiredArgsConstructor;
+
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -40,6 +19,32 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.homecare.commerce.client.ProviderOrgClient;
+import com.homecare.commerce.dto.CommerceDtos.CreateOrderRequest;
+import com.homecare.commerce.dto.CommerceDtos.CreateOrderReturnRequest;
+import com.homecare.commerce.dto.CommerceDtos.CreatePaymentAttemptRequest;
+import com.homecare.commerce.dto.CommerceDtos.OrderResponse;
+import com.homecare.commerce.dto.CommerceDtos.OrderReturnResponse;
+import com.homecare.commerce.dto.CommerceDtos.PaymentAttemptResponse;
+import com.homecare.commerce.dto.CommerceDtos.ProductResponse;
+import com.homecare.commerce.dto.CommerceDtos.ResolveOrderReturnRequest;
+import com.homecare.commerce.service.CommerceDomainService;
+import com.homecare.common.error.CommonErrorCode;
+import com.homecare.common.error.DomainException;
+import com.homecare.common.idempotency.IdempotencyService;
+import com.homecare.common.security.ActorContext;
+import com.homecare.common.security.ActorContextResolver;
+import com.homecare.common.security.RbacConstants;
+import com.homecare.common.web.ApiMessages;
+import com.homecare.common.web.ApiResponse;
+import com.homecare.common.web.EtagSupport;
+import com.homecare.common.web.PageResponse;
+import com.homecare.common.web.servlet.ServletApiResponseFactory;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+
 @RestController
 @RequestMapping("/api/v1")
 @Validated
@@ -47,6 +52,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class CommerceController {
 
     private final CommerceDomainService service;
+    private final ProviderOrgClient providerOrgClient;
     private final IdempotencyService idempotencyService;
     private final ServletApiResponseFactory responseFactory;
 
@@ -81,10 +87,12 @@ public class CommerceController {
     @PostMapping("/orders")
     public ResponseEntity<ApiResponse<OrderResponse>> createOrder(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody CreateOrderRequest request,
             HttpServletRequest httpRequest) {
-        String sub = jwt.getSubject();
+        String sub = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId))
+                .userId();
         OrderResponse created;
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
             created = idempotencyService.execute(
@@ -104,7 +112,7 @@ public class CommerceController {
     @GetMapping("/orders")
     public ResponseEntity<ApiResponse<PageResponse<OrderResponse>>> listOrders(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @RequestParam(required = false) UUID organizationId,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String q,
@@ -112,12 +120,13 @@ public class CommerceController {
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        boolean globalAdmin = SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
-                jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ADMIN_ALL);
-        boolean orgOperator = SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
-                jwt, new String[]{RbacConstants.ROLE_ORGANIZATION}, RbacConstants.PERM_ORDER_FULFILL);
-        UUID effectiveOrgId = organizationId != null ? organizationId : orgIdHeader;
-        var result = service.ordersPage(jwt.getSubject(), effectiveOrgId, globalAdmin, orgOperator, status, q, sort, page, size);
+        UUID orgIdHeader = ActorContextResolver.parseOrganizationId(rawOrgId);
+        if (orgIdHeader != null && organizationId != null && !orgIdHeader.equals(organizationId)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        UUID effectiveOrgId = orgIdHeader != null ? orgIdHeader : organizationId;
+        ActorContext actor = ActorContextResolver.resolve(jwt, effectiveOrgId, providerOrgClient);
+        var result = service.ordersPage(actor, status, q, sort, page, size);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
                 result,
@@ -127,10 +136,12 @@ public class CommerceController {
     @GetMapping("/orders/{orderId}")
     public ResponseEntity<ApiResponse<OrderResponse>> getOrder(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgId,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID orderId,
             HttpServletRequest httpRequest) {
-        OrderResponse order = service.getOrderForPortal(jwt.getSubject(), orderId, orgId, isGlobalAdmin(jwt));
+        ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId),
+                providerOrgClient);
+        OrderResponse order = service.getOrderForPortal(actor, orderId);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(order.version()))
                 .body(responseFactory.ok(ApiMessages.RETRIEVED, order, httpRequest));
@@ -139,11 +150,13 @@ public class CommerceController {
     @PostMapping("/orders/{orderId}/payment-attempts")
     public ResponseEntity<ApiResponse<PaymentAttemptResponse>> createPaymentAttempt(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID orderId,
             @RequestBody(required = false) CreatePaymentAttemptRequest body,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             HttpServletRequest httpRequest) {
-        String sub = jwt.getSubject();
+        String sub = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId))
+                .userId();
         String returnUrl = body != null ? body.returnUrl() : null;
         PaymentAttemptResponse attempt;
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
@@ -175,28 +188,28 @@ public class CommerceController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID orderId,
             @PathVariable UUID lineId,
-            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             HttpServletRequest httpRequest) {
-        verifyOrganizationOrAdmin(jwt, RbacConstants.PERM_ORDER_FULFILL);
-        boolean globalAdmin = isGlobalAdmin(jwt);
-        if (!globalAdmin && orgIdHeader == null) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
+        ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId),
+                providerOrgClient);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.PROCESSED,
-                service.fulfillOrderLine(jwt.getSubject(), orderId, lineId, orgIdHeader, globalAdmin),
+                service.fulfillOrderLine(actor, orderId, lineId),
                 httpRequest));
     }
 
     @PostMapping("/orders/{orderId}/lines/{lineId}/returns")
     public ResponseEntity<ApiResponse<OrderReturnResponse>> createOrderReturn(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID orderId,
             @PathVariable UUID lineId,
             @Valid @RequestBody CreateOrderReturnRequest request,
             HttpServletRequest httpRequest) {
+        String sub = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId))
+                .userId();
         OrderReturnResponse created = service.createOrderReturnRequest(
-                jwt.getSubject(), orderId, lineId, request);
+                sub, orderId, lineId, request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
     }
@@ -206,47 +219,26 @@ public class CommerceController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID orderId,
             @PathVariable UUID returnId,
-            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @Valid @RequestBody ResolveOrderReturnRequest request,
             HttpServletRequest httpRequest) {
-        verifyOrganizationOrAdmin(jwt, RbacConstants.PERM_ORDER_RETURN_RESOLVE);
-        boolean globalAdmin = isGlobalAdmin(jwt);
-        if (!globalAdmin && orgIdHeader == null) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
-        OrderReturnResponse resolved = service.resolveOrderReturnRequest(
-                jwt.getSubject(), orderId, returnId, request, orgIdHeader, globalAdmin);
+        ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId),
+                providerOrgClient);
+        OrderReturnResponse resolved = service.resolveOrderReturnRequest(actor, orderId, returnId, request);
         return ResponseEntity.ok(responseFactory.ok(ApiMessages.PROCESSED, resolved, httpRequest));
-    }
-
-    private boolean isGlobalAdmin(Jwt jwt) {
-        return SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
-                jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ADMIN_ALL);
-    }
-
-    private void verifyOrganizationOrAdmin(Jwt jwt, String requiredPermission) {
-        if (!SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
-                jwt,
-                new String[]{RbacConstants.ROLE_ORGANIZATION, RbacConstants.ROLE_ADMIN},
-                requiredPermission, RbacConstants.PERM_ADMIN_ALL)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
     }
 
     @GetMapping("/orders/{orderId}/returns")
     public ResponseEntity<ApiResponse<List<OrderReturnResponse>>> listOrderReturns(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID orderId,
             HttpServletRequest httpRequest) {
-        boolean isPrivileged = SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
-                jwt,
-                new String[]{RbacConstants.ROLE_ORGANIZATION, RbacConstants.ROLE_ADMIN},
-                RbacConstants.PERM_ORDER_FULFILL, RbacConstants.PERM_ORDER_RETURN_RESOLVE, RbacConstants.PERM_ADMIN_ALL);
-        boolean globalAdmin = isGlobalAdmin(jwt);
+        ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId),
+                providerOrgClient);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.listOrderReturns(jwt.getSubject(), isPrivileged, globalAdmin, orgIdHeader, orderId),
+                service.listOrderReturns(actor, orderId),
                 httpRequest));
     }
 }

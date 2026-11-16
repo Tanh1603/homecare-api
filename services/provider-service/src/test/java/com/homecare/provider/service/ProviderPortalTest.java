@@ -270,4 +270,28 @@ class ProviderPortalTest {
         assertThat(holder[0]).isNotNull();
         assertThat(holder[0].getActive()).isFalse();
     }
+
+    @Test
+    void enforcesTechnicianScheduleIsolationAndCrossOrgProviderDenial() throws Exception {
+        Instant start = Instant.now().plusSeconds(86400);
+        String scheduleBody = """
+                {"startsAt":"%s","endsAt":"%s"}
+                """.formatted(start, start.plusSeconds(3600));
+
+        // Another technician in same org cannot create schedule for demo-technician
+        mvc.perform(post("/api/v1/technicians/" + ProviderDataInitializer.DEMO_TECH_ID + "/schedules")
+                        .with(jwt().jwt(j -> j.subject("other-tech-sub").claim("user_roles", List.of("TECHNICIAN"))))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(scheduleBody))
+                .andExpect(status().isForbidden());
+
+        // Org2 header cannot mutate Provider 1
+        mvc.perform(patch("/api/v1/providers/" + ProviderDataInitializer.PROVIDER_1_ID)
+                        .with(jwt().jwt(j -> j.subject("a0000000-0000-0000-0000-000000000002")
+                                .claim("user_roles", List.of("ORGANIZATION"))))
+                        .header("X-Organization-Id", ProviderDataInitializer.PROVIDER_2_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Hijack\"}"))
+                .andExpect(status().isForbidden());
+    }
 }
