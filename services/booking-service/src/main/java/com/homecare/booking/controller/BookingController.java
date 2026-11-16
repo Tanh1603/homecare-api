@@ -56,13 +56,11 @@ public class BookingController {
         String sub = jwt.getSubject();
         BookingResponse created;
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
-            String payloadSummary = request.serviceId() + "|" + request.deviceId() + "|"
-                    + request.preferredStart() + "|" + request.address();
             created = idempotencyService.execute(
                     sub,
                     "POST:/api/v1/bookings",
                     idempotencyKey,
-                    payloadSummary,
+                    request.toString(),
                     () -> service.createBooking(sub, request));
         } else {
             created = service.createBooking(sub, request);
@@ -76,6 +74,7 @@ public class BookingController {
     public ResponseEntity<ApiResponse<PageResponse<BookingResponse>>> listBookings(
             @AuthenticationPrincipal Jwt jwt,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String scope,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) UUID orgIdHeader,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
@@ -83,17 +82,14 @@ public class BookingController {
         boolean globalAdmin = isGlobalAdmin(jwt);
         boolean orgOperator = isOrgOperator(jwt);
         boolean technician = isTechnician(jwt);
-        if (!globalAdmin && orgOperator && orgIdHeader == null) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
         PageResponse<BookingResponse> result = service.listBookingsPage(
                 jwt.getSubject(),
                 globalAdmin,
                 orgOperator,
                 technician,
-                globalAdmin ? orgIdHeader : orgIdHeader,
+                orgIdHeader,
                 page,
-                size, status);
+                size, status, scope);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
                 result,
@@ -108,9 +104,6 @@ public class BookingController {
             HttpServletRequest httpRequest) {
         boolean globalAdmin = isGlobalAdmin(jwt);
         boolean orgOperator = isOrgOperator(jwt);
-        if (!globalAdmin && orgOperator && orgIdHeader == null) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
         BookingResponse booking = service.getBooking(
                 jwt.getSubject(),
                 globalAdmin,
@@ -133,12 +126,9 @@ public class BookingController {
             HttpServletRequest httpRequest) {
         boolean globalAdmin = isGlobalAdmin(jwt);
         boolean orgOperator = isOrgOperator(jwt);
-        if (!globalAdmin && orgOperator && orgIdHeader == null) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
         BookingResponse updated = service.cancelBooking(
                 jwt.getSubject(),
-                globalAdmin || orgOperator,
+                globalAdmin || (orgOperator && orgIdHeader != null),
                 bookingId,
                 ifMatch,
                 request,

@@ -4,6 +4,8 @@ import com.homecare.commerce.entity.InventoryEntity;
 
 import static jakarta.persistence.LockModeType.PESSIMISTIC_WRITE;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -12,6 +14,7 @@ import org.springframework.data.jpa.repository.Query;
 
 public interface InventoryRepository extends JpaRepository<InventoryEntity, UUID> {
     Optional<InventoryEntity> findByProductId(UUID productId);
+    List<InventoryEntity> findByProductIdIn(Collection<UUID> productIds);
     @Lock(PESSIMISTIC_WRITE)
     @Query("select i from InventoryEntity i where i.productId = :productId")
     Optional<InventoryEntity> lockByProductId(UUID productId);

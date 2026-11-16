@@ -13,6 +13,7 @@ import com.homecare.commerce.entity.MerchantEntity;
 import com.homecare.commerce.entity.ProductEntity;
 import com.homecare.commerce.repository.InventoryRepository;
 import com.homecare.commerce.repository.MerchantRepository;
+import com.homecare.commerce.repository.OrderReturnRequestRepository;
 import com.homecare.commerce.repository.ProductRepository;
 import com.homecare.common.domain.EntityStatus;
 
@@ -33,10 +34,12 @@ public class CommerceDataInitializer implements CommandLineRunner {
     private final MerchantRepository merchantRepository;
     private final ProductRepository productRepository;
     private final InventoryRepository inventoryRepository;
+    private final OrderReturnRequestRepository returnRequestRepository;
 
     @Override
     @Transactional
     public void run(String... args) {
+        returnRequestRepository.backfillNullVersions();
         if (productRepository.count() > 0) {
             return;
         }

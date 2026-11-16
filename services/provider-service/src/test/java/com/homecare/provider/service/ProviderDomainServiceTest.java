@@ -28,8 +28,8 @@ class ProviderDomainServiceTest {
 
     @Test
     void seedsCatalogRanksHighestScoreTechnicianAndEnforcesIdempotentIntentAndOverlapGuard() {
-        assertThat(service.listOfferings(null)).hasSizeGreaterThanOrEqualTo(6);
-        assertThat(service.listProviders()).hasSizeGreaterThanOrEqualTo(2);
+        assertThat(service.offeringsPage(null, null, null, 1, 20).pagination().totalItems()).isGreaterThanOrEqualTo(6);
+        assertThat(service.providersPage(null, null, 1, 20).pagination().totalItems()).isGreaterThanOrEqualTo(2);
 
         Instant start = Instant.now().plus(2, ChronoUnit.HOURS);
         Instant end = start.plus(60, ChronoUnit.MINUTES);
@@ -58,7 +58,8 @@ class ProviderDomainServiceTest {
         assertThatThrownBy(() -> service.createScheduleWindow(
                 "me",
                 "demo-technician",
-                new CreateScheduleWindowRequest(start, end)))
+                new CreateScheduleWindowRequest(start, end),
+                false))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("SCHEDULE_OVERLAP");
@@ -119,7 +120,7 @@ class ProviderDomainServiceTest {
         Instant e1 = s1.plus(2, ChronoUnit.HOURS);
 
         assertThatThrownBy(() -> service.createScheduleWindow(
-                "me", "unknown-user-sub", new CreateScheduleWindowRequest(s1, e1)))
+                "me", "unknown-user-sub", new CreateScheduleWindowRequest(s1, e1), false))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("TECHNICIAN_NOT_FOUND");
@@ -129,7 +130,8 @@ class ProviderDomainServiceTest {
         assertThatThrownBy(() -> service.createScheduleWindow(
                 ProviderDataInitializer.DEMO_TECH_ID.toString(),
                 "stranger-tech-sub",
-                new CreateScheduleWindowRequest(s2, e2)))
+                new CreateScheduleWindowRequest(s2, e2),
+                false))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("RESOURCE_FORBIDDEN");
@@ -137,14 +139,15 @@ class ProviderDomainServiceTest {
         Instant s3 = Instant.now().plus(42, ChronoUnit.DAYS);
         Instant e3 = s3.plus(2, ChronoUnit.HOURS);
         ScheduleWindowResponse win = service.createScheduleWindow(
-                "me", "demo-technician", new CreateScheduleWindowRequest(s3, e3));
+                "me", "demo-technician", new CreateScheduleWindowRequest(s3, e3), false);
 
         assertThatThrownBy(() -> service.updateScheduleWindow(
                 "me",
                 "demo-technician",
                 win.id(),
                 EtagSupport.format(win.version()),
-                new UpdateScheduleWindowRequest(win.endsAt(), win.startsAt(), null)))
+                new UpdateScheduleWindowRequest(win.endsAt(), win.startsAt(), null),
+                false))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("VALIDATION_FAILED");
@@ -154,7 +157,8 @@ class ProviderDomainServiceTest {
                 "demo-technician",
                 win.id(),
                 EtagSupport.format(win.version()),
-                new UpdateScheduleWindowRequest(null, null, "HACKED_STATUS")))
+                new UpdateScheduleWindowRequest(null, null, "HACKED_STATUS"),
+                false))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("VALIDATION_FAILED");

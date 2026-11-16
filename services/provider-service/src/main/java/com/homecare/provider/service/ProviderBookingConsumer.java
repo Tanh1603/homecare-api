@@ -21,9 +21,12 @@ public class ProviderBookingConsumer {
     @RabbitListener(queues = QUEUE)
     public void onEvent(String payload) {
         var event = mapper.readTree(payload);
-        String type = event.path("eventType").asText();
-        if ("booking.completed.v1".equals(type) || "booking.cancelled.v1".equals(type)) {
-            service.releaseBooking(UUID.fromString(event.path("data").path("bookingId").asText()));
+        String type = event.path("eventType").asString();
+        UUID bookingId = UUID.fromString(event.path("data").path("bookingId").asString());
+        if ("booking.completed.v1".equals(type)) {
+            service.completeBooking(bookingId);
+        } else if ("booking.cancelled.v1".equals(type)) {
+            service.releaseBooking(bookingId);
         }
     }
 }

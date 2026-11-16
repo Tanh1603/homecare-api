@@ -7,6 +7,7 @@ import static com.homecare.common.event.DomainEventContracts.FIELD_EVENT_TYPE;
 
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
+import com.homecare.common.web.PageResponse;
 import com.homecare.notification.dto.NotificationDtos.DeviceRegistrationResponse;
 import com.homecare.notification.dto.NotificationDtos.NotificationResponse;
 import com.homecare.notification.dto.NotificationDtos.RegisterDeviceRequest;
@@ -30,10 +31,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @RequiredArgsConstructor
@@ -48,8 +52,8 @@ public class NotificationInboxService {
     private final DeviceRegistrationRepository deviceRegistrationRepository;
     private final RabbitTemplate rabbitTemplate;
     private final ObjectMapper objectMapper;
+    private final PlatformTransactionManager transactionManager;
 
-    @Transactional
     public void recordIfAbsent(
             String eventId,
             String recipientId,
@@ -59,7 +63,6 @@ public class NotificationInboxService {
         recordIfAbsent(eventId, recipientId, eventType, title, body, Map.of());
     }
 
-    @Transactional
     public void recordIfAbsent(
             String eventId,
             String recipientId,
@@ -71,35 +74,45 @@ public class NotificationInboxService {
             return;
         }
         String dedupeKey = eventId + ":" + recipientId;
-        if (notificationRepository.findByDedupeKey(dedupeKey).isPresent()) {
-            return;
-        }
         String consumerKey = CONSUMER_NAME + ":" + recipientId;
-        if (processedEventRepository.findByConsumerNameAndEventId(consumerKey, eventId).isPresent()) {
-            return;
-        }
         Instant now = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         try {
-            processedEventRepository.save(ProcessedEventEntity.builder()
-                    .id(UUID.randomUUID())
-                    .consumerName(consumerKey)
-                    .eventId(eventId)
-                    .eventType(eventType)
-                    .processedAt(now)
-                    .build());
-            notificationRepository.save(NotificationEntity.builder()
-                    .id(UUID.randomUUID())
-                    .recipientId(recipientId)
-                    .dedupeKey(dedupeKey)
-                    .eventType(eventType)
-                    .title(title)
-                    .body(body)
-                    .read(false)
-                    .createdAt(now)
-                    .build());
+            Boolean inserted = tx.execute(status -> {
+                if (notificationRepository.findByDedupeKey(dedupeKey).isPresent()
+                        || processedEventRepository.findByConsumerNameAndEventId(consumerKey, eventId).isPresent()) {
+                    return false;
+                }
+                processedEventRepository.saveAndFlush(ProcessedEventEntity.builder()
+                        .id(UUID.randomUUID())
+                        .consumerName(consumerKey)
+                        .eventId(eventId)
+                        .eventType(eventType)
+                        .processedAt(now)
+                        .build());
+                notificationRepository.saveAndFlush(NotificationEntity.builder()
+                        .id(UUID.randomUUID())
+                        .recipientId(recipientId)
+                        .dedupeKey(dedupeKey)
+                        .eventType(eventType)
+                        .title(title)
+                        .body(body)
+                        .read(false)
+                        .createdAt(now)
+                        .build());
+                return true;
+            });
+            if (!Boolean.TRUE.equals(inserted)) {
+                return;
+            }
         } catch (DataIntegrityViolationException ex) {
-            log.debug("Duplicate notification ignored for dedupeKey={}", dedupeKey);
-            return;
+            if (notificationRepository.findByDedupeKey(dedupeKey).isPresent()
+                    || processedEventRepository.findByConsumerNameAndEventId(consumerKey, eventId).isPresent()) {
+                log.debug("Duplicate notification ignored for dedupeKey={}", dedupeKey);
+                return;
+            }
+            throw ex;
         }
 
         // Enqueue push notification dispatch message to dedicated RabbitMQ queue (decoupled from DB transaction)
@@ -113,19 +126,7 @@ public class NotificationInboxService {
         if (eventId != null) {
             data.put(FIELD_EVENT_ID, eventId);
         }
-
-        // Only dispatch push to RabbitMQ after database transaction has successfully committed
-        if (TransactionSynchronizationManager.isActualTransactionActive()) {
-            TransactionSynchronizationManager.registerSynchronization(
-                    new TransactionSynchronization() {
-                        @Override
-                        public void afterCommit() {
-                            dispatchPushNotificationEvent(recipientId, title, body, data);
-                        }
-                    });
-        } else {
-            dispatchPushNotificationEvent(recipientId, title, body, data);
-        }
+        dispatchPushNotificationEvent(recipientId, title, body, data);
     }
 
     private void dispatchPushNotificationEvent(
@@ -148,11 +149,13 @@ public class NotificationInboxService {
     }
 
     @Transactional(readOnly = true)
-    public List<NotificationResponse> listInbox(String recipientId) {
-        return notificationRepository.findByRecipientIdOrderByCreatedAtDesc(recipientId)
-                .stream()
-                .map(this::toResponse)
-                .toList();
+    public PageResponse<NotificationResponse> inboxPage(String recipientId, int page, int size) {
+        if (page < 1 || size < 1 || size > 100) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        }
+        var pageable = PageRequest.of(page - 1, size, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by("id")));
+        var result = notificationRepository.findByRecipientIdOrderByCreatedAtDesc(recipientId, pageable);
+        return PageResponse.of(result.map(this::toResponse).getContent(), page, size, result.getTotalElements());
     }
 
     @Transactional(readOnly = true)

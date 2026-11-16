@@ -20,6 +20,9 @@ import com.homecare.common.web.servlet.BaseApiExceptionHandler;
 import com.homecare.common.web.servlet.GatewayOriginFilter;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import com.homecare.common.web.servlet.ServletCorrelationIdFilter;
+import com.homecare.grpc.interceptor.WorkloadAuthServerInterceptor;
+import io.grpc.ServerInterceptor;
+import net.devh.boot.grpc.server.interceptor.GrpcGlobalServerInterceptor;
 
 @Configuration
 @EnableMethodSecurity
@@ -51,6 +54,13 @@ public class CommerceSecurityAndRabbitConfig {
             @Value("${homecare.security.internal-gateway-secret:homecare-internal-secret-2026}") String gatewaySecret,
             @Value("${homecare.internal.workload-token:change_me_internal_workload_token}") String workloadToken) {
         return new GatewayOriginFilter(enforceGateway, gatewaySecret, workloadToken);
+    }
+
+    @Bean
+    @GrpcGlobalServerInterceptor
+    public ServerInterceptor internalWorkloadGrpcInterceptor(
+            @Value("${homecare.internal.workload-token:change_me_internal_workload_token}") String workloadToken) {
+        return new WorkloadAuthServerInterceptor(workloadToken);
     }
 
     @Bean

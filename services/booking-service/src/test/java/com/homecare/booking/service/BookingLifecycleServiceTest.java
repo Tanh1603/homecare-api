@@ -111,11 +111,13 @@ class BookingLifecycleServiceTest {
                 .extracting("errorCode")
                 .isEqualTo("RESOURCE_FORBIDDEN");
 
-        assertThatThrownBy(() -> service.listBookingsPage(
-                "org-operator-sub", false, true, false, null, 1, 20))
-                .isInstanceOf(DomainException.class)
-                .extracting("errorCode")
-                .isEqualTo("RESOURCE_FORBIDDEN");
+        assertThat(service.listBookingsPage(
+                "org-operator-sub", false, true, false, null, 1, 20, null, null).items())
+                .isEmpty();
+        assertThat(service.listBookingsPage(
+                "customer-sub-1", false, true, false, null, 1, 20, null, null).items())
+                .extracting(BookingResponse::id)
+                .contains(created.id());
 
         BookingResponse inProgress = service.appendWorkUpdate(
                 "demo-technician",
@@ -333,7 +335,7 @@ class BookingLifecycleServiceTest {
 
         // (d) Spoofed X-Organization-Id must be rejected when actor is not a member of the org
         assertThatThrownBy(() -> service.listBookingsPage(
-                "spoofing-org-operator", false, true, false, providerId, 1, 20))
+                "spoofing-org-operator", false, true, false, providerId, 1, 20, null, null))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("RESOURCE_FORBIDDEN");

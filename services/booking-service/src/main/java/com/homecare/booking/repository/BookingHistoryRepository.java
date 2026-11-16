@@ -9,4 +9,5 @@ import com.homecare.booking.entity.BookingHistoryEntry;
 
 public interface BookingHistoryRepository extends JpaRepository<BookingHistoryEntry, UUID> {
     List<BookingHistoryEntry> findByBookingIdOrderByOccurredAtAsc(UUID bookingId);
+    List<BookingHistoryEntry> findByBookingIdInOrderByOccurredAtAsc(List<UUID> bookingIds);
 }

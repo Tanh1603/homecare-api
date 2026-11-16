@@ -5,6 +5,7 @@ import tools.jackson.databind.ObjectMapper;
 import com.homecare.common.event.DomainEventContracts;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,7 +28,11 @@ public class DomainEventConsumer {
     public void onDomainEvent(String payloadJson) {
         try {
             Map<String, Object> root = objectMapper.readValue(payloadJson, Map.class);
-            String eventId = String.valueOf(root.getOrDefault(DomainEventContracts.FIELD_EVENT_ID, "evt-unknown"));
+            Object rawEventId = root.get(DomainEventContracts.FIELD_EVENT_ID);
+            String eventId = rawEventId != null && !String.valueOf(rawEventId).isBlank()
+                    && !"null".equalsIgnoreCase(String.valueOf(rawEventId))
+                    ? String.valueOf(rawEventId)
+                    : UUID.randomUUID().toString();
             String eventType = String.valueOf(root.getOrDefault(DomainEventContracts.FIELD_EVENT_TYPE, "domain.event"));
             Map<String, Object> data = root.get(DomainEventContracts.FIELD_DATA) instanceof Map<?, ?> m
                     ? (Map<String, Object>) m

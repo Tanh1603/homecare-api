@@ -41,11 +41,13 @@ import com.homecare.common.web.PageResponse;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -102,19 +104,49 @@ public class CommerceDomainService {
         if ((minPrice != null && minPrice < 0) || (maxPrice != null && maxPrice < 0)
                 || (minPrice != null && maxPrice != null && minPrice > maxPrice)) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         var result = productRepository.search(category, q, merchantId, minPrice, maxPrice, inStock, pageRequest(page, size, sort, true));
-        return PageResponse.of(result.map(this::toProductResponse).getContent(), page, size, result.getTotalElements());
+        List<ProductEntity> content = result.getContent();
+        if (content.isEmpty()) {
+            return PageResponse.of(List.of(), page, size, result.getTotalElements());
+        }
+        var merchantNames = merchantRepository.findAllById(content.stream().map(ProductEntity::getMerchantId).collect(java.util.stream.Collectors.toSet()))
+                .stream().collect(java.util.stream.Collectors.toMap(MerchantEntity::getId, MerchantEntity::getName));
+        var invByProduct = inventoryRepository.findByProductIdIn(content.stream().map(ProductEntity::getId).toList())
+                .stream().collect(java.util.stream.Collectors.toMap(InventoryEntity::getProductId, i -> i));
+        var items = content.stream()
+                .map(p -> toProductResponse(p, merchantNames.getOrDefault(p.getMerchantId(), "HomeCare Mall"), invByProduct.get(p.getId())))
+                .toList();
+        return PageResponse.of(items, page, size, result.getTotalElements());
     }
 
     @Transactional(readOnly = true)
     public PageResponse<OrderResponse> ordersPage(String user, UUID organizationId, boolean admin,
             boolean operator, String status, String q, String sort, int page, int size) {
         UUID merchant = null;
-        if (organizationId != null && (admin || operator)) {
+        if (organizationId != null) {
+            if (!admin && !operator) {
+                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            }
             var m = merchantRepository.findByOrganizationId(organizationId).orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN));
-            requireMerchant(m.getId(), organizationId, user, admin); merchant = m.getId();
-        } else if (operator && !admin) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        var result = orderRepository.search(admin || operator ? null : user, merchant, status, q, pageRequest(page, size, sort, false));
-        return PageResponse.of(result.map(this::toOrderResponse).getContent(), page, size, result.getTotalElements());
+            requireMerchant(m.getId(), organizationId, user, admin);
+            merchant = m.getId();
+        }
+        boolean orgOrAdminScope = admin || (operator && merchant != null);
+        var result = orderRepository.search(orgOrAdminScope ? null : user, merchant, status, q, pageRequest(page, size, sort, false));
+        List<OrderEntity> content = result.getContent();
+        if (content.isEmpty()) {
+            return PageResponse.of(List.of(), page, size, result.getTotalElements());
+        }
+        List<UUID> orderIds = content.stream().map(OrderEntity::getId).toList();
+        var linesByOrder = orderLineRepository.findByOrderIdIn(orderIds).stream()
+                .collect(java.util.stream.Collectors.groupingBy(OrderLineEntity::getOrderId));
+        var attemptsByOrder = paymentAttemptRepository.findByOrderIdInOrderByCreatedAtDesc(orderIds).stream()
+                .collect(java.util.stream.Collectors.groupingBy(PaymentAttemptEntity::getOrderId));
+        var items = content.stream()
+                .map(o -> toOrderResponse(o,
+                        linesByOrder.getOrDefault(o.getId(), List.of()),
+                        attemptsByOrder.getOrDefault(o.getId(), List.of())))
+                .toList();
+        return PageResponse.of(items, page, size, result.getTotalElements());
     }
 
     @Transactional(readOnly = true)
@@ -190,7 +222,11 @@ public class CommerceDomainService {
     }
 
     private void releaseReservations(OrderEntity order) {
-        for (var reservation : reservationRepository.findByOrderId(order.getId())) {
+        List<InventoryReservationEntity> reservations = reservationRepository.findByOrderId(order.getId())
+                .stream()
+                .sorted(Comparator.comparing(InventoryReservationEntity::getProductId))
+                .toList();
+        for (var reservation : reservations) {
             if (!"ACTIVE".equals(reservation.getStatus())) continue;
             var inventory = inventoryRepository.lockByProductId(reservation.getProductId()).orElseThrow();
             inventory.setAvailableQty(Math.addExact(inventory.getAvailableQty(), reservation.getQuantity()));
@@ -198,15 +234,6 @@ public class CommerceDomainService {
             inventory.setUpdatedAt(Instant.now()); inventoryRepository.save(inventory);
             reservation.setStatus("RELEASED"); reservation.setResolvedAt(Instant.now()); reservationRepository.save(reservation);
         }
-    }
-
-    @Transactional(readOnly = true)
-    public List<ProductResponse> listProducts(String category) {
-        return productRepository.findByStatusOrderByCreatedAtDesc(EntityStatus.ACTIVE.name())
-                .stream()
-                .filter(p -> category == null || category.isBlank() || p.getCategory().equalsIgnoreCase(category.trim()))
-                .map(this::toProductResponse)
-                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -226,10 +253,17 @@ public class CommerceDomainService {
         List<OrderLineEntity> linesToSave = new ArrayList<>();
         List<InventoryReservationEntity> reservationsToSave = new ArrayList<>();
 
+        Map<UUID, Integer> quantitiesByProduct = new TreeMap<>();
         for (OrderLineRequest item : request.items()) {
-            ProductEntity product = productRepository.findById(item.productId())
+            quantitiesByProduct.merge(item.productId(), item.quantity(), Math::addExact);
+        }
+
+        for (var entry : quantitiesByProduct.entrySet()) {
+            UUID productId = entry.getKey();
+            int quantity = entry.getValue();
+            ProductEntity product = productRepository.findById(productId)
                     .orElseThrow(() -> new DomainException(
-                            CommerceErrorCode.PRODUCT_NOT_FOUND, "Product not found: " + item.productId()));
+                            CommerceErrorCode.PRODUCT_NOT_FOUND, "Product not found: " + productId));
             if (!"ACTIVE".equals(product.getStatus())) throw new DomainException(CommerceErrorCode.PRODUCT_NOT_FOUND);
             merchantIds.add(product.getMerchantId());
             if (merchantIds.size() > 1) {
@@ -238,13 +272,13 @@ public class CommerceDomainService {
             InventoryEntity inv = inventoryRepository.lockByProductId(product.getId())
                     .orElseThrow(() -> new DomainException(
                             CommerceErrorCode.STOCK_INSUFFICIENT, "Inventory not found."));
-            if (inv.getAvailableQty() < item.quantity()) {
+            if (inv.getAvailableQty() < quantity) {
                 throw new DomainException(
                         CommerceErrorCode.STOCK_INSUFFICIENT,
                         "Insufficient stock for product " + product.getName());
             }
-            inv.setAvailableQty(inv.getAvailableQty() - item.quantity());
-            inv.setReservedQty(inv.getReservedQty() + item.quantity());
+            inv.setAvailableQty(inv.getAvailableQty() - quantity);
+            inv.setReservedQty(inv.getReservedQty() + quantity);
             inv.setUpdatedAt(now);
             inventoryRepository.save(inv);
 
@@ -253,20 +287,20 @@ public class CommerceDomainService {
                     .orderId(orderId)
                     .inventoryBalanceId(inv.getId())
                     .productId(product.getId())
-                    .quantity(item.quantity())
+                    .quantity(quantity)
                     .status(EntityStatus.ACTIVE.name())
                     .reservedAt(now)
                     .expiresAt(quoteExpiresAt)
                     .build());
 
-            long lineTotal = Math.multiplyExact(product.getUnitPrice(), item.quantity());
+            long lineTotal = Math.multiplyExact(product.getUnitPrice(), quantity);
             total = Math.addExact(total, lineTotal);
             linesToSave.add(OrderLineEntity.builder()
                     .id(UUID.randomUUID())
                     .orderId(orderId)
                     .productId(product.getId())
                     .productName(product.getName())
-                    .quantity(item.quantity())
+                    .quantity(quantity)
                     .unitPrice(product.getUnitPrice())
                     .lineTotal(lineTotal)
                     .fulfillmentStatus("PENDING")
@@ -293,45 +327,6 @@ public class CommerceDomainService {
     }
 
     @Transactional(readOnly = true)
-    public List<OrderResponse> listOrders(String buyerProfileId) {
-        return orderRepository.findByBuyerProfileIdOrderByCreatedAtDesc(buyerProfileId)
-                .stream()
-                .map(this::toOrderResponse)
-                .toList();
-    }
-
-    @Transactional(readOnly = true)
-    public List<OrderResponse> listOrdersForPortal(
-            String buyerProfileId,
-            UUID organizationId,
-            boolean globalAdmin,
-            boolean orgOperator) {
-        if (organizationId != null && (globalAdmin || orgOperator)) {
-            if (!globalAdmin) {
-                MerchantEntity merchant = merchantRepository.findByOrganizationId(organizationId)
-                        .orElseGet(() -> merchantRepository.findById(organizationId).orElse(null));
-                if (merchant == null
-                        || EntityStatus.INACTIVE.name().equalsIgnoreCase(merchant.getStatus())
-                        || buyerProfileId == null
-                        || !buyerProfileId.equals(merchant.getOwnerProfileId())) {
-                    throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-                }
-            }
-            return orderRepository.findByMerchantIdOrderByCreatedAtDesc(organizationId)
-                    .stream()
-                    .map(this::toOrderResponse)
-                    .toList();
-        }
-        if (globalAdmin) {
-            return orderRepository.findAllByOrderByCreatedAtDesc()
-                    .stream()
-                    .map(this::toOrderResponse)
-                    .toList();
-        }
-        return listOrders(buyerProfileId);
-    }
-
-    @Transactional(readOnly = true)
     public OrderResponse getOrder(String buyerProfileId, UUID orderId) {
         OrderEntity order = requireOwnedOrder(buyerProfileId, orderId);
         return toOrderResponse(order);
@@ -352,7 +347,7 @@ public class CommerceDomainService {
             throw new DomainException(CommerceErrorCode.ORDER_QUOTE_EXPIRED);
         }
         String txnRef = "HC-" + order.getId().toString().substring(0, 8).toUpperCase()
-                + "-" + (System.currentTimeMillis() % 100_000);
+                + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8).toUpperCase();
         String url = vnpayStrategy.buildPaymentUrl(
                 txnRef, order.getTotalAmount(), "Thanh toan don hang " + order.getId(), customReturnUrl);
         Instant now = Instant.now();
@@ -412,8 +407,12 @@ public class CommerceDomainService {
             order.setUpdatedAt(now);
             orderRepository.save(order);
 
-            for (OrderLineEntity line : orderLineRepository.findByOrderId(order.getId())) {
-                inventoryRepository.findByProductId(line.getProductId()).ifPresent(inv -> {
+            List<OrderLineEntity> sortedLines = orderLineRepository.findByOrderId(order.getId())
+                    .stream()
+                    .sorted(Comparator.comparing(OrderLineEntity::getProductId))
+                    .toList();
+            for (OrderLineEntity line : sortedLines) {
+                inventoryRepository.lockByProductId(line.getProductId()).ifPresent(inv -> {
                     inv.setReservedQty(Math.max(0, inv.getReservedQty() - line.getQuantity()));
                     inv.setUpdatedAt(now);
                     inventoryRepository.save(inv);
@@ -434,19 +433,7 @@ public class CommerceDomainService {
             order.setUpdatedAt(now);
             orderRepository.save(order);
 
-            for (OrderLineEntity line : orderLineRepository.findByOrderId(order.getId())) {
-                inventoryRepository.findByProductId(line.getProductId()).ifPresent(inv -> {
-                    inv.setReservedQty(Math.max(0, inv.getReservedQty() - line.getQuantity()));
-                    inv.setAvailableQty(inv.getAvailableQty() + line.getQuantity());
-                    inv.setUpdatedAt(now);
-                    inventoryRepository.save(inv);
-                });
-            }
-            for (InventoryReservationEntity res : reservationRepository.findByOrderId(order.getId())) {
-                res.setStatus("RELEASED");
-                res.setResolvedAt(now);
-                reservationRepository.save(res);
-            }
+            releaseReservations(order);
             publishDomainEvent("order.payment.failed.v1", order);
         }
         return Map.of("RspCode", "00", "Message", "Confirm Success");
@@ -469,7 +456,7 @@ public class CommerceDomainService {
             UUID lineId,
             UUID orgIdHeader,
             boolean isGlobalAdmin) {
-        OrderEntity order = orderRepository.findById(orderId)
+        OrderEntity order = orderRepository.lockById(orderId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
         verifyActiveMerchantScope(actorProfileId, order, orgIdHeader, isGlobalAdmin);
         OrderLineEntity line = orderLineRepository.findById(lineId)
@@ -477,9 +464,9 @@ public class CommerceDomainService {
         if (!line.getOrderId().equals(orderId)) {
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         }
-        if (!"PAID".equals(order.getPaymentStatus())) {
+        if (!"PAID".equals(order.getPaymentStatus()) || !"PENDING".equals(line.getFulfillmentStatus())) {
             throw new DomainException(CommerceErrorCode.ORDER_INVALID_STATE,
-                    "Cannot fulfill an unpaid order.");
+                    "Order must be paid and order line must be PENDING.");
         }
         Instant now = Instant.now();
         line.setFulfillmentStatus("DELIVERED");
@@ -509,7 +496,11 @@ public class CommerceDomainService {
             UUID orderId,
             UUID lineId,
             CreateOrderReturnRequest request) {
-        OrderEntity order = requireOwnedOrder(buyerProfileId, orderId);
+        OrderEntity order = orderRepository.lockById(orderId)
+                .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
+        if (!order.getBuyerProfileId().equals(buyerProfileId)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this order.");
+        }
         OrderLineEntity line = orderLineRepository.findById(lineId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_LINE_NOT_FOUND));
         if (!line.getOrderId().equals(orderId)) {
@@ -603,7 +594,7 @@ public class CommerceDomainService {
             ResolveOrderReturnRequest request,
             UUID orgIdHeader,
             boolean isGlobalAdmin) {
-        OrderEntity order = orderRepository.findById(orderId)
+        OrderEntity order = orderRepository.lockById(orderId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
         verifyActiveMerchantScope(actorProfileId, order, orgIdHeader, isGlobalAdmin);
         OrderReturnRequestEntity ret = returnRequestRepository.findById(returnId)
@@ -625,7 +616,7 @@ public class CommerceDomainService {
             OrderLineEntity line = orderLineRepository.findById(ret.getOrderLineId()).orElseThrow();
             if ("REFUND".equalsIgnoreCase(ret.getReturnType())) {
                 line.setFulfillmentStatus("RETURNED");
-                inventoryRepository.findByProductId(ret.getProductId()).ifPresent(inv -> {
+                inventoryRepository.lockByProductId(ret.getProductId()).ifPresent(inv -> {
                     inv.setAvailableQty(inv.getAvailableQty() + ret.getQuantity());
                     inv.setUpdatedAt(now);
                     inventoryRepository.save(inv);
@@ -658,12 +649,12 @@ public class CommerceDomainService {
             UUID orderId) {
         OrderEntity order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
-        if (!isPrivileged) {
-            if (!order.getBuyerProfileId().equals(callerProfileId)) {
-                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-            }
-        } else if (!isGlobalAdmin) {
+        if (isGlobalAdmin) {
+            // global admin allowed
+        } else if (orgIdHeader != null && isPrivileged) {
             verifyActiveMerchantScope(callerProfileId, order, orgIdHeader, false);
+        } else if (!order.getBuyerProfileId().equals(callerProfileId)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
         return returnRequestRepository.findByOrderIdOrderByCreatedAtDesc(orderId)
                 .stream()
@@ -802,6 +793,10 @@ public class CommerceDomainService {
                 .map(MerchantEntity::getName)
                 .orElse("HomeCare Mall");
         InventoryEntity inv = inventoryRepository.findByProductId(p.getId()).orElse(null);
+        return toProductResponse(p, merchantName, inv);
+    }
+
+    private ProductResponse toProductResponse(ProductEntity p, String merchantName, InventoryEntity inv) {
         return new ProductResponse(
                 p.getId(),
                 p.getMerchantId(),
@@ -822,7 +817,17 @@ public class CommerceDomainService {
     }
 
     private OrderResponse toOrderResponse(OrderEntity o) {
-        List<OrderLineResponse> lines = orderLineRepository.findByOrderId(o.getId())
+        return toOrderResponse(
+                o,
+                orderLineRepository.findByOrderId(o.getId()),
+                paymentAttemptRepository.findByOrderIdOrderByCreatedAtDesc(o.getId()));
+    }
+
+    private OrderResponse toOrderResponse(
+            OrderEntity o,
+            List<OrderLineEntity> orderLines,
+            List<PaymentAttemptEntity> paymentAttempts) {
+        List<OrderLineResponse> lines = orderLines
                 .stream()
                 .map(l -> new OrderLineResponse(
                         l.getId(),
@@ -833,7 +838,7 @@ public class CommerceDomainService {
                         l.getLineTotal(),
                         l.getFulfillmentStatus()))
                 .toList();
-        List<PaymentAttemptResponse> attempts = paymentAttemptRepository.findByOrderIdOrderByCreatedAtDesc(o.getId())
+        List<PaymentAttemptResponse> attempts = paymentAttempts
                 .stream()
                 .map(this::toPaymentAttemptResponse)
                 .toList();

@@ -3,9 +3,10 @@ package com.homecare.notification.repository;
 import com.homecare.notification.entity.NotificationEntity;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -16,5 +17,5 @@ public interface NotificationRepository extends JpaRepository<NotificationEntity
     @Query("update NotificationEntity n set n.read = true, n.readAt = :now where n.recipientId = :recipientId and n.read = false")
     int markAllRead(String recipientId, Instant now);
     Optional<NotificationEntity> findByDedupeKey(String dedupeKey);
-    List<NotificationEntity> findByRecipientIdOrderByCreatedAtDesc(String recipientId);
+    Page<NotificationEntity> findByRecipientIdOrderByCreatedAtDesc(String recipientId, Pageable pageable);
 }

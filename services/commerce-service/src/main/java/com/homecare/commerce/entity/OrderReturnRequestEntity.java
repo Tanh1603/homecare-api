@@ -7,6 +7,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -63,4 +64,9 @@ public class OrderReturnRequestEntity {
 
     @Column(name = "resolved_at")
     private Instant resolvedAt;
+
+    @Version
+    @Builder.Default
+    @Column(columnDefinition = "bigint default 0")
+    private Long version = 0L;
 }

@@ -1,5 +1,6 @@
 package com.homecare.booking.client;
 
+import com.homecare.common.error.DomainException;
 import com.homecare.grpc.interceptor.WorkloadAuthClientInterceptor;
 import com.homecare.provider.v1.AllocateTechnicianRequest;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
@@ -9,6 +10,7 @@ import com.homecare.provider.v1.VerifyOfferingResponse;
 import com.homecare.provider.v1.VerifyOrganizationMembershipRequest;
 import com.homecare.provider.v1.VerifyOrganizationMembershipResponse;
 import io.grpc.Metadata;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.MetadataUtils;
 import java.time.Instant;
 import java.util.concurrent.TimeUnit;
@@ -17,6 +19,7 @@ import net.devh.boot.grpc.client.inject.GrpcClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -88,6 +91,9 @@ public class ProviderGrpcClientAdapter {
                             .setUserId(userId)
                             .build());
             return response.getValid();
+        } catch (StatusRuntimeException e) {
+            throw new DomainException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "MEMBERSHIP_UNAVAILABLE", "Membership verification unavailable");
         } catch (Exception e) {
             log.warn("Provider org membership gRPC verification failed for org {} user {}: {}",
                     organizationId, userId, e.getMessage());
@@ -97,13 +103,16 @@ public class ProviderGrpcClientAdapter {
 
     public AllocateTechnicianResponse assignTechnician(UUID bookingId, UUID serviceId, String deviceType,
             Instant start, Instant end, UUID providerId, UUID technicianId) {
+        AllocateTechnicianRequest.Builder builder = AllocateTechnicianRequest.newBuilder().setIntentId("alloc-" + bookingId)
+                .setBookingId(bookingId.toString()).setServiceId(serviceId.toString())
+                .setDeviceType(deviceType == null ? "" : deviceType)
+                .setPreferredStartIso(start.toString()).setPreferredEndIso(end.toString())
+                .setStrictProviderMatch(providerId != null).setTechnicianId(technicianId.toString());
+        if (providerId != null) {
+            builder.setProviderId(providerId.toString());
+        }
         return withInternalMetadata(providerStub).withDeadlineAfter(3, TimeUnit.SECONDS)
-                .allocateTechnician(AllocateTechnicianRequest.newBuilder().setIntentId("alloc-" + bookingId)
-                        .setBookingId(bookingId.toString()).setServiceId(serviceId.toString())
-                        .setDeviceType(deviceType == null ? "" : deviceType)
-                        .setPreferredStartIso(start.toString()).setPreferredEndIso(end.toString())
-                        .setProviderId(providerId.toString()).setStrictProviderMatch(true)
-                        .setTechnicianId(technicianId.toString()).build());
+                .allocateTechnician(builder.build());
     }
 
     private ProviderAllocationServiceGrpc.ProviderAllocationServiceBlockingStub withInternalMetadata(

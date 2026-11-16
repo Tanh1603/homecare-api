@@ -104,7 +104,11 @@ public class CommerceOrganizationConsumer {
         if (!"COMMERCE".equalsIgnoreCase(type) && !"BOTH".equalsIgnoreCase(type)) {
             return;
         }
-        if (merchantRepository.existsByOrganizationId(orgId)) {
+        var existing = merchantRepository.findByOrganizationId(orgId);
+        if (existing.isPresent()) {
+            // Re-approval after suspension reactivates the store.
+            existing.get().setStatus(EntityStatus.ACTIVE.name());
+            merchantRepository.save(existing.get());
             return;
         }
         String name = str(data.get("name"));
@@ -118,10 +122,10 @@ public class CommerceOrganizationConsumer {
                 .name(name != null ? name : "HomeCare Merchant")
                 .city(city != null ? city : "TP. Hồ Chí Minh")
                 .ratingAvg(0.0)
-                .status(EntityStatus.INACTIVE.name())
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(Instant.now())
                 .build());
-        log.info("Initialized INACTIVE MerchantEntity for approved organizationId={} type={}", orgId, type);
+        log.info("Initialized ACTIVE MerchantEntity for approved organizationId={} type={}", orgId, type);
     }
 
     private void handleSuspended(UUID orgId) {

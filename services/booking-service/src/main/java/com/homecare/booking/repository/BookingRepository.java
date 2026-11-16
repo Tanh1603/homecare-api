@@ -15,8 +15,10 @@ import org.springframework.data.jpa.repository.Query;
 
 public interface BookingRepository extends JpaRepository<BookingEntity, UUID> {
     @Query("""
-        select b from BookingEntity b where (:requester is null or b.requesterProfileId = :requester)
-        and (:technician is null or b.assignedTechnicianProfileId = :technician)
+        select b from BookingEntity b
+        where ((:requester is null and :technician is null)
+            or b.requesterProfileId = :requester
+            or b.assignedTechnicianProfileId = :technician)
         and (:provider is null or b.providerId = :provider)
         and (:status is null or b.status = :status)
         """)

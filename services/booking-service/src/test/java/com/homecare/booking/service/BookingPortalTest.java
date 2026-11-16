@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.assertj.core.api.Assertions;
+import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
@@ -114,6 +115,134 @@ class BookingPortalTest {
                 .header("If-Match", EtagSupport.format(completed.getVersion()))
                 .contentType("application/json").content("{\"technicianId\":\"" + technician + "\"}"))
                 .andExpect(status().isConflict());
+    }
+
+    @Test void adminAssignsBookingWithoutProviderAndPersistsAllocatedProvider() throws Exception {
+        var now = Instant.now();
+        var booking = bookings.saveAndFlush(BookingEntity.builder().id(UUID.randomUUID()).requesterProfileId("no-provider-customer")
+                .serviceId(UUID.randomUUID()).serviceName("Test")
+                .preferredStart(now.plusSeconds(3600)).preferredEnd(now.plusSeconds(7200))
+                .address("Test address").status("REQUESTED").allocationStatus("ALLOCATION_FAILED")
+                .createdAt(now).updatedAt(now).build());
+        UUID technician = UUID.randomUUID(), actualProvider = UUID.randomUUID();
+        Mockito.when(provider.assignTechnician(ArgumentMatchers.eq(booking.getId()), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.isNull(), ArgumentMatchers.eq(technician)))
+                .thenReturn(AllocateTechnicianResponse.newBuilder().setAllocated(true)
+                        .setTechnicianId(technician.toString()).setTechnicianProfileId("assigned-tech").setTechnicianName("Tech")
+                        .setProviderId(actualProvider.toString()).build());
+        var auth = jwt().jwt(j -> j.subject("admin").claim("user_roles", List.of("ADMIN")));
+        mvc.perform(post("/api/v1/bookings/" + booking.getId() + "/assign").with(auth)
+                .header("If-Match", EtagSupport.format(booking.getVersion()))
+                .contentType("application/json").content("{\"technicianId\":\"" + technician + "\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.providerId").value(actualProvider.toString()));
+    }
+
+    @Test void orgOperatorAssignsBookingWithoutProviderOnlyWithMembership() throws Exception {
+        var now = Instant.now();
+        var booking = bookings.saveAndFlush(BookingEntity.builder().id(UUID.randomUUID()).requesterProfileId("no-provider-customer-2")
+                .serviceId(UUID.randomUUID()).serviceName("Test")
+                .preferredStart(now.plusSeconds(3600)).preferredEnd(now.plusSeconds(7200))
+                .address("Test address").status("REQUESTED").allocationStatus("ALLOCATION_FAILED")
+                .createdAt(now).updatedAt(now).build());
+        UUID org = UUID.randomUUID(), technician = UUID.randomUUID();
+        Mockito.when(provider.verifyOrganizationMembership(org, "org-operator")).thenReturn(true);
+        Mockito.when(provider.assignTechnician(ArgumentMatchers.eq(booking.getId()), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.eq(org), ArgumentMatchers.eq(technician)))
+                .thenReturn(AllocateTechnicianResponse.newBuilder().setAllocated(true)
+                        .setTechnicianId(technician.toString()).setTechnicianProfileId("assigned-tech").setTechnicianName("Tech")
+                        .setProviderId(org.toString()).build());
+        String body = "{\"technicianId\":\"" + technician + "\"}";
+        mvc.perform(post("/api/v1/bookings/" + booking.getId() + "/assign")
+                .with(jwt().jwt(j -> j.subject("outsider").claim("user_roles", List.of("ORGANIZATION"))))
+                .header("X-Organization-Id", org).header("If-Match", EtagSupport.format(booking.getVersion()))
+                .contentType("application/json").content(body)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/bookings/" + booking.getId() + "/assign")
+                .with(jwt().jwt(j -> j.subject("org-operator").claim("user_roles", List.of("ORGANIZATION"))))
+                .header("X-Organization-Id", org).header("If-Match", EtagSupport.format(booking.getVersion()))
+                .contentType("application/json").content(body))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.providerId").value(org.toString()));
+    }
+
+    @Test void orgOperatorWithoutOrgHeaderUsesPersonalBookingScope() throws Exception {
+        String user = "org-personal-" + UUID.randomUUID();
+        var own = save(user, "REQUESTED");
+        var other = save("other-" + UUID.randomUUID(), "REQUESTED");
+        var orgAuth = jwt().jwt(j -> j.subject(user).claim("user_roles", List.of("ORGANIZATION")));
+
+        mvc.perform(get("/api/v1/bookings").with(orgAuth))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(own.getId().toString()));
+        mvc.perform(get("/api/v1/bookings/" + own.getId()).with(orgAuth))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/bookings/" + other.getId()).with(orgAuth))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/bookings/" + other.getId() + "/cancel").with(orgAuth)
+                .header("If-Match", EtagSupport.format(other.getVersion())))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/bookings/" + own.getId() + "/cancel").with(orgAuth)
+                .header("If-Match", EtagSupport.format(own.getVersion())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("CANCELLED"));
+    }
+
+    @Test void orgOperatorListsOrgBookingsWithHeaderAndRejectsCrossOrg() throws Exception {
+        var booking = save("cust-org-" + UUID.randomUUID(), "REQUESTED");
+        UUID orgId = booking.getProviderId();
+        UUID otherOrgId = UUID.randomUUID();
+        Mockito.when(provider.verifyOrganizationMembership(orgId, "org-staff")).thenReturn(true);
+        var auth = jwt().jwt(j -> j.subject("org-staff").claim("user_roles", List.of("ORGANIZATION")));
+
+        mvc.perform(get("/api/v1/bookings").with(auth).header("X-Organization-Id", orgId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].id").value(booking.getId().toString()));
+        mvc.perform(get("/api/v1/bookings/" + booking.getId()).with(auth).header("X-Organization-Id", otherOrgId))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test void technicianWithoutOrgHeaderSeesPersonalAndAssignedBookingsAndSupportsScopeFilter() throws Exception {
+        String techUser = "tech-dual-" + UUID.randomUUID();
+        Instant now = Instant.now();
+        var personal = save(techUser, "REQUESTED");
+        var assigned = bookings.saveAndFlush(BookingEntity.builder()
+                .id(UUID.randomUUID())
+                .requesterProfileId("customer-" + UUID.randomUUID())
+                .assignedTechnicianProfileId(techUser)
+                .serviceId(UUID.randomUUID()).serviceName("Assigned Test").providerId(UUID.randomUUID())
+                .preferredStart(now.plusSeconds(3600)).preferredEnd(now.plusSeconds(7200))
+                .address("Assigned address").status("ASSIGNED").allocationStatus("ALLOCATED")
+                .createdAt(now).updatedAt(now).build());
+        save("unrelated-" + UUID.randomUUID(), "REQUESTED");
+
+        var techAuth = jwt().jwt(j -> j.subject(techUser).claim("user_roles", List.of("TECHNICIAN")));
+        var customerAuth = jwt().jwt(j -> j.subject("plain-customer-" + UUID.randomUUID()));
+
+        // Default (no scope) returns both personal booking and assigned job
+        mvc.perform(get("/api/v1/bookings").with(techAuth))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(2))
+                .andExpect(jsonPath("$.data.items[*].id", Matchers.containsInAnyOrder(
+                        personal.getId().toString(), assigned.getId().toString())));
+
+        // scope=CUSTOMER returns only personal booking
+        mvc.perform(get("/api/v1/bookings?scope=CUSTOMER").with(techAuth))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(personal.getId().toString()));
+
+        // scope=TECHNICIAN returns only assigned job
+        mvc.perform(get("/api/v1/bookings?scope=TECHNICIAN").with(techAuth))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(assigned.getId().toString()));
+
+        // Non-technician requesting scope=TECHNICIAN is rejected
+        mvc.perform(get("/api/v1/bookings?scope=TECHNICIAN").with(customerAuth))
+                .andExpect(status().isForbidden());
+
+        // Invalid scope fails validation
+        mvc.perform(get("/api/v1/bookings?scope=INVALID").with(techAuth))
+                .andExpect(status().isBadRequest());
     }
     private BookingEntity save(String user, String status) {
         var now = Instant.now();

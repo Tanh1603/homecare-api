@@ -151,7 +151,7 @@ public class CommerceController {
                     sub,
                     "POST:/api/v1/orders/" + orderId + "/payment-attempts",
                     idempotencyKey,
-                    orderId.toString(),
+                    orderId + "|" + (returnUrl == null ? "" : returnUrl),
                     () -> service.createPaymentAttempt(sub, orderId, returnUrl));
         } else {
             attempt = service.createPaymentAttempt(sub, orderId, returnUrl);
@@ -244,9 +244,6 @@ public class CommerceController {
                 new String[]{RbacConstants.ROLE_ORGANIZATION, RbacConstants.ROLE_ADMIN},
                 RbacConstants.PERM_ORDER_FULFILL, RbacConstants.PERM_ORDER_RETURN_RESOLVE, RbacConstants.PERM_ADMIN_ALL);
         boolean globalAdmin = isGlobalAdmin(jwt);
-        if (isPrivileged && !globalAdmin && orgIdHeader == null) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
                 service.listOrderReturns(jwt.getSubject(), isPrivileged, globalAdmin, orgIdHeader, orderId),

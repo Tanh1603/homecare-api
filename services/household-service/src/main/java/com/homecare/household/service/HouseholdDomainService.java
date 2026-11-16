@@ -39,6 +39,7 @@ import com.homecare.household.repository.HouseholdOutboxEventRepository;
 import com.homecare.household.repository.HouseholdRepository;
 import com.homecare.household.repository.MaintenanceScheduleRepository;
 import com.homecare.household.repository.WarrantyRepository;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
@@ -84,11 +85,10 @@ public class HouseholdDomainService {
     }
 
     @Transactional(readOnly = true)
-    public List<HouseholdResponse> listHouseholds(String ownerProfileId) {
-        return householdRepository.findByOwnerProfileIdOrderByCreatedAtDesc(ownerProfileId)
-                .stream()
-                .map(this::toHouseholdResponse)
-                .toList();
+    public PageResponse<HouseholdResponse> householdsPage(String ownerProfileId, int page, int size) {
+        var pageable = pageRequest(page, size, "createdAt");
+        var result = householdRepository.findByOwnerProfileIdOrderByCreatedAtDesc(ownerProfileId, pageable);
+        return PageResponse.of(result.map(this::toHouseholdResponse).getContent(), page, size, result.getTotalElements());
     }
 
     @Transactional(readOnly = true)
@@ -149,12 +149,13 @@ public class HouseholdDomainService {
     }
 
     @Transactional(readOnly = true)
-    public List<DeviceResponse> listDevices(String ownerProfileId, UUID householdId) {
-        List<Device> devices = householdId != null
+    public PageResponse<DeviceResponse> devicesPage(String ownerProfileId, UUID householdId, int page, int size) {
+        var pageable = pageRequest(page, size, "createdAt");
+        var result = householdId != null
                 ? deviceRepository.findByHouseholdIdOrderByCreatedAtDesc(
-                        requireOwnedHousehold(ownerProfileId, householdId).getId())
-                : deviceRepository.findByOwnerProfileIdOrderByCreatedAtDesc(ownerProfileId);
-        return devices.stream().map(this::toDeviceResponse).toList();
+                        requireOwnedHousehold(ownerProfileId, householdId).getId(), pageable)
+                : deviceRepository.findByOwnerProfileIdOrderByCreatedAtDesc(ownerProfileId, pageable);
+        return PageResponse.of(result.map(this::toDeviceResponse).getContent(), page, size, result.getTotalElements());
     }
 
     @Transactional(readOnly = true)
@@ -207,8 +208,12 @@ public class HouseholdDomainService {
     @Transactional(readOnly = true)
     public PageResponse<WarrantyResponse> warrantiesPage(String user, UUID org, boolean admin, boolean operator, int page, int size) {
         var pageable = pageRequest(page, size, "endsOn");
-        if (operator && !admin && (org == null || !providerOrgClient.verifyOrganizationMembership(org, user))) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        var result = warrantyRepository.search(admin || operator ? null : user, admin || operator ? org : null, pageable);
+        if (org != null && !admin && (!operator || !providerOrgClient.verifyOrganizationMembership(org, user))) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        var result = org != null
+                ? warrantyRepository.search(null, org, pageable)
+                : warrantyRepository.search(admin ? null : user, null, pageable);
         return PageResponse.of(result.map(this::toWarrantyResponse).getContent(), page, size, result.getTotalElements());
     }
 
@@ -235,7 +240,7 @@ public class HouseholdDomainService {
                 .id(UUID.randomUUID())
                 .deviceId(device.getId())
                 .ownerProfileId(ownerProfileId)
-                .organizationId(request.organizationId())
+                .organizationId(null)
                 .source("MANUAL")
                 .providerName(request.providerName().trim())
                 .startsOn(request.startsOn())
@@ -246,33 +251,6 @@ public class HouseholdDomainService {
                 .createdAt(Instant.now())
                 .build());
         return toWarrantyResponse(saved);
-    }
-
-    @Transactional(readOnly = true)
-    public List<WarrantyResponse> listWarrantiesForOrganization(
-            String actorProfileId,
-            UUID organizationId,
-            boolean globalAdmin) {
-        if (!globalAdmin) {
-            if (organizationId == null || actorProfileId == null
-                    || !providerOrgClient.verifyOrganizationMembership(organizationId, actorProfileId)) {
-                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-            }
-        }
-        return listWarrantiesForOrganization(organizationId, globalAdmin);
-    }
-
-    @Transactional(readOnly = true)
-    public List<WarrantyResponse> listWarrantiesForOrganization(UUID organizationId, boolean globalAdmin) {
-        List<Warranty> list;
-        if (organizationId != null) {
-            list = warrantyRepository.findByOrganizationIdOrderByEndsOnDesc(organizationId);
-        } else if (globalAdmin) {
-            list = warrantyRepository.findAllByOrderByEndsOnDesc();
-        } else {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Organization context is required.");
-        }
-        return list.stream().map(this::toWarrantyResponse).toList();
     }
 
     @Transactional
@@ -380,11 +358,7 @@ public class HouseholdDomainService {
 
     @Transactional
     public WarrantyResponse updateWarranty(String ownerProfileId, UUID warrantyId, UpdateWarrantyRequest request) {
-        Warranty w = warrantyRepository.findById(warrantyId)
-                .orElseThrow(() -> new DomainException(HouseholdErrorCode.WARRANTY_NOT_FOUND));
-        if (!w.getOwnerProfileId().equals(ownerProfileId)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this warranty.");
-        }
+        Warranty w = requireMutableOwnedWarranty(ownerProfileId, warrantyId);
         LocalDate newStarts = request.startsOn() != null ? request.startsOn() : w.getStartsOn();
         LocalDate newEnds = request.endsOn() != null ? request.endsOn() : w.getEndsOn();
         if (newEnds.isBefore(newStarts)) {
@@ -411,12 +385,20 @@ public class HouseholdDomainService {
 
     @Transactional
     public void deleteWarranty(String ownerProfileId, UUID warrantyId) {
+        Warranty w = requireMutableOwnedWarranty(ownerProfileId, warrantyId);
+        warrantyRepository.delete(w);
+    }
+
+    private Warranty requireMutableOwnedWarranty(String ownerProfileId, UUID warrantyId) {
         Warranty w = warrantyRepository.findById(warrantyId)
                 .orElseThrow(() -> new DomainException(HouseholdErrorCode.WARRANTY_NOT_FOUND));
         if (!w.getOwnerProfileId().equals(ownerProfileId)) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this warranty.");
         }
-        warrantyRepository.delete(w);
+        if ("ORDER_AUTO_ACTIVATED".equalsIgnoreCase(w.getSource())) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Store-issued warranties cannot be modified or deleted.");
+        }
+        return w;
     }
 
     @Transactional
@@ -596,6 +578,18 @@ public class HouseholdDomainService {
         Warranty w = warrantyOpt.get();
         Device device = deviceRepository.findById(w.getDeviceId()).orElse(null);
         String deviceType = device != null ? device.getDeviceType() : "AC";
+        if (!"ORDER_AUTO_ACTIVATED".equalsIgnoreCase(w.getSource()) || w.getOrganizationId() == null) {
+            return new VerifyWarrantyResponse(
+                    false,
+                    false,
+                    w.getId(),
+                    w.getDeviceId(),
+                    deviceType,
+                    null,
+                    w.getProviderName(),
+                    w.getEndsOn(),
+                    "NOT_STORE_WARRANTY");
+        }
         boolean isExpired = w.getEndsOn().isBefore(LocalDate.now()) || !EntityStatus.ACTIVE.name().equalsIgnoreCase(w.getStatus());
         if (isExpired) {
             return new VerifyWarrantyResponse(
@@ -629,7 +623,11 @@ public class HouseholdDomainService {
         for (MaintenanceSchedule schedule : due) {
             schedule.setNotifiedAt(now);
             scheduleRepository.save(schedule);
-            UUID eventId = UUID.randomUUID();
+            UUID eventId = UUID.nameUUIDFromBytes(
+                    ("maint-due-" + schedule.getId() + "-" + schedule.getDueOn()).getBytes(StandardCharsets.UTF_8));
+            if (outboxEventRepository.existsById(eventId)) {
+                continue;
+            }
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("scheduleId", schedule.getId());
             data.put("deviceId", schedule.getDeviceId());
