@@ -40,7 +40,7 @@ class TokenBlacklistFilterTest {
         objectMapper = new ObjectMapper();
         chain = mock(GatewayFilterChain.class);
         when(chain.filter(any())).thenReturn(Mono.empty());
-        filter = new TokenBlacklistFilter(redisTemplate, objectMapper);
+        filter = new TokenBlacklistFilter(redisTemplate, new com.homecare.gateway.config.GatewayErrorHandlers(objectMapper));
     }
 
     @Test

@@ -188,7 +188,7 @@ class HouseholdDomainServiceTest {
         eventConsumer.onDomainEvent(deliveredEventJson);
         eventConsumer.onDomainEvent(deliveredEventJson); // idempotent duplicate test
 
-        List<DeviceResponse> devices = service.listDevices(buyer, null);
+        List<DeviceResponse> devices = service.devicesPage(buyer, null, 1, 20).items();
         assertThat(devices).hasSize(1);
         DeviceResponse autoDevice = devices.getFirst();
         assertThat(autoDevice.deviceType()).isEqualTo("WATER_PURIFIER");
@@ -217,13 +217,13 @@ class HouseholdDomainServiceTest {
         assertThat(careRecords.getFirst().kind()).isEqualTo("WARRANTY_REPAIR");
         assertThat(careRecords.getFirst().bookingId()).isEqualTo(bookingId);
 
-        assertThatThrownBy(() -> service.listWarrantiesForOrganization("spoofing-org-user", orgId, false))
+        assertThatThrownBy(() -> service.warrantiesPage("spoofing-org-user", orgId, false, true, 1, 20))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("RESOURCE_FORBIDDEN");
 
         when(providerOrgClient.verifyOrganizationMembership(orgId, "valid-org-user")).thenReturn(true);
-        assertThat(service.listWarrantiesForOrganization("valid-org-user", orgId, false)).hasSize(1);
+        assertThat(service.warrantiesPage("valid-org-user", orgId, false, true, 1, 20).items()).hasSize(1);
     }
 
     @Test
@@ -256,7 +256,7 @@ class HouseholdDomainServiceTest {
                 """.formatted(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), owner, storeOrgId, UUID.randomUUID()).strip();
         eventConsumer.onDomainEvent(deliveredEventJson);
 
-        WarrantyResponse storeWarranty = service.listWarranties(owner, service.listDevices(owner, null).stream()
+        WarrantyResponse storeWarranty = service.listWarranties(owner, service.devicesPage(owner, null, 1, 20).items().stream()
                         .filter(d -> d.deviceType().equals("WATER_PURIFIER")).findFirst().orElseThrow().id())
                 .getFirst();
         assertThatThrownBy(() -> service.updateWarranty(
@@ -270,5 +270,22 @@ class HouseholdDomainServiceTest {
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("RESOURCE_FORBIDDEN");
+    }
+
+    @Test
+    void householdsAndDevicesPaginateAtDatabaseLevel() {
+        String user = "paged-hh-" + UUID.randomUUID();
+        var h1 = service.createHousehold(user, new CreateHouseholdRequest("Home 1", "Addr 1", null));
+        service.createHousehold(user, new CreateHouseholdRequest("Home 2", "Addr 2", null));
+        service.createDevice(user, new CreateDeviceRequest(h1.id(), "D1", "AC", "B", "M1", null, LocalDate.now()));
+        service.createDevice(user, new CreateDeviceRequest(h1.id(), "D2", "AC", "B", "M2", null, LocalDate.now()));
+
+        var hPage = service.householdsPage(user, 1, 1);
+        assertThat(hPage.items()).hasSize(1);
+        assertThat(hPage.pagination().totalItems()).isEqualTo(2);
+
+        var dPage = service.devicesPage(user, null, 1, 1);
+        assertThat(dPage.items()).hasSize(1);
+        assertThat(dPage.pagination().totalItems()).isEqualTo(2);
     }
 }

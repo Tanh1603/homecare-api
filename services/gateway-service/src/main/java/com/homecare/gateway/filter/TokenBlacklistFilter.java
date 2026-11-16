@@ -1,16 +1,11 @@
 package com.homecare.gateway.filter;
 
-import java.nio.charset.StandardCharsets;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
-import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
-import org.springframework.http.MediaType;
-import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
@@ -19,11 +14,9 @@ import org.springframework.web.server.ServerWebExchange;
 
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
-import com.homecare.common.web.ApiResponse;
-import com.homecare.common.web.CorrelationIdSupport;
+import com.homecare.gateway.config.GatewayErrorHandlers;
 
 import reactor.core.publisher.Mono;
-import tools.jackson.databind.ObjectMapper;
 
 @Component
 public class TokenBlacklistFilter implements GlobalFilter, Ordered {
@@ -32,11 +25,11 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
     public static final String BLACKLIST_SESSION_KEY_PREFIX = "auth:blacklist:session:";
 
     private final ReactiveStringRedisTemplate redisTemplate;
-    private final ObjectMapper objectMapper;
+    private final GatewayErrorHandlers errorHandlers;
 
-    public TokenBlacklistFilter(ReactiveStringRedisTemplate redisTemplate, ObjectMapper objectMapper) {
+    public TokenBlacklistFilter(ReactiveStringRedisTemplate redisTemplate, GatewayErrorHandlers errorHandlers) {
         this.redisTemplate = redisTemplate;
-        this.objectMapper = objectMapper;
+        this.errorHandlers = errorHandlers;
     }
 
     @Override
@@ -58,7 +51,7 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
                     Jwt jwt = optionalAuth.get().getToken();
                     if (SupabaseJwtConverterSupport.isUserStatusBlocked(jwt)) {
                         log.warn("Blocked request for suspended/banned user sub={}", jwt.getSubject());
-                        return writeErrorResponse(exchange, CommonErrorCode.ACCESS_DENIED);
+                        return errorHandlers.writeError(exchange, CommonErrorCode.ACCESS_DENIED);
                     }
                     String sid = jwt.getClaimAsString("session_id");
 
@@ -76,39 +69,10 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
                             .flatMap(isBlacklisted -> {
                                 if (Boolean.TRUE.equals(isBlacklisted)) {
                                     log.warn("Blocked request with blacklisted session key={}", key);
-                                    return writeErrorResponse(exchange, CommonErrorCode.TOKEN_REVOKED);
+                                    return errorHandlers.writeError(exchange, CommonErrorCode.TOKEN_REVOKED);
                                 }
                                 return chain.filter(exchange);
                             });
                 });
-    }
-
-    private Mono<Void> writeErrorResponse(ServerWebExchange exchange, CommonErrorCode errorCode) {
-        ServerHttpResponse response = exchange.getResponse();
-        response.setStatusCode(errorCode.status());
-        response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
-
-        String suppliedId = exchange.getRequest().getHeaders().getFirst(CorrelationIdSupport.HEADER_NAME);
-        String correlationId = CorrelationIdSupport.resolveOrGenerate(suppliedId);
-        response.getHeaders().set(CorrelationIdSupport.HEADER_NAME, correlationId);
-
-        ApiResponse<Void> errorResponse = ApiResponse.error(
-                errorCode.status().value(),
-                errorCode.name(),
-                errorCode.defaultMessage(),
-                correlationId);
-
-        byte[] bytes;
-        try {
-            bytes = objectMapper.writeValueAsBytes(errorResponse);
-        } catch (Exception e) {
-            bytes = ("{\"success\":false,\"code\":" + errorCode.status().value()
-                    + ",\"errorCode\":\"" + errorCode.name()
-                    + "\",\"message\":\"" + errorCode.defaultMessage() + "\",\"data\":null}")
-                    .getBytes(StandardCharsets.UTF_8);
-        }
-
-        DataBuffer buffer = response.bufferFactory().wrap(bytes);
-        return response.writeWith(Mono.just(buffer));
     }
 }

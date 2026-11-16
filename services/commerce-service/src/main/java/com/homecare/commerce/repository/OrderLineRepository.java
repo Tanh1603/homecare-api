@@ -1,5 +1,6 @@
 package com.homecare.commerce.repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -9,4 +10,5 @@ import com.homecare.commerce.entity.OrderLineEntity;
 
 public interface OrderLineRepository extends JpaRepository<OrderLineEntity, UUID> {
     List<OrderLineEntity> findByOrderId(UUID orderId);
+    List<OrderLineEntity> findByOrderIdIn(Collection<UUID> orderIds);
 }

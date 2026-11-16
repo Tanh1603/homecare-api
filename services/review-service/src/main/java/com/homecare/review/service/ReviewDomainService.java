@@ -3,6 +3,7 @@ package com.homecare.review.service;
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
+import com.homecare.common.web.PageResponse;
 import com.homecare.review.client.EvidenceVerificationClient;
 import com.homecare.review.client.EvidenceVerificationClient.BookingEligibility;
 import com.homecare.review.client.EvidenceVerificationClient.OrderLineEligibility;
@@ -17,6 +18,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -116,21 +119,23 @@ public class ReviewDomainService {
     }
 
     @Transactional(readOnly = true)
-    public List<ReviewResponse> listProviderReviews(UUID providerId) {
-        return reviewRepository.findByTargetTypeAndTargetIdAndStatusOrderByCreatedAtDesc(
-                "SERVICE_BOOKING", providerId, EntityStatus.PUBLISHED.name())
-                .stream()
-                .map(this::toResponse)
-                .toList();
+    public PageResponse<ReviewResponse> providerReviewsPage(UUID providerId, int page, int size) {
+        return reviewsPage("SERVICE_BOOKING", providerId, page, size);
     }
 
     @Transactional(readOnly = true)
-    public List<ReviewResponse> listProductReviews(UUID productId) {
-        return reviewRepository.findByTargetTypeAndTargetIdAndStatusOrderByCreatedAtDesc(
-                "PRODUCT_ORDER_LINE", productId, EntityStatus.PUBLISHED.name())
-                .stream()
-                .map(this::toResponse)
-                .toList();
+    public PageResponse<ReviewResponse> productReviewsPage(UUID productId, int page, int size) {
+        return reviewsPage("PRODUCT_ORDER_LINE", productId, page, size);
+    }
+
+    private PageResponse<ReviewResponse> reviewsPage(String targetType, UUID targetId, int page, int size) {
+        if (page < 1 || size < 1 || size > 100) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        }
+        var pageable = PageRequest.of(page - 1, size, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by("id")));
+        var result = reviewRepository.findByTargetTypeAndTargetIdAndStatusOrderByCreatedAtDesc(
+                targetType, targetId, EntityStatus.PUBLISHED.name(), pageable);
+        return PageResponse.of(result.map(this::toResponse).getContent(), page, size, result.getTotalElements());
     }
 
     private ReviewResponse toResponse(ReviewEntity r) {

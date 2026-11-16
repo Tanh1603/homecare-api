@@ -47,17 +47,34 @@ class ReviewDomainServiceTest {
         mvc.perform(MockMvcRequestBuilders.patch(path).with(owner)
                 .contentType("application/json").content("{\"rating\":3}"))
                 .andExpect(MockMvcResultMatchers.status().isOk());
-        assertThat(service.listProductReviews(product).getFirst().rating()).isEqualTo(3);
+        assertThat(service.productReviewsPage(product, 1, 20).items().getFirst().rating()).isEqualTo(3);
         mvc.perform(MockMvcRequestBuilders.delete("/api/v1/products/" + UUID.randomUUID() + "/reviews/" + review.id()).with(owner))
                 .andExpect(MockMvcResultMatchers.status().isNotFound());
         mvc.perform(MockMvcRequestBuilders.delete(path).with(owner))
                 .andExpect(MockMvcResultMatchers.status().isNoContent());
-        assertThat(service.listProductReviews(product)).isEmpty();
+        assertThat(service.productReviewsPage(product, 1, 20).items()).isEmpty();
 
         var recreated = service.createProductReview("review-owner", product, new CreateProductReviewRequest(line, 4, "Again"));
         assertThat(recreated.id()).isEqualTo(review.id());
         assertThat(recreated.status()).isEqualTo("PUBLISHED");
-        assertThat(service.listProductReviews(product)).extracting("comment").containsExactly("Again");
+        assertThat(service.productReviewsPage(product, 1, 20).items()).extracting("comment").containsExactly("Again");
+
+        UUID line2 = UUID.randomUUID();
+        when(verificationClient.verifyOrderLineEligibility(line2, "review-owner-2")).thenReturn(new OrderLineEligibility(true, product));
+        service.createProductReview("review-owner-2", product, new CreateProductReviewRequest(line2, 5, "Second"));
+        var prodPage = service.productReviewsPage(product, 1, 1);
+        assertThat(prodPage.items()).hasSize(1);
+        assertThat(prodPage.pagination().totalItems()).isEqualTo(2);
+
+        UUID provider = UUID.randomUUID();
+        UUID b1 = UUID.randomUUID(), b2 = UUID.randomUUID();
+        when(verificationClient.verifyBookingEligible(b1, "u1")).thenReturn(new com.homecare.review.client.EvidenceVerificationClient.BookingEligibility(true, provider));
+        when(verificationClient.verifyBookingEligible(b2, "u2")).thenReturn(new com.homecare.review.client.EvidenceVerificationClient.BookingEligibility(true, provider));
+        service.createServiceReview("u1", new com.homecare.review.dto.ReviewDtos.CreateServiceReviewRequest(b1, provider, 5, "S1"));
+        service.createServiceReview("u2", new com.homecare.review.dto.ReviewDtos.CreateServiceReviewRequest(b2, provider, 4, "S2"));
+        var provPage = service.providerReviewsPage(provider, 1, 1);
+        assertThat(provPage.items()).hasSize(1);
+        assertThat(provPage.pagination().totalItems()).isEqualTo(2);
     }
 
     @Autowired

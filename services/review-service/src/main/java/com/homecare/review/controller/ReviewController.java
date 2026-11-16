@@ -81,10 +81,9 @@ public class ReviewController {
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<ReviewResponse> items = service.listProviderReviews(providerId);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                PageResponse.of(items, page, size, items.size()),
+                service.providerReviewsPage(providerId, page, size),
                 httpRequest));
     }
 
@@ -107,10 +106,9 @@ public class ReviewController {
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<ReviewResponse> items = service.listProductReviews(productId);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                PageResponse.of(items, page, size, items.size()),
+                service.productReviewsPage(productId, page, size),
                 httpRequest));
     }
 }

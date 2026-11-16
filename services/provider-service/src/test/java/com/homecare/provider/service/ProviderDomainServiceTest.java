@@ -28,8 +28,8 @@ class ProviderDomainServiceTest {
 
     @Test
     void seedsCatalogRanksHighestScoreTechnicianAndEnforcesIdempotentIntentAndOverlapGuard() {
-        assertThat(service.listOfferings(null)).hasSizeGreaterThanOrEqualTo(6);
-        assertThat(service.listProviders()).hasSizeGreaterThanOrEqualTo(2);
+        assertThat(service.offeringsPage(null, null, null, 1, 20).pagination().totalItems()).isGreaterThanOrEqualTo(6);
+        assertThat(service.providersPage(null, null, 1, 20).pagination().totalItems()).isGreaterThanOrEqualTo(2);
 
         Instant start = Instant.now().plus(2, ChronoUnit.HOURS);
         Instant end = start.plus(60, ChronoUnit.MINUTES);

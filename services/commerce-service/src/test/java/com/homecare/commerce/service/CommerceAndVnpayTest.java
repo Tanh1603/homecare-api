@@ -55,7 +55,8 @@ class CommerceAndVnpayTest {
 
     @Test
     void enforcesSingleMerchantReservesStockVerifiesVnpayIpnAndFulfillsOrderLines() {
-        assertThat(service.listProducts(null)).hasSizeGreaterThanOrEqualTo(13);
+        assertThat(service.productsPage(null, null, null, null, null, null, null, 1, 20).pagination().totalItems())
+                .isGreaterThanOrEqualTo(13);
 
         assertThatThrownBy(() -> service.createOrder(
                 "buyer-1",
@@ -276,8 +277,8 @@ class CommerceAndVnpayTest {
         assertThat(service.handleVnpayIpn(badAmount).get("RspCode")).isEqualTo("04");
         assertThat(service.getOrder("buyer-sec-1", order.id()).status()).isEqualTo("AWAITING_PAYMENT");
 
-        assertThatThrownBy(() -> service.listOrdersForPortal(
-                "stranger-org-user", CommerceDataInitializer.MERCHANT_1_ID, false, true))
+        assertThatThrownBy(() -> service.ordersPage(
+                "stranger-org-user", CommerceDataInitializer.MERCHANT_1_ID, false, true, null, null, null, 1, 20))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("RESOURCE_FORBIDDEN");

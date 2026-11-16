@@ -104,7 +104,18 @@ public class CommerceDomainService {
         if ((minPrice != null && minPrice < 0) || (maxPrice != null && maxPrice < 0)
                 || (minPrice != null && maxPrice != null && minPrice > maxPrice)) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         var result = productRepository.search(category, q, merchantId, minPrice, maxPrice, inStock, pageRequest(page, size, sort, true));
-        return PageResponse.of(result.map(this::toProductResponse).getContent(), page, size, result.getTotalElements());
+        List<ProductEntity> content = result.getContent();
+        if (content.isEmpty()) {
+            return PageResponse.of(List.of(), page, size, result.getTotalElements());
+        }
+        var merchantNames = merchantRepository.findAllById(content.stream().map(ProductEntity::getMerchantId).collect(java.util.stream.Collectors.toSet()))
+                .stream().collect(java.util.stream.Collectors.toMap(MerchantEntity::getId, MerchantEntity::getName));
+        var invByProduct = inventoryRepository.findByProductIdIn(content.stream().map(ProductEntity::getId).toList())
+                .stream().collect(java.util.stream.Collectors.toMap(InventoryEntity::getProductId, i -> i));
+        var items = content.stream()
+                .map(p -> toProductResponse(p, merchantNames.getOrDefault(p.getMerchantId(), "HomeCare Mall"), invByProduct.get(p.getId())))
+                .toList();
+        return PageResponse.of(items, page, size, result.getTotalElements());
     }
 
     @Transactional(readOnly = true)
@@ -121,7 +132,21 @@ public class CommerceDomainService {
         }
         boolean orgOrAdminScope = admin || (operator && merchant != null);
         var result = orderRepository.search(orgOrAdminScope ? null : user, merchant, status, q, pageRequest(page, size, sort, false));
-        return PageResponse.of(result.map(this::toOrderResponse).getContent(), page, size, result.getTotalElements());
+        List<OrderEntity> content = result.getContent();
+        if (content.isEmpty()) {
+            return PageResponse.of(List.of(), page, size, result.getTotalElements());
+        }
+        List<UUID> orderIds = content.stream().map(OrderEntity::getId).toList();
+        var linesByOrder = orderLineRepository.findByOrderIdIn(orderIds).stream()
+                .collect(java.util.stream.Collectors.groupingBy(OrderLineEntity::getOrderId));
+        var attemptsByOrder = paymentAttemptRepository.findByOrderIdInOrderByCreatedAtDesc(orderIds).stream()
+                .collect(java.util.stream.Collectors.groupingBy(PaymentAttemptEntity::getOrderId));
+        var items = content.stream()
+                .map(o -> toOrderResponse(o,
+                        linesByOrder.getOrDefault(o.getId(), List.of()),
+                        attemptsByOrder.getOrDefault(o.getId(), List.of())))
+                .toList();
+        return PageResponse.of(items, page, size, result.getTotalElements());
     }
 
     @Transactional(readOnly = true)
@@ -212,15 +237,6 @@ public class CommerceDomainService {
     }
 
     @Transactional(readOnly = true)
-    public List<ProductResponse> listProducts(String category) {
-        return productRepository.findByStatusOrderByCreatedAtDesc(EntityStatus.ACTIVE.name())
-                .stream()
-                .filter(p -> category == null || category.isBlank() || p.getCategory().equalsIgnoreCase(category.trim()))
-                .map(this::toProductResponse)
-                .toList();
-    }
-
-    @Transactional(readOnly = true)
     public ProductResponse getProduct(UUID productId) {
         ProductEntity p = productRepository.findById(productId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.PRODUCT_NOT_FOUND));
@@ -308,45 +324,6 @@ public class CommerceDomainService {
         reservationRepository.saveAll(reservationsToSave);
         publishDomainEvent("order.created.v1", savedOrder);
         return toOrderResponse(savedOrder);
-    }
-
-    @Transactional(readOnly = true)
-    public List<OrderResponse> listOrders(String buyerProfileId) {
-        return orderRepository.findByBuyerProfileIdOrderByCreatedAtDesc(buyerProfileId)
-                .stream()
-                .map(this::toOrderResponse)
-                .toList();
-    }
-
-    @Transactional(readOnly = true)
-    public List<OrderResponse> listOrdersForPortal(
-            String buyerProfileId,
-            UUID organizationId,
-            boolean globalAdmin,
-            boolean orgOperator) {
-        if (organizationId != null && (globalAdmin || orgOperator)) {
-            if (!globalAdmin) {
-                MerchantEntity merchant = merchantRepository.findByOrganizationId(organizationId)
-                        .orElseGet(() -> merchantRepository.findById(organizationId).orElse(null));
-                if (merchant == null
-                        || EntityStatus.INACTIVE.name().equalsIgnoreCase(merchant.getStatus())
-                        || buyerProfileId == null
-                        || !buyerProfileId.equals(merchant.getOwnerProfileId())) {
-                    throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-                }
-            }
-            return orderRepository.findByMerchantIdOrderByCreatedAtDesc(organizationId)
-                    .stream()
-                    .map(this::toOrderResponse)
-                    .toList();
-        }
-        if (globalAdmin) {
-            return orderRepository.findAllByOrderByCreatedAtDesc()
-                    .stream()
-                    .map(this::toOrderResponse)
-                    .toList();
-        }
-        return listOrders(buyerProfileId);
     }
 
     @Transactional(readOnly = true)
@@ -816,6 +793,10 @@ public class CommerceDomainService {
                 .map(MerchantEntity::getName)
                 .orElse("HomeCare Mall");
         InventoryEntity inv = inventoryRepository.findByProductId(p.getId()).orElse(null);
+        return toProductResponse(p, merchantName, inv);
+    }
+
+    private ProductResponse toProductResponse(ProductEntity p, String merchantName, InventoryEntity inv) {
         return new ProductResponse(
                 p.getId(),
                 p.getMerchantId(),
@@ -836,7 +817,17 @@ public class CommerceDomainService {
     }
 
     private OrderResponse toOrderResponse(OrderEntity o) {
-        List<OrderLineResponse> lines = orderLineRepository.findByOrderId(o.getId())
+        return toOrderResponse(
+                o,
+                orderLineRepository.findByOrderId(o.getId()),
+                paymentAttemptRepository.findByOrderIdOrderByCreatedAtDesc(o.getId()));
+    }
+
+    private OrderResponse toOrderResponse(
+            OrderEntity o,
+            List<OrderLineEntity> orderLines,
+            List<PaymentAttemptEntity> paymentAttempts) {
+        List<OrderLineResponse> lines = orderLines
                 .stream()
                 .map(l -> new OrderLineResponse(
                         l.getId(),
@@ -847,7 +838,7 @@ public class CommerceDomainService {
                         l.getLineTotal(),
                         l.getFulfillmentStatus()))
                 .toList();
-        List<PaymentAttemptResponse> attempts = paymentAttemptRepository.findByOrderIdOrderByCreatedAtDesc(o.getId())
+        List<PaymentAttemptResponse> attempts = paymentAttempts
                 .stream()
                 .map(this::toPaymentAttemptResponse)
                 .toList();

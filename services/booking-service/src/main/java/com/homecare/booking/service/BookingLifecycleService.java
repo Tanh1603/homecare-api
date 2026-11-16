@@ -194,15 +194,6 @@ public class BookingLifecycleService {
                     preferredEnd,
                     targetProviderId,
                     strictProviderMatch);
-            if (alloc == null) {
-                alloc = providerGrpcClient.allocateTechnician(
-                        intentId,
-                        bookingId,
-                        request.serviceId(),
-                        finalDeviceType,
-                        preferredStart,
-                        preferredEnd);
-            }
             if (alloc != null && alloc.getAllocated()) {
                 status = "ASSIGNED";
                 allocationStatus = "ALLOCATED";
@@ -316,22 +307,21 @@ public class BookingLifecycleService {
         }
         Pageable pageable = PageRequest.of(page - 1, size, Sort.by("createdAt").descending().and(Sort.by("id")));
         var result = bookingRepository.search(requester, technician, provider, status, pageable);
-        return PageResponse.of(result.map(this::toBookingResponse).getContent(), page, size, result.getTotalElements());
-    }
-    @Transactional(readOnly = true)
-    public List<BookingResponse> listBookings(String actorProfileId, boolean isTechOrAdmin) {
-        return listBookings(actorProfileId, isTechOrAdmin, null);
-    }
-
-    @Transactional(readOnly = true)
-    public List<BookingResponse> listBookings(String actorProfileId, boolean isTechOrAdmin, UUID orgScopeId) {
-        List<BookingEntity> list = isTechOrAdmin
-                ? bookingRepository.findAllByOrderByCreatedAtDesc()
-                : bookingRepository.findByRequesterProfileIdOrderByCreatedAtDesc(actorProfileId);
-        if (orgScopeId != null && isTechOrAdmin) {
-            list = list.stream().filter(b -> orgScopeId.equals(b.getProviderId())).toList();
+        List<BookingEntity> content = result.getContent();
+        if (content.isEmpty()) {
+            return PageResponse.of(List.of(), page, size, result.getTotalElements());
         }
-        return list.stream().map(this::toBookingResponse).toList();
+        List<UUID> ids = content.stream().map(BookingEntity::getId).toList();
+        var historyByBooking = historyRepository.findByBookingIdInOrderByOccurredAtAsc(ids).stream()
+                .collect(java.util.stream.Collectors.groupingBy(BookingHistoryEntry::getBookingId));
+        var updatesByBooking = workUpdateRepository.findByBookingIdInOrderByCreatedAtAsc(ids).stream()
+                .collect(java.util.stream.Collectors.groupingBy(WorkUpdateEntity::getBookingId));
+        var items = content.stream()
+                .map(b -> toBookingResponse(b,
+                        historyByBooking.getOrDefault(b.getId(), List.of()),
+                        updatesByBooking.getOrDefault(b.getId(), List.of())))
+                .toList();
+        return PageResponse.of(items, page, size, result.getTotalElements());
     }
 
     @Transactional(readOnly = true)
@@ -634,13 +624,23 @@ public class BookingLifecycleService {
     }
 
     private BookingResponse toBookingResponse(BookingEntity b) {
-        List<BookingHistoryResponse> history = historyRepository.findByBookingIdOrderByOccurredAtAsc(b.getId())
+        return toBookingResponse(
+                b,
+                historyRepository.findByBookingIdOrderByOccurredAtAsc(b.getId()),
+                workUpdateRepository.findByBookingIdOrderByCreatedAtAsc(b.getId()));
+    }
+
+    private BookingResponse toBookingResponse(
+            BookingEntity b,
+            List<BookingHistoryEntry> historyEntities,
+            List<WorkUpdateEntity> updateEntities) {
+        List<BookingHistoryResponse> history = historyEntities
                 .stream()
                 .map(h -> new BookingHistoryResponse(
                         h.getId(), h.getFromStatus(), h.getToStatus(), h.getActorId(), h.getReason(),
                         h.getOccurredAt()))
                 .toList();
-        List<WorkUpdateResponse> updates = workUpdateRepository.findByBookingIdOrderByCreatedAtAsc(b.getId())
+        List<WorkUpdateResponse> updates = updateEntities
                 .stream()
                 .map(u -> new WorkUpdateResponse(
                         u.getId(), u.getBookingId(), u.getTechnicianProfileId(), u.getKind(), u.getNote(),

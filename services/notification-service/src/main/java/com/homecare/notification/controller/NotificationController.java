@@ -54,10 +54,9 @@ public class NotificationController {
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<NotificationResponse> items = service.listInbox(jwt.getSubject());
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                PageResponse.of(items, page, size, items.size()),
+                service.inboxPage(jwt.getSubject(), page, size),
                 httpRequest));
     }
 

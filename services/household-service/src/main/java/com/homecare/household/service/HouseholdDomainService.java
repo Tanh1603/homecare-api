@@ -85,11 +85,10 @@ public class HouseholdDomainService {
     }
 
     @Transactional(readOnly = true)
-    public List<HouseholdResponse> listHouseholds(String ownerProfileId) {
-        return householdRepository.findByOwnerProfileIdOrderByCreatedAtDesc(ownerProfileId)
-                .stream()
-                .map(this::toHouseholdResponse)
-                .toList();
+    public PageResponse<HouseholdResponse> householdsPage(String ownerProfileId, int page, int size) {
+        var pageable = pageRequest(page, size, "createdAt");
+        var result = householdRepository.findByOwnerProfileIdOrderByCreatedAtDesc(ownerProfileId, pageable);
+        return PageResponse.of(result.map(this::toHouseholdResponse).getContent(), page, size, result.getTotalElements());
     }
 
     @Transactional(readOnly = true)
@@ -150,12 +149,13 @@ public class HouseholdDomainService {
     }
 
     @Transactional(readOnly = true)
-    public List<DeviceResponse> listDevices(String ownerProfileId, UUID householdId) {
-        List<Device> devices = householdId != null
+    public PageResponse<DeviceResponse> devicesPage(String ownerProfileId, UUID householdId, int page, int size) {
+        var pageable = pageRequest(page, size, "createdAt");
+        var result = householdId != null
                 ? deviceRepository.findByHouseholdIdOrderByCreatedAtDesc(
-                        requireOwnedHousehold(ownerProfileId, householdId).getId())
-                : deviceRepository.findByOwnerProfileIdOrderByCreatedAtDesc(ownerProfileId);
-        return devices.stream().map(this::toDeviceResponse).toList();
+                        requireOwnedHousehold(ownerProfileId, householdId).getId(), pageable)
+                : deviceRepository.findByOwnerProfileIdOrderByCreatedAtDesc(ownerProfileId, pageable);
+        return PageResponse.of(result.map(this::toDeviceResponse).getContent(), page, size, result.getTotalElements());
     }
 
     @Transactional(readOnly = true)
@@ -251,33 +251,6 @@ public class HouseholdDomainService {
                 .createdAt(Instant.now())
                 .build());
         return toWarrantyResponse(saved);
-    }
-
-    @Transactional(readOnly = true)
-    public List<WarrantyResponse> listWarrantiesForOrganization(
-            String actorProfileId,
-            UUID organizationId,
-            boolean globalAdmin) {
-        if (!globalAdmin) {
-            if (organizationId == null || actorProfileId == null
-                    || !providerOrgClient.verifyOrganizationMembership(organizationId, actorProfileId)) {
-                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-            }
-        }
-        return listWarrantiesForOrganization(organizationId, globalAdmin);
-    }
-
-    @Transactional(readOnly = true)
-    public List<WarrantyResponse> listWarrantiesForOrganization(UUID organizationId, boolean globalAdmin) {
-        List<Warranty> list;
-        if (organizationId != null) {
-            list = warrantyRepository.findByOrganizationIdOrderByEndsOnDesc(organizationId);
-        } else if (globalAdmin) {
-            list = warrantyRepository.findAllByOrderByEndsOnDesc();
-        } else {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Organization context is required.");
-        }
-        return list.stream().map(this::toWarrantyResponse).toList();
     }
 
     @Transactional

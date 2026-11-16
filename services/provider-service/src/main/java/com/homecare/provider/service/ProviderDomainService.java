@@ -36,29 +36,44 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @RequiredArgsConstructor
 public class ProviderDomainService {
 
+    @Transactional(readOnly = true)
     public PageResponse<ServiceOfferingResponse> offeringsPage(String category, UUID providerId, String q, int page, int size) {
         var result = offeringRepository.search(blankToNull(category), providerId, blankToNull(q), pageRequest(page, size));
-        return PageResponse.of(result.map(this::toOfferingResponse).getContent(), page, size, result.getTotalElements());
+        Set<UUID> providerIds = result.getContent().stream().map(ServiceOffering::getProviderId).collect(Collectors.toSet());
+        Map<UUID, String> providerNames = providerIds.isEmpty() ? Map.of() : providerRepository.findAllById(providerIds).stream()
+                .collect(Collectors.toMap(ProviderEntity::getId, ProviderEntity::getName));
+        var items = result.getContent().stream()
+                .map(o -> toOfferingResponse(o, providerNames.getOrDefault(o.getProviderId(), "HomeCare Partner")))
+                .toList();
+        return PageResponse.of(items, page, size, result.getTotalElements());
     }
 
+    @Transactional(readOnly = true)
     public PageResponse<ProviderResponse> providersPage(String city, String q, int page, int size) {
         var result = providerRepository.search(blankToNull(city), blankToNull(q), pageRequest(page, size));
         return PageResponse.of(result.map(this::toProviderResponse).getContent(), page, size, result.getTotalElements());
     }
 
+    @Transactional(readOnly = true)
     public PageResponse<TechnicianResponse> techniciansPage(UUID providerId, String q, int page, int size) {
         var result = technicianRepository.search(providerId, blankToNull(q), pageRequest(page, size));
         return PageResponse.of(result.map(this::toTechnicianResponse).getContent(), page, size, result.getTotalElements());
@@ -151,6 +166,7 @@ public class ProviderDomainService {
         item.setStatus("INACTIVE"); technicianRepository.save(item);
     }
 
+    @Transactional(readOnly = true)
     public TechnicianResponse me(String user) { return toTechnicianResponse(resolveTechnicianOrDemo("me", user)); }
 
     @Transactional
@@ -173,27 +189,13 @@ public class ProviderDomainService {
     private final TechnicianAllocationRepository allocationRepository;
     private final OrganizationRepository organizationRepository;
     private final OrganizationMemberRepository organizationMemberRepository;
-
-    @Transactional(readOnly = true)
-    public List<ServiceOfferingResponse> listOfferings(String category) {
-        return offeringRepository.findByActiveTrueOrderByCreatedAtDesc()
-                .stream()
-                .filter(o -> category == null || category.isBlank()
-                        || o.getCategory().equalsIgnoreCase(category.trim()))
-                .map(this::toOfferingResponse)
-                .toList();
-    }
+    private final PlatformTransactionManager transactionManager;
 
     @Transactional(readOnly = true)
     public ServiceOfferingResponse getOffering(UUID serviceId) {
         ServiceOffering offering = offeringRepository.findById(serviceId)
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.SERVICE_NOT_FOUND));
         return toOfferingResponse(offering);
-    }
-
-    @Transactional(readOnly = true)
-    public List<ProviderResponse> listProviders() {
-        return providerRepository.findAll().stream().map(this::toProviderResponse).toList();
     }
 
     @Transactional(readOnly = true)
@@ -204,21 +206,13 @@ public class ProviderDomainService {
     }
 
     @Transactional(readOnly = true)
-    public List<TechnicianResponse> listTechnicians(UUID providerId) {
-        List<Technician> techs = providerId != null
-                ? technicianRepository.findByProviderIdAndStatus(providerId, EntityStatus.ACTIVE.name())
-                : technicianRepository.findByStatus(EntityStatus.ACTIVE.name());
-        return techs.stream().map(this::toTechnicianResponse).toList();
-    }
-
-    @Transactional(readOnly = true)
     public TechnicianResponse getTechnician(UUID technicianId) {
         Technician t = technicianRepository.findById(technicianId)
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.TECHNICIAN_NOT_FOUND));
         return toTechnicianResponse(t);
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public Technician resolveTechnicianOrDemo(String technicianIdOrMe, String jwtSubject) {
         if ("me".equalsIgnoreCase(technicianIdOrMe)) {
             if (jwtSubject == null || jwtSubject.isBlank()) {
@@ -378,7 +372,6 @@ public class ProviderDomainService {
         return toScheduleResponse(scheduleWindowRepository.saveAndFlush(window));
     }
 
-    @Transactional
     public AllocationOutcome allocateTechnicianForBooking(
             String intentId,
             UUID bookingId,
@@ -390,7 +383,6 @@ public class ProviderDomainService {
                 intentId, bookingId, serviceId, deviceType, preferredStart, preferredEnd, null, false);
     }
 
-    @Transactional
     public AllocationOutcome allocateTechnicianForBooking(
             String intentId,
             UUID bookingId,
@@ -403,7 +395,6 @@ public class ProviderDomainService {
         return allocateTechnicianForBooking(intentId, bookingId, serviceId, deviceType, preferredStart, preferredEnd, preferredProviderId, strictProviderMatch, null);
     }
 
-    @Transactional
     public AllocationOutcome allocateTechnicianForBooking(String intentId, UUID bookingId, UUID serviceId,
             String deviceType, Instant preferredStart, Instant preferredEnd, UUID preferredProviderId,
             boolean strictProviderMatch, UUID technicianId) {
@@ -474,11 +465,37 @@ public class ProviderDomainService {
                             : "NO_AVAILABLE_TECHNICIAN");
         }
 
-        Technician chosen = eligible.getFirst();
-        chosen = technicianRepository.lockById(chosen.getId()).orElseThrow();
+        // Try each candidate in its own REQUIRES_NEW NOWAIT transaction so at most one row lock is held at a time.
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        for (Technician candidate : eligible) {
+            try {
+                AllocationOutcome claimed = tx.execute(status ->
+                        claimCandidateSlot(intentId, bookingId, candidate.getId(), preferredStart, preferredEnd));
+                if (claimed != null) {
+                    return claimed;
+                }
+            } catch (PessimisticLockingFailureException ignored) {
+                // Candidate is locked by another request; skip without waiting.
+            }
+        }
+        return new AllocationOutcome(false, null, "", "", targetProviderId, null, "NO_AVAILABLE_TECHNICIAN");
+    }
+
+    private AllocationOutcome claimCandidateSlot(
+            String intentId,
+            UUID bookingId,
+            UUID candidateId,
+            Instant preferredStart,
+            Instant preferredEnd) {
+        Technician chosen = technicianRepository.lockByIdNoWait(candidateId).orElse(null);
+        if (chosen == null) {
+            return null;
+        }
         var available = scheduleWindowRepository.findAvailableCovering(chosen.getId(), preferredStart, preferredEnd);
-        if (available.isEmpty() || !allocationRepository.findActiveOverlapping(chosen.getId(), preferredStart, preferredEnd).isEmpty()) {
-            return new AllocationOutcome(false, null, "", "", targetProviderId, null, "NO_AVAILABLE_TECHNICIAN");
+        if (available.isEmpty()
+                || !allocationRepository.findActiveOverlapping(chosen.getId(), preferredStart, preferredEnd).isEmpty()) {
+            return null;
         }
         ScheduleWindow window = available.getFirst();
         if (window.getStartsAt().isBefore(preferredStart)) {
@@ -586,6 +603,10 @@ public class ProviderDomainService {
         String providerName = providerRepository.findById(o.getProviderId())
                 .map(ProviderEntity::getName)
                 .orElse("HomeCare Partner");
+        return toOfferingResponse(o, providerName);
+    }
+
+    private ServiceOfferingResponse toOfferingResponse(ServiceOffering o, String providerName) {
         return new ServiceOfferingResponse(
                 o.getId(),
                 o.getProviderId(),

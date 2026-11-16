@@ -87,6 +87,17 @@ class ProviderPortalTest {
                 .with(jwt().jwt(j -> j.subject("admin").claim("user_roles", List.of("ADMIN"))))
                 .contentType(MediaType.APPLICATION_JSON).content(body.replace("\"basePrice\":100", "\"basePrice\":-1")))
                 .andExpect(status().isBadRequest());
+
+        mvc.perform(post("/api/v1/services")
+                .with(jwt().jwt(j -> j.subject("a0000000-0000-0000-0000-000000000002").claim("user_roles", List.of("ORGANIZATION"))))
+                .header("X-Organization-Id", ProviderDataInitializer.PROVIDER_1_ID)
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated());
+        mvc.perform(post("/api/v1/services")
+                .with(jwt().jwt(j -> j.subject("a0000000-0000-0000-0000-000000000002").claim("user_roles", List.of("ORGANIZATION"))))
+                .header("X-Organization-Id", ProviderDataInitializer.PROVIDER_2_ID)
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
     }
 
     @Test

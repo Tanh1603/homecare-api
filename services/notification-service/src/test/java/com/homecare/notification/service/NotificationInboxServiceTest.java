@@ -40,8 +40,8 @@ class NotificationInboxServiceTest {
                 .formatted(eventId, user, tech);
         consumer.onDomainEvent(event);
         consumer.onDomainEvent(event);
-        assertThat(inboxService.listInbox(user)).hasSize(1);
-        assertThat(inboxService.listInbox(tech)).hasSize(1);
+        assertThat(inboxService.inboxPage(user, 1, 20).items()).hasSize(1);
+        assertThat(inboxService.inboxPage(tech, 1, 20).items()).hasSize(1);
         var mvc = MockMvcBuilders.webAppContextSetup(webContext)
                 .apply(SecurityMockMvcConfigurers.springSecurity()).build();
         var auth = SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject(user));
@@ -53,7 +53,7 @@ class NotificationInboxServiceTest {
                 .andExpect(MockMvcResultMatchers.status().isOk());
         mvc.perform(MockMvcRequestBuilders.get("/api/v1/notifications/unread-count").with(auth))
                 .andExpect(MockMvcResultMatchers.jsonPath("$.data.count").value(0));
-        assertThat(inboxService.listInbox(tech).getFirst().read()).isFalse();
+        assertThat(inboxService.inboxPage(tech, 1, 20).items().getFirst().read()).isFalse();
     }
 
     @Autowired
@@ -79,7 +79,7 @@ class NotificationInboxServiceTest {
         consumer.onDomainEvent(eventJson);
         consumer.onDomainEvent(eventJson); // duplicate delivery
 
-        List<NotificationResponse> custInbox = inboxService.listInbox("cust-1");
+        List<NotificationResponse> custInbox = inboxService.inboxPage("cust-1", 1, 20).items();
         assertThat(custInbox).hasSize(1);
         assertThat(custInbox.getFirst().read()).isFalse();
         assertThat(processedEventRepository.findByConsumerNameAndEventId(
@@ -100,7 +100,7 @@ class NotificationInboxServiceTest {
                 {"eventId":"evt-1002","eventType":"booking.completed.v1","data":{"bookingId":"bkg-999","requesterProfileId":"cust-1","serviceName":"Vệ sinh Máy lạnh"}}
                 """;
         consumer.onDomainEvent(event2Json);
-        assertThat(inboxService.listInbox("cust-1")).hasSize(2);
+        assertThat(inboxService.inboxPage("cust-1", 1, 20).items()).hasSize(2);
 
         // Active token owned by cust-1 cannot be hijacked without prior deactivation
         assertThatThrownBy(() -> inboxService.registerDevice(
@@ -144,7 +144,9 @@ class NotificationInboxServiceTest {
                         {"eventType":"booking.requested.v1","data":{"requesterProfileId":"%s","bookingId":"b-2","serviceName":"S2"}}
                         """
                         .formatted(noIdRecipient));
-        assertThat(inboxService.listInbox(noIdRecipient)).hasSize(2);
+        var noIdPage = inboxService.inboxPage(noIdRecipient, 1, 1);
+        assertThat(noIdPage.items()).hasSize(1);
+        assertThat(noIdPage.pagination().totalItems()).isEqualTo(2);
 
         // Concurrent duplicate delivery + mid-transaction
         // DataIntegrityViolationException must not throw UnexpectedRollbackException
@@ -161,7 +163,7 @@ class NotificationInboxServiceTest {
                 }))
                 .toList();
         futures.forEach(java.util.concurrent.CompletableFuture::join);
-        assertThat(inboxService.listInbox(raceRecipient)).hasSize(1);
+        assertThat(inboxService.inboxPage(raceRecipient, 1, 20).items()).hasSize(1);
 
         // Non-duplicate DataIntegrityViolationException (e.g. null title) must rethrow and roll back processed_events
         String rollbackEventId = "evt-rb-" + UUID.randomUUID();

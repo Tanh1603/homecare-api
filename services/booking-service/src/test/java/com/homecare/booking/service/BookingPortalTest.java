@@ -186,6 +186,20 @@ class BookingPortalTest {
                 .andExpect(jsonPath("$.data.status").value("CANCELLED"));
     }
 
+    @Test void orgOperatorListsOrgBookingsWithHeaderAndRejectsCrossOrg() throws Exception {
+        var booking = save("cust-org-" + UUID.randomUUID(), "REQUESTED");
+        UUID orgId = booking.getProviderId();
+        UUID otherOrgId = UUID.randomUUID();
+        Mockito.when(provider.verifyOrganizationMembership(orgId, "org-staff")).thenReturn(true);
+        var auth = jwt().jwt(j -> j.subject("org-staff").claim("user_roles", List.of("ORGANIZATION")));
+
+        mvc.perform(get("/api/v1/bookings").with(auth).header("X-Organization-Id", orgId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].id").value(booking.getId().toString()));
+        mvc.perform(get("/api/v1/bookings/" + booking.getId()).with(auth).header("X-Organization-Id", otherOrgId))
+                .andExpect(status().isForbidden());
+    }
+
     @Test void technicianWithoutOrgHeaderSeesPersonalAndAssignedBookingsAndSupportsScopeFilter() throws Exception {
         String techUser = "tech-dual-" + UUID.randomUUID();
         Instant now = Instant.now();

@@ -72,10 +72,9 @@ public class HouseholdController {
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<HouseholdResponse> items = service.listHouseholds(jwt.getSubject());
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                PageResponse.of(items, page, size, items.size()),
+                service.householdsPage(jwt.getSubject(), page, size),
                 httpRequest));
     }
 
@@ -129,10 +128,9 @@ public class HouseholdController {
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<DeviceResponse> items = service.listDevices(jwt.getSubject(), householdId);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                PageResponse.of(items, page, size, items.size()),
+                service.devicesPage(jwt.getSubject(), householdId, page, size),
                 httpRequest));
     }
 
