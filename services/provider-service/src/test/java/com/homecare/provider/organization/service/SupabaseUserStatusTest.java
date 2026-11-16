@@ -54,4 +54,31 @@ class SupabaseUserStatusTest {
         var unconfigured = new SupabaseRoleClient("https://placeholder.supabase.co", "placeholder-secret-key", "role");
         assertThatThrownBy(() -> unconfigured.updateUserStatus(UUID.randomUUID(), "SUSPENDED")).isInstanceOf(DomainException.class);
     }
+
+    @Test void adminUserControllerSyncsRedisBlacklistOnSuspendAndRestore() {
+        var roleClient = org.mockito.Mockito.mock(SupabaseRoleClient.class);
+        var redis = org.mockito.Mockito.mock(org.springframework.data.redis.core.StringRedisTemplate.class);
+        @SuppressWarnings("unchecked")
+        var ops = (org.springframework.data.redis.core.ValueOperations<String, String>)
+                org.mockito.Mockito.mock(org.springframework.data.redis.core.ValueOperations.class);
+        org.mockito.Mockito.when(redis.opsForValue()).thenReturn(ops);
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<org.springframework.data.redis.core.StringRedisTemplate> provider =
+                org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+        org.mockito.Mockito.when(provider.getIfAvailable()).thenReturn(redis);
+
+        var controller = new com.homecare.provider.organization.controller.AdminUserController(
+                roleClient, new com.homecare.common.web.servlet.ServletApiResponseFactory(), provider);
+        UUID target = UUID.randomUUID();
+        var jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("tok")
+                .header("alg", "none").subject("admin-1").build();
+        var req = new org.springframework.mock.web.MockHttpServletRequest();
+        req.setAttribute(com.homecare.common.web.CorrelationIdSupport.REQUEST_ATTRIBUTE, "test-trace-id");
+
+        controller.updateStatus(target, new com.homecare.provider.organization.controller.AdminUserController.StatusRequest("SUSPENDED"), jwt, req);
+        org.mockito.Mockito.verify(ops).set("auth:blacklist:user:" + target, "SUSPENDED", java.time.Duration.ofHours(2));
+
+        controller.updateStatus(target, new com.homecare.provider.organization.controller.AdminUserController.StatusRequest("ACTIVE"), jwt, req);
+        org.mockito.Mockito.verify(redis).delete("auth:blacklist:user:" + target);
+    }
 }

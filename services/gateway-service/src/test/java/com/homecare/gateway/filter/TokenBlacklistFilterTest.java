@@ -37,6 +37,7 @@ class TokenBlacklistFilterTest {
     @BeforeEach
     void setUp() {
         redisTemplate = mock(ReactiveStringRedisTemplate.class);
+        when(redisTemplate.hasKey(any())).thenReturn(Mono.just(false));
         objectMapper = new ObjectMapper();
         chain = mock(GatewayFilterChain.class);
         when(chain.filter(any())).thenReturn(Mono.empty());
@@ -98,6 +99,35 @@ class TokenBlacklistFilterTest {
 
         verify(chain).filter(exchange);
         assertThat(exchange.getResponse().getStatusCode()).isNull();
+    }
+
+    @Test
+    void blocksRequestWhenUserIsBlacklistedInRedis() {
+        Jwt jwt = new Jwt(
+                "token-value",
+                Instant.now(),
+                Instant.now().plusSeconds(300),
+                Map.of("alg", "none"),
+                Map.of("sub", "user-suspended-1"));
+        JwtAuthenticationToken auth = new JwtAuthenticationToken(jwt, Collections.emptyList());
+        SecurityContext securityContext = new SecurityContextImpl(auth);
+
+        when(redisTemplate.hasKey(eq(TokenBlacklistFilter.BLACKLIST_USER_KEY_PREFIX + "user-suspended-1")))
+                .thenReturn(Mono.just(true));
+
+        MockServerHttpRequest request = MockServerHttpRequest.get("/api/v1/bookings")
+                .header("X-Correlation-Id", "user-bl-trace")
+                .build();
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+
+        filter.filter(exchange, chain)
+                .contextWrite(ReactiveSecurityContextHolder.withSecurityContext(Mono.just(securityContext)))
+                .block();
+
+        assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        String responseBody = exchange.getResponse().getBodyAsString().block();
+        assertThat(responseBody).contains("TOKEN_REVOKED");
+        verify(chain, never()).filter(any());
     }
 
     @Test

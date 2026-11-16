@@ -22,10 +22,17 @@ public class ProviderBookingConsumer {
     public void onEvent(String payload) {
         var event = mapper.readTree(payload);
         String type = event.path("eventType").asString();
-        UUID bookingId = UUID.fromString(event.path("data").path("bookingId").asString());
+        if (!"booking.completed.v1".equals(type) && !"booking.cancelled.v1".equals(type)) {
+            return;
+        }
+        String bookingIdText = event.path("data").path("bookingId").asString(null);
+        if (bookingIdText == null || bookingIdText.isBlank()) {
+            return;
+        }
+        UUID bookingId = UUID.fromString(bookingIdText);
         if ("booking.completed.v1".equals(type)) {
             service.completeBooking(bookingId);
-        } else if ("booking.cancelled.v1".equals(type)) {
+        } else {
             service.releaseBooking(bookingId);
         }
     }

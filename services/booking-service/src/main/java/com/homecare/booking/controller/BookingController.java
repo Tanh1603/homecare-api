@@ -167,12 +167,9 @@ public class BookingController {
         }
         boolean globalAdmin = isGlobalAdmin(jwt);
         boolean orgOperator = isOrgOperator(jwt);
-        if (!globalAdmin && orgOperator && orgIdHeader == null) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
         BookingResponse updated = service.appendWorkUpdate(
                 jwt.getSubject(),
-                globalAdmin || orgOperator,
+                globalAdmin || (orgOperator && orgIdHeader != null),
                 globalAdmin ? null : orgIdHeader,
                 bookingId,
                 ifMatch,

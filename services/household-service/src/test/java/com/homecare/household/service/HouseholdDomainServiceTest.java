@@ -270,6 +270,10 @@ class HouseholdDomainServiceTest {
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("RESOURCE_FORBIDDEN");
+        assertThatThrownBy(() -> service.deleteDevice(owner, storeWarranty.deviceId()))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("OPERATION_FORBIDDEN");
     }
 
     @Test

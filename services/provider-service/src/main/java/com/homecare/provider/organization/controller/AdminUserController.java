@@ -13,10 +13,15 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.Valid;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -36,8 +41,13 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class AdminUserController {
 
+    private static final Logger log = LoggerFactory.getLogger(AdminUserController.class);
+    private static final String BLACKLIST_USER_KEY_PREFIX = "auth:blacklist:user:";
+    private static final Duration USER_BLACKLIST_TTL = Duration.ofHours(2);
+
     private final SupabaseRoleClient supabaseRoleClient;
     private final ServletApiResponseFactory responseFactory;
+    private final ObjectProvider<StringRedisTemplate> redisTemplateProvider;
 
     public record StatusRequest(@NotNull @Pattern(regexp = "ACTIVE|SUSPENDED") String status) {}
 
@@ -51,7 +61,25 @@ public class AdminUserController {
             throw new DomainException(OPERATION_FORBIDDEN);
         }
         supabaseRoleClient.updateUserStatus(userId, input.status());
+        syncUserBlacklist(userId, input.status());
         return ResponseEntity.ok(responseFactory.ok("Updated", Map.of("id", userId, "status", input.status()), request));
+    }
+
+    private void syncUserBlacklist(UUID userId, String status) {
+        StringRedisTemplate redis = redisTemplateProvider.getIfAvailable();
+        if (redis == null) {
+            return;
+        }
+        String key = BLACKLIST_USER_KEY_PREFIX + userId;
+        try {
+            if ("SUSPENDED".equals(status)) {
+                redis.opsForValue().set(key, "SUSPENDED", USER_BLACKLIST_TTL);
+            } else {
+                redis.delete(key);
+            }
+        } catch (Exception ex) {
+            log.warn("Failed to sync Redis user blacklist for userId={}: {}", userId, ex.getMessage());
+        }
     }
 
     @GetMapping

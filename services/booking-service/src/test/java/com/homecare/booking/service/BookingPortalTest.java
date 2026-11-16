@@ -244,6 +244,35 @@ class BookingPortalTest {
         mvc.perform(get("/api/v1/bookings?scope=INVALID").with(techAuth))
                 .andExpect(status().isBadRequest());
     }
+
+    @Test void dualRoleOrgAndTechnicianCanPostWorkUpdateWithoutOrgHeader() throws Exception {
+        String techUser = "dual-tech-" + UUID.randomUUID();
+        var now = Instant.now();
+        var booking = bookings.saveAndFlush(BookingEntity.builder()
+                .id(UUID.randomUUID())
+                .requesterProfileId("customer-" + UUID.randomUUID())
+                .assignedTechnicianProfileId(techUser)
+                .serviceId(UUID.randomUUID())
+                .serviceName("AC Repair")
+                .providerId(UUID.randomUUID())
+                .preferredStart(now.plusSeconds(3600))
+                .preferredEnd(now.plusSeconds(7200))
+                .address("123 Main St")
+                .status("ASSIGNED")
+                .allocationStatus("ALLOCATED")
+                .createdAt(now)
+                .updatedAt(now)
+                .build());
+
+        var dualAuth = jwt().jwt(j -> j.subject(techUser).claim("user_roles", List.of("ORGANIZATION", "TECHNICIAN")));
+        mvc.perform(post("/api/v1/bookings/" + booking.getId() + "/work-updates")
+                        .with(dualAuth)
+                        .header("If-Match", EtagSupport.format(booking.getVersion()))
+                        .contentType("application/json")
+                        .content("{\"kind\":\"ARRIVED\",\"note\":\"On site\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("IN_PROGRESS"));
+    }
     private BookingEntity save(String user, String status) {
         var now = Instant.now();
         return bookings.saveAndFlush(BookingEntity.builder().id(UUID.randomUUID()).requesterProfileId(user)

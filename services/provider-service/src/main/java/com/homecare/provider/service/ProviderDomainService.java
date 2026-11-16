@@ -418,7 +418,8 @@ public class ProviderDomainService {
         }
 
         Optional<ServiceOffering> offeringOpt = offeringRepository.findById(serviceId);
-        if (offeringOpt.isEmpty() || !offeringOpt.get().isActive()) {
+        if (offeringOpt.isEmpty() || !offeringOpt.get().isActive()
+                || !isProviderActive(offeringOpt.get().getProviderId())) {
             return new AllocationOutcome(false, null, "", "", null, null, "SERVICE_NOT_AVAILABLE");
         }
         ServiceOffering offering = offeringOpt.get();

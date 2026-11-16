@@ -19,7 +19,23 @@ public class IdempotencyService {
 
     private static final Pattern KEY_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{16,128}$");
     private static final Duration DEFAULT_TTL = Duration.ofHours(24);
+    private static final int DEFAULT_MAX_ENTRIES = 10_000;
     private final Map<String, StoredOperation<?>> store = new ConcurrentHashMap<>();
+    private final Duration ttl;
+    private final int maxEntries;
+
+    public IdempotencyService() {
+        this(DEFAULT_TTL, DEFAULT_MAX_ENTRIES);
+    }
+
+    public IdempotencyService(Duration ttl, int maxEntries) {
+        this.ttl = ttl;
+        this.maxEntries = Math.max(1, maxEntries);
+    }
+
+    public int size() {
+        return store.size();
+    }
 
     public static void validateKey(String idempotencyKey) {
         if (idempotencyKey == null || !KEY_PATTERN.matcher(idempotencyKey).matches()) {
@@ -39,7 +55,6 @@ public class IdempotencyService {
             Supplier<T> action) {
         validateKey(idempotencyKey);
         Instant now = Instant.now();
-        store.entrySet().removeIf(e -> !e.getValue().expiresAt().isAfter(now));
 
         String fingerprint = sha256Hex(payloadJson == null ? "" : payloadJson);
         String compositeKey = (actorScope == null ? "anon" : actorScope)
@@ -47,9 +62,17 @@ public class IdempotencyService {
                 + "|" + idempotencyKey;
 
         StoredOperation<T> candidate = new StoredOperation<>(
-                fingerprint, new CompletableFuture<>(), now.plus(DEFAULT_TTL));
+                fingerprint, new CompletableFuture<>(), now.plus(ttl));
         StoredOperation<?> existing = store.putIfAbsent(compositeKey, candidate);
-        if (existing != null) {
+        while (existing != null) {
+            if (!existing.expiresAt().isAfter(now)) {
+                if (store.replace(compositeKey, existing, candidate)) {
+                    existing = null;
+                    break;
+                }
+                existing = store.putIfAbsent(compositeKey, candidate);
+                continue;
+            }
             if (!existing.fingerprint().equals(fingerprint)) {
                 throw new IdempotencyException(
                         HttpStatus.CONFLICT,
@@ -66,6 +89,10 @@ public class IdempotencyService {
             }
         }
 
+        if (store.size() > maxEntries) {
+            evictIfOverCapacity(now, compositeKey);
+        }
+
         try {
             T result = action.get();
             candidate.future().complete(result);
@@ -74,6 +101,20 @@ public class IdempotencyService {
             store.remove(compositeKey, candidate);
             candidate.future().completeExceptionally(t);
             throw t;
+        }
+    }
+
+    private void evictIfOverCapacity(Instant now, String protectedKey) {
+        store.entrySet().removeIf(e -> !e.getKey().equals(protectedKey) && !e.getValue().expiresAt().isAfter(now));
+        while (store.size() > maxEntries) {
+            var oldest = store.entrySet().stream()
+                    .filter(e -> !e.getKey().equals(protectedKey))
+                    .min(java.util.Comparator.comparing(e -> e.getValue().expiresAt()))
+                    .orElse(null);
+            if (oldest == null) {
+                break;
+            }
+            store.remove(oldest.getKey(), oldest.getValue());
         }
     }
 

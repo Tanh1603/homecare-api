@@ -114,6 +114,12 @@ class EtagAndIdempotencyTest {
         assertThat(r1.get()).isEqualTo("order-abc");
         assertThat(r2.get()).isEqualTo("order-abc");
         assertThat(runs.get()).isEqualTo(1);
+
+        IdempotencyService bounded = new IdempotencyService(java.time.Duration.ofMillis(50), 2);
+        bounded.execute("u1", "OP", "idem_key_00000000000001", "p1", () -> "v1");
+        bounded.execute("u1", "OP", "idem_key_00000000000002", "p2", () -> "v2");
+        bounded.execute("u1", "OP", "idem_key_00000000000003", "p3", () -> "v3");
+        assertThat(bounded.size()).isLessThanOrEqualTo(2);
     }
 
     @Test

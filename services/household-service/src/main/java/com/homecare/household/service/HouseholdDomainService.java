@@ -199,6 +199,11 @@ public class HouseholdDomainService {
     @Transactional
     public void deleteDevice(String ownerProfileId, UUID deviceId) {
         Device device = requireOwnedDevice(ownerProfileId, deviceId);
+        if (warrantyRepository.findByDeviceIdOrderByEndsOnDesc(deviceId).stream()
+                .anyMatch(w -> "ORDER_AUTO_ACTIVATED".equalsIgnoreCase(w.getSource()))) {
+            throw new DomainException(CommonErrorCode.OPERATION_FORBIDDEN,
+                    "Cannot delete a device with an electronic store warranty.");
+        }
         careRecordRepository.deleteByDeviceId(deviceId);
         scheduleRepository.deleteByDeviceId(deviceId);
         warrantyRepository.deleteByDeviceId(deviceId);

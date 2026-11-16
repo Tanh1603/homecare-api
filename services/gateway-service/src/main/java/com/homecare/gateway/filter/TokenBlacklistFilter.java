@@ -23,6 +23,7 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
 
     private static final Logger log = LoggerFactory.getLogger(TokenBlacklistFilter.class);
     public static final String BLACKLIST_SESSION_KEY_PREFIX = "auth:blacklist:session:";
+    public static final String BLACKLIST_USER_KEY_PREFIX = "auth:blacklist:user:";
 
     private final ReactiveStringRedisTemplate redisTemplate;
     private final GatewayErrorHandlers errorHandlers;
@@ -53,26 +54,40 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
                         log.warn("Blocked request for suspended/banned user sub={}", jwt.getSubject());
                         return errorHandlers.writeError(exchange, CommonErrorCode.ACCESS_DENIED);
                     }
-                    String sid = jwt.getClaimAsString("session_id");
+                    String sub = jwt.getSubject();
+                    Mono<Boolean> userBlacklisted = (sub == null || sub.isBlank())
+                            ? Mono.just(false)
+                            : hasBlacklistedKey(BLACKLIST_USER_KEY_PREFIX + sub);
 
-                    if (sid == null || sid.isBlank()) {
-                        return chain.filter(exchange);
-                    }
-
-                    String key = BLACKLIST_SESSION_KEY_PREFIX + sid;
-
-                    return redisTemplate.hasKey(key)
-                            .onErrorResume(exception -> {
-                                log.warn("Redis session blacklist lookup failed (fail-open): {}", exception.getMessage());
-                                return Mono.just(false);
-                            })
-                            .flatMap(isBlacklisted -> {
-                                if (Boolean.TRUE.equals(isBlacklisted)) {
-                                    log.warn("Blocked request with blacklisted session key={}", key);
-                                    return errorHandlers.writeError(exchange, CommonErrorCode.TOKEN_REVOKED);
-                                }
-                                return chain.filter(exchange);
-                            });
+                    return userBlacklisted.flatMap(isUserBlocked -> {
+                        if (Boolean.TRUE.equals(isUserBlocked)) {
+                            log.warn("Blocked request for Redis-blacklisted user sub={}", sub);
+                            return errorHandlers.writeError(exchange, CommonErrorCode.TOKEN_REVOKED);
+                        }
+                        String sid = jwt.getClaimAsString("session_id");
+                        if (sid == null || sid.isBlank()) {
+                            return chain.filter(exchange);
+                        }
+                        String key = BLACKLIST_SESSION_KEY_PREFIX + sid;
+                        return hasBlacklistedKey(key).flatMap(isBlacklisted -> {
+                            if (Boolean.TRUE.equals(isBlacklisted)) {
+                                log.warn("Blocked request with blacklisted session key={}", key);
+                                return errorHandlers.writeError(exchange, CommonErrorCode.TOKEN_REVOKED);
+                            }
+                            return chain.filter(exchange);
+                        });
+                    });
                 });
+    }
+
+    private Mono<Boolean> hasBlacklistedKey(String key) {
+        Mono<Boolean> lookup = redisTemplate.hasKey(key);
+        if (lookup == null) {
+            return Mono.just(false);
+        }
+        return lookup.onErrorResume(exception -> {
+            log.warn("Redis blacklist lookup failed (fail-open) for key={}: {}", key, exception.getMessage());
+            return Mono.just(false);
+        });
     }
 }

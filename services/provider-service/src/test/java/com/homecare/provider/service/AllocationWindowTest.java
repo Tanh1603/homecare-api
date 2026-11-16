@@ -157,4 +157,28 @@ class AllocationWindowTest {
             Mockito.reset(technicians);
         }
     }
+
+    @Test void suspendedProviderOfferingCannotAllocateAnotherProviderWithoutStrictMatch() {
+        var provider = providers.findById(ProviderDataInitializer.PROVIDER_1_ID).orElseThrow();
+        provider.setStatus("INACTIVE");
+        provider = providers.saveAndFlush(provider);
+        try {
+            Instant start = Instant.now().plus(26, DAYS);
+            UUID booking = UUID.randomUUID();
+            var result = service.allocateTechnicianForBooking("suspended-nostrict-" + booking, booking,
+                    ProviderDataInitializer.SERVICE_AC_CLEAN_ID, "AC", start, start.plusSeconds(1800),
+                    null, false, null);
+            assertThat(result.allocated()).isFalse();
+            assertThat(result.failureReason()).isEqualTo("SERVICE_NOT_AVAILABLE");
+        } finally {
+            provider.setStatus("ACTIVE");
+            providers.saveAndFlush(provider);
+        }
+    }
+
+    @Test void bookingConsumerIgnoresUnknownEventWithoutBookingId() {
+        var consumer = context.getBean(ProviderBookingConsumer.class);
+        assertThatCode(() -> consumer.onEvent("{\"eventType\":\"booking.created.v1\",\"data\":{}}"))
+                .doesNotThrowAnyException();
+    }
 }

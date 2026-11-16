@@ -101,6 +101,18 @@ public class BookingLifecycleService {
         UUID bookingId = UUID.randomUUID();
         String intentId = "alloc-" + bookingId;
 
+        VerifyOfferingResponse offering;
+        try {
+            offering = providerGrpcClient.verifyOffering(request.serviceId());
+        } catch (Exception e) {
+            log.warn("gRPC VerifyOffering failed for service {}: {}", request.serviceId(), e.getMessage());
+            throw new DomainException(BookingErrorCode.SERVICE_NOT_AVAILABLE);
+        }
+
+        if (!offering.getActive()) {
+            throw new DomainException(BookingErrorCode.SERVICE_NOT_AVAILABLE);
+        }
+
         BookingAllocationSagaEntity saga = sagaRepository.save(BookingAllocationSagaEntity.builder()
                 .id(UUID.randomUUID())
                 .bookingId(bookingId)
@@ -111,30 +123,6 @@ public class BookingLifecycleService {
                 .startedAt(now)
                 .updatedAt(now)
                 .build());
-
-        VerifyOfferingResponse offering;
-        try {
-            offering = providerGrpcClient.verifyOffering(request.serviceId());
-        } catch (Exception e) {
-            log.warn("gRPC VerifyOffering failed for service {}: {}", request.serviceId(), e.getMessage());
-            saga.setSagaStatus("FAILED");
-            saga.setCurrentStep("VERIFY_OFFERING");
-            saga.setFailureReason("SERVICE_NOT_AVAILABLE");
-            saga.setUpdatedAt(Instant.now());
-            saga.setCompletedAt(Instant.now());
-            sagaRepository.save(saga);
-            throw new DomainException(BookingErrorCode.SERVICE_NOT_AVAILABLE);
-        }
-
-        if (!offering.getActive()) {
-            saga.setSagaStatus("FAILED");
-            saga.setCurrentStep("VERIFY_OFFERING");
-            saga.setFailureReason("SERVICE_NOT_AVAILABLE");
-            saga.setUpdatedAt(Instant.now());
-            saga.setCompletedAt(Instant.now());
-            sagaRepository.save(saga);
-            throw new DomainException(BookingErrorCode.SERVICE_NOT_AVAILABLE);
-        }
 
         int durationMins = offering.getEstimatedDurationMinutes() > 0
                 ? offering.getEstimatedDurationMinutes()
