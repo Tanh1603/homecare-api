@@ -19,7 +19,7 @@ public final class CommerceDtos {
             @Pattern(regexp = ".*\\S.*") @Size(max = 255) String name,
             @Pattern(regexp = ".*\\S.*") @Size(max = 255) String category,
             @Pattern(regexp = ".*\\S.*") @Size(max = 255) String brand,
-            @Pattern(regexp = "SMALL_PART|LARGE_APPLIANCE") String productType,
+            @Pattern(regexp = "SMALL_PART|MAJOR_PART|SUPPLY|TOOL|LARGE_APPLIANCE") String productType,
             @PositiveOrZero Integer warrantyMonths,
             @PositiveOrZero Integer returnWindowDays,
             @Size(max = 1500) String description,

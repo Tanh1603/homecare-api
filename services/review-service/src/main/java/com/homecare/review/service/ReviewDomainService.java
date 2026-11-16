@@ -63,7 +63,8 @@ public class ReviewDomainService {
             String authorProfileId,
             UUID productId,
             CreateProductReviewRequest request) {
-        if (reviewRepository.findBySourceId(request.orderLineId()).isPresent()) {
+        var existing = reviewRepository.findBySourceId(request.orderLineId());
+        if (existing.isPresent() && !"DELETED".equals(existing.get().getStatus())) {
             throw new DomainException(ReviewErrorCode.REVIEW_ALREADY_EXISTS);
         }
         OrderLineEligibility eligibility = verificationClient.verifyOrderLineEligibility(
@@ -76,19 +77,20 @@ public class ReviewDomainService {
                     "productId does not match order line product.");
         }
         Instant now = Instant.now();
-        ReviewEntity saved = reviewRepository.save(ReviewEntity.builder()
+        // source_id is unique, so a soft-deleted review row is reused instead of inserting a new one.
+        ReviewEntity review = existing.orElseGet(() -> ReviewEntity.builder()
                 .id(UUID.randomUUID())
-                .authorProfileId(authorProfileId)
                 .targetType("PRODUCT_ORDER_LINE")
                 .sourceId(request.orderLineId())
-                .targetId(productId)
-                .rating(request.rating())
-                .comment(request.comment().trim())
-                .status(EntityStatus.PUBLISHED.name())
                 .createdAt(now)
-                .updatedAt(now)
                 .build());
-        return toResponse(saved);
+        review.setAuthorProfileId(authorProfileId);
+        review.setTargetId(productId);
+        review.setRating(request.rating());
+        review.setComment(request.comment().trim());
+        review.setStatus(EntityStatus.PUBLISHED.name());
+        review.setUpdatedAt(now);
+        return toResponse(reviewRepository.save(review));
     }
 
     @Transactional

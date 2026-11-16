@@ -522,6 +522,17 @@ public class ProviderDomainService {
     }
 
     @Transactional
+    public void completeBooking(UUID bookingId) {
+        var allocation = allocationRepository.lockByBookingId(bookingId).orElse(null);
+        if (allocation == null || !"ALLOCATED".equals(allocation.getStatus())) return;
+        var tech = technicianRepository.lockById(allocation.getTechnicianId()).orElseThrow();
+        tech.setActiveAllocations(Math.max(0, tech.getActiveAllocations() - 1));
+        technicianRepository.save(tech);
+        // The worked time slot stays BOOKED so it cannot be sold again.
+        allocation.setStatus("COMPLETED"); allocationRepository.save(allocation);
+    }
+
+    @Transactional
     public void releaseBooking(UUID bookingId) {
         var allocation = allocationRepository.lockByBookingId(bookingId).orElse(null);
         if (allocation == null || !"ALLOCATED".equals(allocation.getStatus())) return;

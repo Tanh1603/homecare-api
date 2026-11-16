@@ -117,6 +117,52 @@ class BookingPortalTest {
                 .andExpect(status().isConflict());
     }
 
+    @Test void adminAssignsBookingWithoutProviderAndPersistsAllocatedProvider() throws Exception {
+        var now = Instant.now();
+        var booking = bookings.saveAndFlush(BookingEntity.builder().id(UUID.randomUUID()).requesterProfileId("no-provider-customer")
+                .serviceId(UUID.randomUUID()).serviceName("Test")
+                .preferredStart(now.plusSeconds(3600)).preferredEnd(now.plusSeconds(7200))
+                .address("Test address").status("REQUESTED").allocationStatus("ALLOCATION_FAILED")
+                .createdAt(now).updatedAt(now).build());
+        UUID technician = UUID.randomUUID(), actualProvider = UUID.randomUUID();
+        Mockito.when(provider.assignTechnician(ArgumentMatchers.eq(booking.getId()), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.isNull(), ArgumentMatchers.eq(technician)))
+                .thenReturn(AllocateTechnicianResponse.newBuilder().setAllocated(true)
+                        .setTechnicianId(technician.toString()).setTechnicianProfileId("assigned-tech").setTechnicianName("Tech")
+                        .setProviderId(actualProvider.toString()).build());
+        var auth = jwt().jwt(j -> j.subject("admin").claim("user_roles", List.of("ADMIN")));
+        mvc.perform(post("/api/v1/bookings/" + booking.getId() + "/assign").with(auth)
+                .header("If-Match", EtagSupport.format(booking.getVersion()))
+                .contentType("application/json").content("{\"technicianId\":\"" + technician + "\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.providerId").value(actualProvider.toString()));
+    }
+
+    @Test void orgOperatorAssignsBookingWithoutProviderOnlyWithMembership() throws Exception {
+        var now = Instant.now();
+        var booking = bookings.saveAndFlush(BookingEntity.builder().id(UUID.randomUUID()).requesterProfileId("no-provider-customer-2")
+                .serviceId(UUID.randomUUID()).serviceName("Test")
+                .preferredStart(now.plusSeconds(3600)).preferredEnd(now.plusSeconds(7200))
+                .address("Test address").status("REQUESTED").allocationStatus("ALLOCATION_FAILED")
+                .createdAt(now).updatedAt(now).build());
+        UUID org = UUID.randomUUID(), technician = UUID.randomUUID();
+        Mockito.when(provider.verifyOrganizationMembership(org, "org-operator")).thenReturn(true);
+        Mockito.when(provider.assignTechnician(ArgumentMatchers.eq(booking.getId()), ArgumentMatchers.any(), ArgumentMatchers.any(),
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.eq(org), ArgumentMatchers.eq(technician)))
+                .thenReturn(AllocateTechnicianResponse.newBuilder().setAllocated(true)
+                        .setTechnicianId(technician.toString()).setTechnicianProfileId("assigned-tech").setTechnicianName("Tech")
+                        .setProviderId(org.toString()).build());
+        String body = "{\"technicianId\":\"" + technician + "\"}";
+        mvc.perform(post("/api/v1/bookings/" + booking.getId() + "/assign")
+                .with(jwt().jwt(j -> j.subject("outsider").claim("user_roles", List.of("ORGANIZATION"))))
+                .header("X-Organization-Id", org).header("If-Match", EtagSupport.format(booking.getVersion()))
+                .contentType("application/json").content(body)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/v1/bookings/" + booking.getId() + "/assign")
+                .with(jwt().jwt(j -> j.subject("org-operator").claim("user_roles", List.of("ORGANIZATION"))))
+                .header("X-Organization-Id", org).header("If-Match", EtagSupport.format(booking.getVersion()))
+                .contentType("application/json").content(body))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.providerId").value(org.toString()));
+    }
+
     @Test void orgOperatorWithoutOrgHeaderUsesPersonalBookingScope() throws Exception {
         String user = "org-personal-" + UUID.randomUUID();
         var own = save(user, "REQUESTED");

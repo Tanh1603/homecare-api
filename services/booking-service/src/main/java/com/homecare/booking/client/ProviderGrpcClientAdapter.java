@@ -97,13 +97,16 @@ public class ProviderGrpcClientAdapter {
 
     public AllocateTechnicianResponse assignTechnician(UUID bookingId, UUID serviceId, String deviceType,
             Instant start, Instant end, UUID providerId, UUID technicianId) {
+        AllocateTechnicianRequest.Builder builder = AllocateTechnicianRequest.newBuilder().setIntentId("alloc-" + bookingId)
+                .setBookingId(bookingId.toString()).setServiceId(serviceId.toString())
+                .setDeviceType(deviceType == null ? "" : deviceType)
+                .setPreferredStartIso(start.toString()).setPreferredEndIso(end.toString())
+                .setStrictProviderMatch(providerId != null).setTechnicianId(technicianId.toString());
+        if (providerId != null) {
+            builder.setProviderId(providerId.toString());
+        }
         return withInternalMetadata(providerStub).withDeadlineAfter(3, TimeUnit.SECONDS)
-                .allocateTechnician(AllocateTechnicianRequest.newBuilder().setIntentId("alloc-" + bookingId)
-                        .setBookingId(bookingId.toString()).setServiceId(serviceId.toString())
-                        .setDeviceType(deviceType == null ? "" : deviceType)
-                        .setPreferredStartIso(start.toString()).setPreferredEndIso(end.toString())
-                        .setProviderId(providerId.toString()).setStrictProviderMatch(true)
-                        .setTechnicianId(technicianId.toString()).build());
+                .allocateTechnician(builder.build());
     }
 
     private ProviderAllocationServiceGrpc.ProviderAllocationServiceBlockingStub withInternalMetadata(

@@ -43,10 +43,10 @@ class CommerceOrganizationConsumerTest {
                 {"eventId":"%s","eventType":"organization.approved.v1","data":{"organizationId":"%s","name":"Cửa Hàng Linh Kiện A","type":"BOTH","ownerUserId":"user-owner-1","city":"Hà Nội","phone":"0901112223"}}
                 """.formatted(approveEventId, orgId).strip();
 
-        // First call creates INACTIVE MerchantEntity
+        // First call creates ACTIVE MerchantEntity
         consumer.onOrganizationEvent(approvedJson);
         MerchantEntity created = merchantRepository.findByOrganizationId(orgId).orElseThrow();
-        assertThat(created.getStatus()).isEqualTo(EntityStatus.INACTIVE.name());
+        assertThat(created.getStatus()).isEqualTo(EntityStatus.ACTIVE.name());
         assertThat(created.getName()).isEqualTo("Cửa Hàng Linh Kiện A");
 
         // Duplicate event is ignored idempotently
@@ -64,6 +64,24 @@ class CommerceOrganizationConsumerTest {
         consumer.onOrganizationEvent(suspendedJson);
         MerchantEntity suspended = merchantRepository.findByOrganizationId(orgId).orElseThrow();
         assertThat(suspended.getStatus()).isEqualTo(EntityStatus.INACTIVE.name());
+    }
+
+    @Test
+    void reApprovalReactivatesSuspendedMerchant() {
+        UUID orgId = UUID.randomUUID();
+        String approve = """
+                {"eventId":"%s","eventType":"organization.approved.v1","data":{"organizationId":"%s","name":"Shop","type":"COMMERCE","ownerUserId":"u-1"}}
+                """;
+        String suspend = """
+                {"eventId":"%s","eventType":"organization.suspended.v1","data":{"organizationId":"%s"}}
+                """;
+        consumer.onOrganizationEvent(approve.formatted(UUID.randomUUID(), orgId).strip());
+        consumer.onOrganizationEvent(suspend.formatted(UUID.randomUUID(), orgId).strip());
+        assertThat(merchantRepository.findByOrganizationId(orgId).orElseThrow().getStatus())
+                .isEqualTo(EntityStatus.INACTIVE.name());
+        consumer.onOrganizationEvent(approve.formatted(UUID.randomUUID(), orgId).strip());
+        assertThat(merchantRepository.findByOrganizationId(orgId).orElseThrow().getStatus())
+                .isEqualTo(EntityStatus.ACTIVE.name());
     }
 
     @Test

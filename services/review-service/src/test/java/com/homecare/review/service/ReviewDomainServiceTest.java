@@ -53,6 +53,11 @@ class ReviewDomainServiceTest {
         mvc.perform(MockMvcRequestBuilders.delete(path).with(owner))
                 .andExpect(MockMvcResultMatchers.status().isNoContent());
         assertThat(service.listProductReviews(product)).isEmpty();
+
+        var recreated = service.createProductReview("review-owner", product, new CreateProductReviewRequest(line, 4, "Again"));
+        assertThat(recreated.id()).isEqualTo(review.id());
+        assertThat(recreated.status()).isEqualTo("PUBLISHED");
+        assertThat(service.listProductReviews(product)).extracting("comment").containsExactly("Again");
     }
 
     @Autowired

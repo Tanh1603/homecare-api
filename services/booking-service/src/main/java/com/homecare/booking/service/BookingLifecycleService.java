@@ -550,14 +550,16 @@ public class BookingLifecycleService {
         var booking = bookingRepository.lockById(bookingId).orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
         if (!admin) {
             requireOrgMembership(organizationId, actor);
-            if (!organizationId.equals(booking.getProviderId())) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            if (booking.getProviderId() != null && !organizationId.equals(booking.getProviderId())) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
         EtagSupport.verifyIfMatch(ifMatch, booking.getVersion());
         if (!"REQUESTED".equals(booking.getStatus())) throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
+        UUID targetProviderId = booking.getProviderId() != null ? booking.getProviderId() : organizationId;
         var result = providerGrpcClient.assignTechnician(bookingId, booking.getServiceId(), booking.getDeviceType(),
-                booking.getPreferredStart(), booking.getPreferredEnd(), booking.getProviderId(), technicianId);
+                booking.getPreferredStart(), booking.getPreferredEnd(), targetProviderId, technicianId);
         if (!result.getAllocated() || !technicianId.toString().equals(result.getTechnicianId())
-                || !booking.getProviderId().toString().equals(result.getProviderId())) throw new DomainException(CommonErrorCode.CONFLICT);
+                || (targetProviderId != null && !targetProviderId.toString().equals(result.getProviderId()))) throw new DomainException(CommonErrorCode.CONFLICT);
+        booking.setProviderId(parseUuidOrNull(result.getProviderId()));
         booking.setAssignedTechnicianId(technicianId); booking.setAssignedTechnicianProfileId(result.getTechnicianProfileId());
         booking.setAssignedTechnicianName(result.getTechnicianName()); booking.setStatus("ASSIGNED");
         booking.setAllocationStatus("ALLOCATED"); booking.setUpdatedAt(Instant.now());

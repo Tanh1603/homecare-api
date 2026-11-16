@@ -40,21 +40,37 @@ class AllocationWindowTest {
         assertThat(windows.findAvailableCovering(allocated.technicianId(), start.plusSeconds(1800), start.plusSeconds(3600))).isNotEmpty();
     }
 
-    @Test void terminalEventReleasesBookingOnlyOnce() throws Exception {
+    @Test void terminalEventReleasesBookingOnlyOnce() {
         Instant start = Instant.now().plusSeconds(10800);
         UUID booking = UUID.randomUUID();
         var allocated = service.allocateTechnicianForBooking("release-" + booking, booking,
                 ProviderDataInitializer.SERVICE_AC_CLEAN_ID, "AC", start, start.plusSeconds(1800));
         assertThat(allocated.allocated()).isTrue();
         int load = service.getTechnician(allocated.technicianId()).activeAllocations();
-        assertThat(context.containsBean("providerBookingConsumer")).isTrue();
-        Object consumer = context.getBean("providerBookingConsumer");
-        var receive = consumer.getClass().getMethod("onEvent", String.class);
+        var consumer = context.getBean(ProviderBookingConsumer.class);
         String event = "{\"eventType\":\"booking.cancelled.v1\",\"data\":{\"bookingId\":\"" + booking + "\"}}";
-        receive.invoke(consumer, event); receive.invoke(consumer, event);
+        consumer.onEvent(event); consumer.onEvent(event);
         assertThat(service.getTechnician(allocated.technicianId()).activeAllocations()).isEqualTo(load - 1);
         assertThat(windows.findByTechnicianIdOrderByStartsAtAsc(allocated.technicianId()))
                 .noneMatch(w -> booking.equals(w.getAllocatedBookingId()));
+    }
+
+    @Test void completedBookingKeepsItsSlotBookedAndFreesTechnicianLoadOnce() {
+        Instant start = Instant.now().plusSeconds(14400);
+        UUID booking = UUID.randomUUID();
+        var allocated = service.allocateTechnicianForBooking("complete-" + booking, booking,
+                ProviderDataInitializer.SERVICE_AC_CLEAN_ID, "AC", start, start.plusSeconds(1800));
+        assertThat(allocated.allocated()).isTrue();
+        int load = service.getTechnician(allocated.technicianId()).activeAllocations();
+        var consumer = context.getBean(ProviderBookingConsumer.class);
+        String event = "{\"eventType\":\"booking.completed.v1\",\"data\":{\"bookingId\":\"" + booking + "\"}}";
+        consumer.onEvent(event); consumer.onEvent(event);
+        assertThat(service.getTechnician(allocated.technicianId()).activeAllocations()).isEqualTo(load - 1);
+        assertThat(windows.findByTechnicianIdOrderByStartsAtAsc(allocated.technicianId()))
+                .anySatisfy(w -> {
+                    assertThat(w.getAllocatedBookingId()).isEqualTo(booking);
+                    assertThat(w.getStatus()).isEqualTo("BOOKED");
+                });
     }
 
     @Test void releasedIntervalCanBeBookedTogetherWithItsAdjacentFreeTime() {
