@@ -3,9 +3,11 @@ package com.homecare.notification.service;
 import tools.jackson.databind.ObjectMapper;
 
 import com.homecare.common.event.DomainEventContracts;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,11 +31,11 @@ public class DomainEventConsumer {
         try {
             Map<String, Object> root = objectMapper.readValue(payloadJson, Map.class);
             Object rawEventId = root.get(DomainEventContracts.FIELD_EVENT_ID);
+            String eventType = String.valueOf(root.getOrDefault(DomainEventContracts.FIELD_EVENT_TYPE, "domain.event"));
             String eventId = rawEventId != null && !String.valueOf(rawEventId).isBlank()
                     && !"null".equalsIgnoreCase(String.valueOf(rawEventId))
                     ? String.valueOf(rawEventId)
-                    : UUID.randomUUID().toString();
-            String eventType = String.valueOf(root.getOrDefault(DomainEventContracts.FIELD_EVENT_TYPE, "domain.event"));
+                    : deterministicFallbackEventId(eventType, payloadJson);
             Map<String, Object> data = root.get(DomainEventContracts.FIELD_DATA) instanceof Map<?, ?> m
                     ? (Map<String, Object>) m
                     : Map.of();
@@ -69,6 +71,38 @@ public class DomainEventConsumer {
                             "Bạn vừa được phân công lịch hẹn dịch vụ " + stringField(data, "serviceName"),
                             Map.of("bookingId", bookingId));
                 }
+                case DomainEventContracts.BOOKING_REASSIGNED -> {
+                    String bookingId = stringField(data, "bookingId");
+                    String serviceName = stringField(data, "serviceName");
+                    inboxService.recordIfAbsent(
+                            eventId,
+                            stringField(data, "requesterProfileId"),
+                            eventType,
+                            "Thay đổi kỹ thuật viên",
+                            "Lịch hẹn dịch vụ " + serviceName + " đã được điều phối sang kỹ thuật viên " + stringField(data, "newTechnicianName") + ".",
+                            Map.of("bookingId", bookingId));
+                    inboxService.recordIfAbsent(
+                            eventId,
+                            stringField(data, "oldTechnicianProfileId"),
+                            eventType,
+                            "Lịch hẹn đã được điều chuyển",
+                            "Lịch hẹn dịch vụ " + serviceName + " đã được chuyển cho kỹ thuật viên khác.",
+                            Map.of("bookingId", bookingId));
+                    inboxService.recordIfAbsent(
+                            eventId,
+                            stringField(data, "newTechnicianProfileId"),
+                            eventType,
+                            "Công việc mới được điều phối",
+                            "Bạn vừa được phân công lịch hẹn dịch vụ " + serviceName + ".",
+                            Map.of("bookingId", bookingId));
+                }
+                case DomainEventContracts.ORDER_REFUND_SUCCEEDED -> inboxService.recordIfAbsent(
+                        eventId,
+                        stringField(data, "buyerProfileId"),
+                        eventType,
+                        "Hoàn tiền thành công",
+                        "Yêu cầu hoàn tiền cho đơn hàng " + stringField(data, "orderId") + " đã được hoàn tất.",
+                        Map.of("orderId", stringField(data, "orderId")));
                 case "booking.completed.v1" -> inboxService.recordIfAbsent(
                         eventId,
                         stringField(data, "requesterProfileId"),
@@ -133,6 +167,16 @@ public class DomainEventConsumer {
         } catch (Exception e) {
             log.warn("Failed to parse/process domain event payload: {}", e.getMessage());
             throw new IllegalStateException("Failed to process domain event", e);
+        }
+    }
+
+    private static String deterministicFallbackEventId(String eventType, String payloadJson) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest((eventType + "|" + payloadJson).getBytes(StandardCharsets.UTF_8));
+            return "sha256:" + HexFormat.of().formatHex(digest);
+        } catch (Exception ex) {
+            throw new IllegalStateException("SHA-256 unavailable", ex);
         }
     }
 

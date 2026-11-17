@@ -87,6 +87,7 @@ public class HouseholdEventConsumer {
                     if (warrantyMonths > 0) {
                         domainService.autoActivateWarrantyFromOrderLineDelivered(
                                 stringField(data, "buyerProfileId"),
+                                blankToNull(stringField(data, "buyerName")),
                                 uuidField(data, "organizationId"),
                                 stringField(data, "merchantName"),
                                 uuidField(data, "orderId"),
@@ -117,6 +118,10 @@ public class HouseholdEventConsumer {
             log.warn("HouseholdEventConsumer failed to process event: {}", e.getMessage());
             throw new IllegalStateException("Failed to process household event", e);
         }
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private String stringField(Map<String, Object> data, String key) {

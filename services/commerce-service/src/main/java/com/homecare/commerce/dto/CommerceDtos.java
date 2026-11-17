@@ -90,6 +90,7 @@ public final class CommerceDtos {
     public record OrderResponse(
             UUID id,
             String buyerProfileId,
+            String buyerName,
             UUID merchantId,
             String shippingAddress,
             long totalAmount,
@@ -101,6 +102,13 @@ public final class CommerceDtos {
             Instant updatedAt,
             List<OrderLineResponse> lines,
             List<PaymentAttemptResponse> paymentAttempts) {
+        public OrderResponse(UUID id, String buyerProfileId, UUID merchantId, String shippingAddress,
+                long totalAmount, String status, String paymentStatus, Instant quoteExpiresAt, Long version,
+                Instant createdAt, Instant updatedAt, List<OrderLineResponse> lines,
+                List<PaymentAttemptResponse> paymentAttempts) {
+            this(id, buyerProfileId, null, merchantId, shippingAddress, totalAmount, status, paymentStatus,
+                    quoteExpiresAt, version, createdAt, updatedAt, lines, paymentAttempts);
+        }
     }
 
     public record CreateOrderReturnRequest(
@@ -114,6 +122,11 @@ public final class CommerceDtos {
             String resolutionNote) {
     }
 
+    public record ConfirmManualRefundRequest(
+            @NotBlank String reference,
+            String note) {
+    }
+
     public record OrderReturnResponse(
             UUID id,
             UUID orderId,
@@ -121,6 +134,7 @@ public final class CommerceDtos {
             UUID productId,
             String productName,
             String buyerProfileId,
+            String buyerName,
             UUID organizationId,
             String returnType,
             int quantity,
@@ -128,7 +142,21 @@ public final class CommerceDtos {
             String status,
             String resolutionNote,
             Instant createdAt,
-            Instant resolvedAt) {
+            Instant resolvedAt,
+            Long version) {
+        public OrderReturnResponse(UUID id, UUID orderId, UUID orderLineId, UUID productId, String productName,
+                String buyerProfileId, String buyerName, UUID organizationId, String returnType, int quantity,
+                String reason, String status, String resolutionNote, Instant createdAt, Instant resolvedAt) {
+            this(id, orderId, orderLineId, productId, productName, buyerProfileId, buyerName, organizationId,
+                    returnType, quantity, reason, status, resolutionNote, createdAt, resolvedAt, 0L);
+        }
+
+        public OrderReturnResponse(UUID id, UUID orderId, UUID orderLineId, UUID productId, String productName,
+                String buyerProfileId, UUID organizationId, String returnType, int quantity, String reason,
+                String status, String resolutionNote, Instant createdAt, Instant resolvedAt) {
+            this(id, orderId, orderLineId, productId, productName, buyerProfileId, null, organizationId,
+                    returnType, quantity, reason, status, resolutionNote, createdAt, resolvedAt, 0L);
+        }
     }
 
     public record VerifyOrderLineReviewEligibilityResponse(

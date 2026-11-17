@@ -248,6 +248,11 @@ public class HouseholdDomainService {
 
     @Transactional
     public WarrantyResponse createWarranty(String ownerProfileId, UUID deviceId, CreateWarrantyRequest request) {
+        return createWarranty(ownerProfileId, null, deviceId, request);
+    }
+
+    public WarrantyResponse createWarranty(
+            String ownerProfileId, String ownerName, UUID deviceId, CreateWarrantyRequest request) {
         Device device = requireOwnedDevice(ownerProfileId, deviceId);
         if (request.endsOn().isBefore(request.startsOn())) {
             throw new DomainException(
@@ -258,6 +263,7 @@ public class HouseholdDomainService {
                 .id(UUID.randomUUID())
                 .deviceId(device.getId())
                 .ownerProfileId(ownerProfileId)
+                .ownerName(ownerName)
                 .organizationId(null)
                 .source("MANUAL")
                 .providerName(request.providerName().trim())
@@ -274,6 +280,25 @@ public class HouseholdDomainService {
     @Transactional
     public WarrantyResponse autoActivateWarrantyFromOrderLineDelivered(
             String buyerProfileId,
+            UUID organizationId,
+            String merchantName,
+            UUID orderId,
+            UUID orderLineId,
+            UUID productId,
+            String productName,
+            String category,
+            String brand,
+            String productType,
+            int warrantyMonths) {
+        return autoActivateWarrantyFromOrderLineDelivered(
+                buyerProfileId, null, organizationId, merchantName, orderId, orderLineId,
+                productId, productName, category, brand, productType, warrantyMonths);
+    }
+
+    @Transactional
+    public WarrantyResponse autoActivateWarrantyFromOrderLineDelivered(
+            String buyerProfileId,
+            String buyerName,
             UUID organizationId,
             String merchantName,
             UUID orderId,
@@ -313,6 +338,7 @@ public class HouseholdDomainService {
                 .id(UUID.randomUUID())
                 .deviceId(createdDevice.getId())
                 .ownerProfileId(buyerProfileId)
+                .ownerName(buyerName)
                 .organizationId(organizationId)
                 .orderId(orderId)
                 .orderLineId(orderLineId)
@@ -363,6 +389,11 @@ public class HouseholdDomainService {
                 .createdAt(now)
                 .build());
         return toCareRecordResponse(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<WarrantyResponse> listWarrantiesPage(String ownerProfileId, UUID deviceId, int page, int size) {
+        return slicePage(listWarranties(ownerProfileId, deviceId), page, size);
     }
 
     @Transactional(readOnly = true)
@@ -439,6 +470,11 @@ public class HouseholdDomainService {
     }
 
     @Transactional(readOnly = true)
+    public PageResponse<MaintenanceScheduleResponse> listSchedulesPage(String ownerProfileId, UUID deviceId, int page, int size) {
+        return slicePage(listSchedules(ownerProfileId, deviceId), page, size);
+    }
+
+    @Transactional(readOnly = true)
     public List<MaintenanceScheduleResponse> listSchedules(String ownerProfileId, UUID deviceId) {
         requireOwnedDevice(ownerProfileId, deviceId);
         return scheduleRepository.findByDeviceIdOrderByDueOnAsc(deviceId)
@@ -512,6 +548,18 @@ public class HouseholdDomainService {
                 .createdAt(Instant.now())
                 .build());
         return toCareRecordResponse(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<CareRecordResponse> listCareRecordsPage(String ownerProfileId, UUID deviceId, int page, int size) {
+        return slicePage(listCareRecords(ownerProfileId, deviceId), page, size);
+    }
+
+    private static <T> PageResponse<T> slicePage(List<T> all, int page, int size) {
+        PageResponse.validate(page, size);
+        int from = Math.min((page - 1) * size, all.size());
+        int to = Math.min(from + size, all.size());
+        return PageResponse.of(all.subList(from, to), page, size, all.size());
     }
 
     @Transactional(readOnly = true)
@@ -752,6 +800,7 @@ public class HouseholdDomainService {
                 w.getProductId(),
                 w.getSource(),
                 w.getProviderName(),
+                w.getOwnerName(),
                 w.getStartsOn(),
                 w.getStartsOn(),
                 w.getEndsOn(),

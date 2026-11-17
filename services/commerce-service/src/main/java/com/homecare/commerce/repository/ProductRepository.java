@@ -21,5 +21,16 @@ public interface ProductRepository extends JpaRepository<ProductEntity, UUID> {
         """)
     Page<ProductEntity> search(String category, String q, UUID merchantId,
             Long minPrice, Long maxPrice, Boolean inStock, Pageable pageable);
+
+    @Query("""
+        select p from ProductEntity p where (:category is null or lower(p.category) = lower(:category))
+        and (:q is null or lower(p.name) like lower(concat('%', :q, '%')) or lower(p.sku) like lower(concat('%', :q, '%')))
+        and (:merchantId is null or p.merchantId = :merchantId)
+        and (:minPrice is null or p.unitPrice >= :minPrice)
+        and (:maxPrice is null or p.unitPrice <= :maxPrice)
+        and (:inStock is null or :inStock = false or exists (select i.id from InventoryEntity i where i.productId = p.id and i.availableQty > 0))
+        """)
+    Page<ProductEntity> searchIncludingInactive(String category, String q, UUID merchantId,
+            Long minPrice, Long maxPrice, Boolean inStock, Pageable pageable);
     List<ProductEntity> findByStatusOrderByCreatedAtDesc(String status);
 }

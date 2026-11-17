@@ -173,5 +173,37 @@ class ReviewDomainServiceTest {
                         .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject("user-2")))
                         .contentType("application/json").content("{\"rating\":4}"))
                 .andExpect(MockMvcResultMatchers.status().isForbidden());
+
+        // Service review delete parity: soft-delete, by-booking lookup, cross-user 403, re-create reuse
+        UUID svcBookingId = UUID.randomUUID();
+        UUID providerId = UUID.randomUUID();
+        when(verificationClient.verifyBookingEligible(svcBookingId, "user-1"))
+                .thenReturn(new BookingEligibility(true, providerId));
+        ReviewResponse createdSvc = service.createServiceReview(
+                "user-1", new CreateServiceReviewRequest(svcBookingId, providerId, 5, "Tot"));
+        assertThat(service.getServiceReviewByBooking("user-1", svcBookingId).id()).isEqualTo(createdSvc.id());
+
+        assertThatThrownBy(() -> service.deleteServiceReview("other-user", createdSvc.id()))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
+
+        mvc.perform(MockMvcRequestBuilders.delete("/api/v1/service-reviews/" + createdSvc.id())
+                        .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject("user-1"))))
+                .andExpect(MockMvcResultMatchers.status().isNoContent());
+
+        assertThatThrownBy(() -> service.getServiceReviewByBooking("user-1", svcBookingId))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("REVIEW_NOT_FOUND");
+        assertThatThrownBy(() -> service.updateServiceReview("user-1", createdSvc.id(), new UpdateReviewRequest(3, "Edit")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("REVIEW_NOT_FOUND");
+
+        ReviewResponse recreatedSvc = service.createServiceReview(
+                "user-1", new CreateServiceReviewRequest(svcBookingId, providerId, 4, "Danh gia lai"));
+        assertThat(recreatedSvc.id()).isEqualTo(createdSvc.id());
+        assertThat(recreatedSvc.status()).isEqualTo("PUBLISHED");
     }
 }

@@ -3,6 +3,7 @@ package com.homecare.household.controller;
 import com.homecare.common.security.ActorContext;
 import com.homecare.common.security.ActorContextResolver;
 import com.homecare.common.security.RbacConstants;
+import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
@@ -195,19 +196,23 @@ public class HouseholdController {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(
                         ApiMessages.CREATED,
-                        service.createWarranty(resolvePersonal(jwt, rawOrgId).userId(), deviceId, request),
+                        service.createWarranty(resolvePersonal(jwt, rawOrgId).userId(),
+                                SupabaseJwtConverterSupport.extractDisplayName(jwt), deviceId, request),
                         httpRequest));
     }
 
     @GetMapping("/devices/{deviceId}/warranties")
-    public ResponseEntity<ApiResponse<List<WarrantyResponse>>> listWarranties(
+    public ResponseEntity<ApiResponse<PageResponse<WarrantyResponse>>> listWarranties(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID deviceId,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
+        PageResponse.validate(page, size);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.listWarranties(resolvePersonal(jwt, rawOrgId).userId(), deviceId),
+                service.listWarrantiesPage(resolvePersonal(jwt, rawOrgId).userId(), deviceId, page, size),
                 httpRequest));
     }
 
@@ -275,14 +280,17 @@ public class HouseholdController {
     }
 
     @GetMapping("/devices/{deviceId}/maintenance-schedules")
-    public ResponseEntity<ApiResponse<List<MaintenanceScheduleResponse>>> listSchedules(
+    public ResponseEntity<ApiResponse<PageResponse<MaintenanceScheduleResponse>>> listSchedules(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID deviceId,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
+        PageResponse.validate(page, size);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.listSchedules(resolvePersonal(jwt, rawOrgId).userId(), deviceId),
+                service.listSchedulesPage(resolvePersonal(jwt, rawOrgId).userId(), deviceId, page, size),
                 httpRequest));
     }
 
@@ -324,14 +332,17 @@ public class HouseholdController {
     }
 
     @GetMapping("/devices/{deviceId}/care-history")
-    public ResponseEntity<ApiResponse<List<CareRecordResponse>>> listCareRecords(
+    public ResponseEntity<ApiResponse<PageResponse<CareRecordResponse>>> listCareRecords(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID deviceId,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
+        PageResponse.validate(page, size);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.listCareRecords(resolvePersonal(jwt, rawOrgId).userId(), deviceId),
+                service.listCareRecordsPage(resolvePersonal(jwt, rawOrgId).userId(), deviceId, page, size),
                 httpRequest));
     }
 

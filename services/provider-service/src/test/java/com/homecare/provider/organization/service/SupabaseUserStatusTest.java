@@ -13,11 +13,28 @@ import org.junit.jupiter.api.Test;
 class SupabaseUserStatusTest {
     @Test void suspendAndRestoreUseAuthAdminAndPropagateFailures() throws Exception {
         var request = new AtomicReference<String>();
+        var profilePatch = new AtomicReference<String>();
+        var logoutCall = new AtomicReference<String>();
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/auth/v1/admin/users", exchange -> {
-            request.set(exchange.getRequestMethod() + " " + exchange.getRequestURI() + " "
-                    + new String(exchange.getRequestBody().readAllBytes(), UTF_8));
+            String path = exchange.getRequestURI().toString();
+            String bodyStr = new String(exchange.getRequestBody().readAllBytes(), UTF_8);
+            if ("POST".equals(exchange.getRequestMethod()) && path.endsWith("/logout")) {
+                logoutCall.set(path);
+            } else {
+                request.set(exchange.getRequestMethod() + " " + path + " " + bodyStr);
+            }
             exchange.sendResponseHeaders(200, -1); exchange.close();
+        });
+        server.createContext("/rest/v1/profiles", exchange -> {
+            profilePatch.set(exchange.getRequestMethod() + " " + exchange.getRequestURI()
+                    + " prefer=" + exchange.getRequestHeaders().getFirst("Prefer")
+                    + " " + new String(exchange.getRequestBody().readAllBytes(), UTF_8));
+            byte[] json = "[{\"id\":\"ok\"}]".getBytes(UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, json.length);
+            exchange.getResponseBody().write(json);
+            exchange.close();
         });
         server.start();
         try {
@@ -26,6 +43,9 @@ class SupabaseUserStatusTest {
             client.updateUserStatus(user, "SUSPENDED");
             assertThat(request.get()).isEqualTo("PUT /auth/v1/admin/users/" + user
                     + " {\"ban_duration\":\"876000h\",\"app_metadata\":{\"user_status\":\"SUSPENDED\"}}");
+            assertThat(profilePatch.get()).isEqualTo("PATCH /rest/v1/profiles?id=eq." + user
+                    + " prefer=return=representation {\"status\":\"SUSPENDED\"}");
+            assertThat(logoutCall.get()).isEqualTo("/auth/v1/admin/users/" + user + "/logout");
             client.updateUserStatus(user, "ACTIVE");
             assertThat(request.get()).endsWith("{\"ban_duration\":\"none\",\"app_metadata\":{\"user_status\":\"ACTIVE\"}}");
             assertThatThrownBy(() -> client.updateUserStatus(user, "INVALID")).isInstanceOf(DomainException.class);
@@ -76,7 +96,7 @@ class SupabaseUserStatusTest {
         req.setAttribute(com.homecare.common.web.CorrelationIdSupport.REQUEST_ATTRIBUTE, "test-trace-id");
 
         controller.updateStatus(target, new com.homecare.provider.organization.controller.AdminUserController.StatusRequest("SUSPENDED"), jwt, req);
-        org.mockito.Mockito.verify(ops).set("auth:blacklist:user:" + target, "SUSPENDED", java.time.Duration.ofHours(2));
+        org.mockito.Mockito.verify(ops).set("auth:blacklist:user:" + target, "SUSPENDED", java.time.Duration.ofHours(24));
 
         controller.updateStatus(target, new com.homecare.provider.organization.controller.AdminUserController.StatusRequest("ACTIVE"), jwt, req);
         org.mockito.Mockito.verify(redis).delete("auth:blacklist:user:" + target);

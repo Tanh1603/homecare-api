@@ -5,7 +5,10 @@ import com.homecare.provider.service.ProviderDomainService;
 import com.homecare.provider.service.ProviderDomainService.AllocationOutcome;
 import com.homecare.provider.v1.AllocateTechnicianRequest;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
+import com.homecare.provider.v1.GetBookingAllocationRequest;
+import com.homecare.provider.v1.GetBookingAllocationResponse;
 import com.homecare.provider.v1.ProviderAllocationServiceGrpc;
+import com.homecare.provider.v1.ReassignTechnicianRequest;
 import com.homecare.provider.v1.ReleaseBookingRequest;
 import com.homecare.provider.v1.ReleaseBookingResponse;
 import com.homecare.provider.v1.VerifyOfferingRequest;
@@ -96,6 +99,50 @@ public class ProviderAllocationGrpcService extends ProviderAllocationServiceGrpc
             builder.setAllocationId(outcome.allocationId().toString());
         }
 
+        responseObserver.onNext(builder.build());
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void reassignTechnician(
+            ReassignTechnicianRequest request,
+            StreamObserver<AllocateTechnicianResponse> responseObserver) {
+        AllocationOutcome outcome = domainService.reassignTechnicianForBooking(
+                parseUuidOrNull(request.getOperationId()),
+                UUID.fromString(request.getBookingId()),
+                UUID.fromString(request.getNewTechnicianId()),
+                parseUuidOrNull(request.getProviderId()),
+                request.getReason());
+
+        AllocateTechnicianResponse.Builder builder = AllocateTechnicianResponse.newBuilder()
+                .setIntentId("")
+                .setAllocated(outcome.allocated())
+                .setFailureReason(outcome.failureReason() == null ? "" : outcome.failureReason());
+        if (outcome.technicianId() != null) builder.setTechnicianId(outcome.technicianId().toString());
+        if (outcome.technicianProfileId() != null) builder.setTechnicianProfileId(outcome.technicianProfileId());
+        if (outcome.technicianName() != null) builder.setTechnicianName(outcome.technicianName());
+        if (outcome.providerId() != null) builder.setProviderId(outcome.providerId().toString());
+        if (outcome.allocationId() != null) builder.setAllocationId(outcome.allocationId().toString());
+
+        responseObserver.onNext(builder.build());
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void getBookingAllocation(
+            GetBookingAllocationRequest request,
+            StreamObserver<GetBookingAllocationResponse> responseObserver) {
+        var snap = domainService.getBookingAllocation(UUID.fromString(request.getBookingId()));
+        GetBookingAllocationResponse.Builder builder = GetBookingAllocationResponse.newBuilder()
+                .setFound(snap.found())
+                .setBookingId(snap.bookingId().toString())
+                .setTechnicianProfileId(snap.technicianProfileId() == null ? "" : snap.technicianProfileId())
+                .setTechnicianName(snap.technicianName() == null ? "" : snap.technicianName())
+                .setStatus(snap.status() == null ? "" : snap.status());
+        if (snap.technicianId() != null) builder.setTechnicianId(snap.technicianId().toString());
+        if (snap.providerId() != null) builder.setProviderId(snap.providerId().toString());
+        if (snap.allocationId() != null) builder.setAllocationId(snap.allocationId().toString());
+        if (snap.operationId() != null) builder.setOperationId(snap.operationId().toString());
         responseObserver.onNext(builder.build());
         responseObserver.onCompleted();
     }

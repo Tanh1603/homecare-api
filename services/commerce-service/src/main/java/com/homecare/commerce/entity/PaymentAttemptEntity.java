@@ -46,6 +46,18 @@ public class PaymentAttemptEntity {
     @Column(name = "response_code")
     private String responseCode;
 
+    @Column(name = "vnp_transaction_no", length = 64)
+    private String vnpTransactionNo;
+
+    @Column(name = "vnp_bank_tran_no", length = 64)
+    private String vnpBankTranNo;
+
+    @Column(name = "vnp_bank_code", length = 32)
+    private String vnpBankCode;
+
+    @Column(name = "vnp_pay_date", length = 32)
+    private String vnpPayDate;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 

@@ -37,6 +37,15 @@ public class BookingHistoryEntry {
     @Column(name = "actor_id", nullable = false, length = 255)
     private String actorId;
 
+    @Column(name = "actor_name", length = 255)
+    private String actorName;
+
+    @Column(name = "old_technician_id")
+    private UUID oldTechnicianId;
+
+    @Column(name = "new_technician_id")
+    private UUID newTechnicianId;
+
     @Column(length = 500)
     private String reason;
 

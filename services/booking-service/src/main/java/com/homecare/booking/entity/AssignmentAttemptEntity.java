@@ -49,6 +49,25 @@ public class AssignmentAttemptEntity {
     @Column(name = "technician_id")
     private UUID technicianId;
 
+    @Column(name = "attempt_type", nullable = false, columnDefinition = "varchar(32) default 'ALLOCATE'")
+    @Builder.Default
+    private String attemptType = "ALLOCATE";
+
+    @Column(name = "previous_technician_id")
+    private UUID previousTechnicianId;
+
+    @Column(name = "previous_technician_profile_id", length = 255)
+    private String previousTechnicianProfileId;
+
+    @Column(name = "previous_technician_name")
+    private String previousTechnicianName;
+
+    @Column(name = "previous_operation_id")
+    private UUID previousOperationId;
+
+    @Column(length = 500)
+    private String reason;
+
     @Column(nullable = false)
     private String status;
 

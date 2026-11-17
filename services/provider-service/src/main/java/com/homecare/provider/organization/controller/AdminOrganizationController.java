@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.homecare.common.security.RbacConstants;
 import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
+import com.homecare.common.web.PageResponse;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.RejectOrganizationRequest;
@@ -40,10 +41,16 @@ public class AdminOrganizationController {
     private final ServletApiResponseFactory responseFactory;
 
     @GetMapping
-    public ResponseEntity<ApiResponse<List<OrganizationResponse>>> listOrganizations(
+    public ResponseEntity<ApiResponse<PageResponse<OrganizationResponse>>> listOrganizations(
             @RequestParam(required = false) OrganizationStatus status,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        return ResponseEntity.ok(responseFactory.ok(ApiMessages.RETRIEVED, organizationService.listAllForAdmin(status), httpRequest));
+        PageResponse.validate(page, size);
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.RETRIEVED,
+                organizationService.listAllForAdminPage(status, page, size),
+                httpRequest));
     }
 
     @PostMapping("/{id}/approve")
@@ -70,5 +77,13 @@ public class AdminOrganizationController {
             HttpServletRequest httpRequest) {
         OrganizationResponse suspended = organizationService.suspendOrganization(id);
         return ResponseEntity.ok(responseFactory.ok(ApiMessages.SUSPENDED, suspended, httpRequest));
+    }
+
+    @PostMapping("/{id}/reactivate")
+    public ResponseEntity<ApiResponse<OrganizationResponse>> reactivateOrganization(
+            @PathVariable UUID id,
+            HttpServletRequest httpRequest) {
+        OrganizationResponse reactivated = organizationService.reactivateOrganization(id);
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.APPROVED, reactivated, httpRequest));
     }
 }

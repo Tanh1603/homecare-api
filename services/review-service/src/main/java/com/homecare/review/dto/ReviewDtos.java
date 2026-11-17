@@ -34,6 +34,7 @@ public final class ReviewDtos {
     public record ReviewResponse(
             UUID id,
             String authorProfileId,
+            String authorName,
             String targetType,
             UUID sourceId,
             UUID targetId,
@@ -42,5 +43,9 @@ public final class ReviewDtos {
             String status,
             Instant createdAt,
             Instant updatedAt) {
+        public ReviewResponse(UUID id, String authorProfileId, String targetType, UUID sourceId, UUID targetId,
+                int rating, String comment, String status, Instant createdAt, Instant updatedAt) {
+            this(id, authorProfileId, null, targetType, sourceId, targetId, rating, comment, status, createdAt, updatedAt);
+        }
     }
 }

@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.homecare.commerce.client.ProviderOrgClient;
+import com.homecare.commerce.dto.CommerceDtos.ConfirmManualRefundRequest;
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderRequest;
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderReturnRequest;
 import com.homecare.commerce.dto.CommerceDtos.CreatePaymentAttemptRequest;
@@ -35,6 +36,7 @@ import com.homecare.common.idempotency.IdempotencyService;
 import com.homecare.common.security.ActorContext;
 import com.homecare.common.security.ActorContextResolver;
 import com.homecare.common.security.RbacConstants;
+import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
@@ -65,13 +67,37 @@ public class CommerceController {
             @RequestParam(required = false) UUID merchantId,
             @RequestParam(required = false) Boolean inStock,
             @RequestParam(required = false) String sort,
+            @RequestParam(defaultValue = "false") boolean includeInactive,
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
+        UUID effectiveMerchantId = includeInactive
+                ? resolveAuthorizedInactiveMerchant(jwt, rawOrgId, merchantId)
+                : merchantId;
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.productsPage(category, q, merchantId, minPrice, maxPrice, inStock, sort, page, size),
+                service.productsPage(category, q, effectiveMerchantId, minPrice, maxPrice, inStock, sort, includeInactive, page, size),
                 httpRequest));
+    }
+
+    private UUID resolveAuthorizedInactiveMerchant(Jwt jwt, String rawOrgId, UUID requestedMerchantId) {
+        if (jwt == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId), providerOrgClient);
+        if (actor.isGlobalAdmin() && actor.mode() == com.homecare.common.security.AccessMode.PERSONAL) {
+            return requestedMerchantId;
+        }
+        if (actor.mode() == com.homecare.common.security.AccessMode.ORGANIZATION
+                && actor.hasOrgPermission(RbacConstants.PERM_PRODUCT_MANAGE)) {
+            if (requestedMerchantId != null && !requestedMerchantId.equals(actor.organizationId())) {
+                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            }
+            return actor.organizationId();
+        }
+        throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
     }
 
     @GetMapping("/products/{productId}")
@@ -93,6 +119,7 @@ public class CommerceController {
             HttpServletRequest httpRequest) {
         String sub = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId))
                 .userId();
+        String buyerName = SupabaseJwtConverterSupport.extractDisplayName(jwt);
         OrderResponse created;
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
             created = idempotencyService.execute(
@@ -100,9 +127,9 @@ public class CommerceController {
                     "POST:/api/v1/orders",
                     idempotencyKey,
                     request.toString(),
-                    () -> service.createOrder(sub, request));
+                    () -> service.createOrder(sub, buyerName, request));
         } else {
-            created = service.createOrder(sub, request);
+            created = service.createOrder(sub, buyerName, request);
         }
         return ResponseEntity.status(HttpStatus.CREATED)
                 .header(HttpHeaders.ETAG, EtagSupport.format(created.version()))
@@ -208,8 +235,9 @@ public class CommerceController {
             HttpServletRequest httpRequest) {
         String sub = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId))
                 .userId();
+        String buyerName = SupabaseJwtConverterSupport.extractDisplayName(jwt);
         OrderReturnResponse created = service.createOrderReturnRequest(
-                sub, orderId, lineId, request);
+                sub, buyerName, orderId, lineId, request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
     }
@@ -220,25 +248,80 @@ public class CommerceController {
             @PathVariable UUID orderId,
             @PathVariable UUID returnId,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @Valid @RequestBody ResolveOrderReturnRequest request,
             HttpServletRequest httpRequest) {
         ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId),
                 providerOrgClient);
-        OrderReturnResponse resolved = service.resolveOrderReturnRequest(actor, orderId, returnId, request);
-        return ResponseEntity.ok(responseFactory.ok(ApiMessages.PROCESSED, resolved, httpRequest));
+        OrderReturnResponse resolved = service.resolveOrderReturnRequest(actor, orderId, returnId, request, ifMatch);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.ETAG, EtagSupport.format(resolved.version()))
+                .body(responseFactory.ok(ApiMessages.PROCESSED, resolved, httpRequest));
     }
 
-    @GetMapping("/orders/{orderId}/returns")
-    public ResponseEntity<ApiResponse<List<OrderReturnResponse>>> listOrderReturns(
+    @PostMapping("/orders/{orderId}/returns/{returnId}/confirm-manual-refund")
+    public ResponseEntity<ApiResponse<OrderReturnResponse>> confirmManualRefund(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID orderId,
+            @PathVariable UUID returnId,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @Valid @RequestBody ConfirmManualRefundRequest request,
+            HttpServletRequest httpRequest) {
+        ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId),
+                providerOrgClient);
+        OrderReturnResponse updated = service.confirmManualRefund(actor, orderId, returnId, request, ifMatch);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.PROCESSED, updated, httpRequest));
+    }
+
+    @PostMapping("/orders/{orderId}/returns/{returnId}/retry-refund")
+    public ResponseEntity<ApiResponse<OrderReturnResponse>> retryRefund(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID orderId,
+            @PathVariable UUID returnId,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            HttpServletRequest httpRequest) {
+        ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId),
+                providerOrgClient);
+        OrderReturnResponse updated = service.retryRefund(actor, orderId, returnId, ifMatch);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.PROCESSED, updated, httpRequest));
+    }
+
+    @GetMapping("/merchant/returns")
+    public ResponseEntity<ApiResponse<PageResponse<OrderReturnResponse>>> listMerchantReturns(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
-            @PathVariable UUID orderId,
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
         ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId),
                 providerOrgClient);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.listOrderReturns(actor, orderId),
+                service.merchantReturnsPage(actor, status, page, size),
+                httpRequest));
+    }
+
+    @GetMapping("/orders/{orderId}/returns")
+    public ResponseEntity<ApiResponse<PageResponse<OrderReturnResponse>>> listOrderReturns(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID orderId,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
+            HttpServletRequest httpRequest) {
+        PageResponse.validate(page, size);
+        ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId),
+                providerOrgClient);
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.RETRIEVED,
+                service.listOrderReturnsPage(actor, orderId, page, size),
                 httpRequest));
     }
 }

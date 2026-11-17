@@ -23,6 +23,11 @@ public final class DomainEventContracts {
 
     // Organization lifecycle events
     public static final String ORG_APPROVED = "organization.approved.v1";
+    public static final String ORG_UPDATED = "organization.updated.v1";
     public static final String ORG_SUSPENDED = "organization.suspended.v1";
     public static final String ORG_MEMBER_CHANGED = "organization.member.changed.v1";
+
+    // Booking & Commerce lifecycle events
+    public static final String BOOKING_REASSIGNED = "booking.reassigned.v1";
+    public static final String ORDER_REFUND_SUCCEEDED = "order.refund.succeeded.v1";
 }

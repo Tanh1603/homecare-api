@@ -1,11 +1,13 @@
 package com.homecare.provider.organization.controller;
 
+import static com.homecare.common.error.CommonErrorCode.INTERNAL_ERROR;
 import static com.homecare.common.error.CommonErrorCode.OPERATION_FORBIDDEN;
 
 import com.homecare.common.error.DomainException;
 import com.homecare.common.security.RbacConstants;
 import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
+import com.homecare.common.web.PageResponse;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import com.homecare.provider.organization.dto.OrganizationDtos.AdminUserResponse;
 import com.homecare.provider.organization.service.SupabaseRoleClient;
@@ -14,13 +16,13 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.Valid;
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -32,6 +34,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -43,11 +46,13 @@ public class AdminUserController {
 
     private static final Logger log = LoggerFactory.getLogger(AdminUserController.class);
     private static final String BLACKLIST_USER_KEY_PREFIX = "auth:blacklist:user:";
-    private static final Duration USER_BLACKLIST_TTL = Duration.ofHours(2);
 
     private final SupabaseRoleClient supabaseRoleClient;
     private final ServletApiResponseFactory responseFactory;
     private final ObjectProvider<StringRedisTemplate> redisTemplateProvider;
+
+    @Value("${app.auth.user-blacklist-ttl:PT24H}")
+    private Duration userBlacklistTtl = Duration.ofHours(24);
 
     public record StatusRequest(@NotNull @Pattern(regexp = "ACTIVE|SUSPENDED") String status) {}
 
@@ -73,20 +78,27 @@ public class AdminUserController {
         String key = BLACKLIST_USER_KEY_PREFIX + userId;
         try {
             if ("SUSPENDED".equals(status)) {
-                redis.opsForValue().set(key, "SUSPENDED", USER_BLACKLIST_TTL);
+                redis.opsForValue().set(key, "SUSPENDED", userBlacklistTtl);
             } else {
                 redis.delete(key);
             }
         } catch (Exception ex) {
             log.warn("Failed to sync Redis user blacklist for userId={}: {}", userId, ex.getMessage());
+            if ("SUSPENDED".equals(status)) {
+                throw new DomainException(INTERNAL_ERROR, "Failed to revoke active user session.");
+            }
         }
     }
 
     @GetMapping
-    public ResponseEntity<ApiResponse<List<AdminUserResponse>>> listUsers(HttpServletRequest httpRequest) {
+    public ResponseEntity<ApiResponse<PageResponse<AdminUserResponse>>> listUsers(
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
+            HttpServletRequest httpRequest) {
+        PageResponse.validate(page, size);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                supabaseRoleClient.listUsers(),
+                supabaseRoleClient.listUsers(page, size),
                 httpRequest));
     }
 }

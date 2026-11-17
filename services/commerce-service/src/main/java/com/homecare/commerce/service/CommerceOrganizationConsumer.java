@@ -77,6 +77,13 @@ public class CommerceOrganizationConsumer {
                 .with(DomainEventContracts.ORG_SUSPENDED);
     }
 
+    @Bean
+    public Binding bindCommerceOrgUpdated(Queue commerceOrganizationQueue, TopicExchange domainEventsExchange) {
+        return BindingBuilder.bind(commerceOrganizationQueue)
+                .to(domainEventsExchange)
+                .with(DomainEventContracts.ORG_UPDATED);
+    }
+
     @RabbitListener(queues = QUEUE)
     @Transactional
     @SuppressWarnings("unchecked")
@@ -106,6 +113,8 @@ public class CommerceOrganizationConsumer {
 
             if (DomainEventContracts.ORG_APPROVED.equals(eventType)) {
                 handleApproved(orgId, data);
+            } else if (DomainEventContracts.ORG_UPDATED.equals(eventType)) {
+                handleUpdated(orgId, data);
             } else if (DomainEventContracts.ORG_SUSPENDED.equals(eventType)) {
                 handleSuspended(orgId);
             }
@@ -148,6 +157,21 @@ public class CommerceOrganizationConsumer {
                 .createdAt(Instant.now())
                 .build());
         log.info("Initialized ACTIVE MerchantEntity for approved organizationId={} type={}", orgId, type);
+    }
+
+    private void handleUpdated(UUID orgId, Map<?, ?> data) {
+        String type = str(data.get("type"));
+        if ("SERVICE".equalsIgnoreCase(type)) {
+            return;
+        }
+        merchantRepository.findByOrganizationId(orgId).ifPresent(merchant -> {
+            String name = str(data.get("name"));
+            String city = str(data.get("city"));
+            if (name != null && !name.isBlank()) merchant.setName(name);
+            if (city != null && !city.isBlank()) merchant.setCity(city);
+            merchantRepository.save(merchant);
+            log.info("Updated MerchantEntity projection for organizationId={}", orgId);
+        });
     }
 
     private void handleSuspended(UUID orgId) {

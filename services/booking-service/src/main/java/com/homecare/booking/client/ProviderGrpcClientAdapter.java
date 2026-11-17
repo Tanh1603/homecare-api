@@ -6,7 +6,10 @@ import com.homecare.common.security.VerifiedMembership;
 import com.homecare.grpc.interceptor.WorkloadAuthClientInterceptor;
 import com.homecare.provider.v1.AllocateTechnicianRequest;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
+import com.homecare.provider.v1.GetBookingAllocationRequest;
+import com.homecare.provider.v1.GetBookingAllocationResponse;
 import com.homecare.provider.v1.ProviderAllocationServiceGrpc;
+import com.homecare.provider.v1.ReassignTechnicianRequest;
 import com.homecare.provider.v1.ReleaseBookingRequest;
 import com.homecare.provider.v1.ReleaseBookingResponse;
 import com.homecare.provider.v1.VerifyOfferingRequest;
@@ -158,6 +161,35 @@ public class ProviderGrpcClientAdapter implements OrganizationMembershipVerifier
         return withInternalMetadata(providerStub)
                 .withDeadlineAfter(3, TimeUnit.SECONDS)
                 .releaseBooking(builder.build());
+    }
+
+    public AllocateTechnicianResponse reassignTechnician(
+            UUID operationId,
+            UUID bookingId,
+            UUID newTechnicianId,
+            UUID providerId,
+            String reason) {
+        ReassignTechnicianRequest.Builder builder = ReassignTechnicianRequest.newBuilder()
+                .setBookingId(bookingId.toString())
+                .setNewTechnicianId(newTechnicianId.toString())
+                .setReason(reason == null ? "" : reason);
+        if (operationId != null) {
+            builder.setOperationId(operationId.toString());
+        }
+        if (providerId != null) {
+            builder.setProviderId(providerId.toString());
+        }
+        return withInternalMetadata(providerStub)
+                .withDeadlineAfter(3, TimeUnit.SECONDS)
+                .reassignTechnician(builder.build());
+    }
+
+    public GetBookingAllocationResponse getBookingAllocation(UUID bookingId) {
+        return withInternalMetadata(providerStub)
+                .withDeadlineAfter(3, TimeUnit.SECONDS)
+                .getBookingAllocation(GetBookingAllocationRequest.newBuilder()
+                        .setBookingId(bookingId.toString())
+                        .build());
     }
 
     private ProviderAllocationServiceGrpc.ProviderAllocationServiceBlockingStub withInternalMetadata(

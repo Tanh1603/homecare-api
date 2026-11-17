@@ -27,4 +27,14 @@ public interface BookingRepository extends JpaRepository<BookingEntity, UUID>, J
           and b.allocationStatus = 'UNALLOCATED'
         """)
     int tryClaimForAllocation(@Param("bookingId") UUID bookingId, @Param("now") java.time.Instant now);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+        update BookingEntity b
+        set b.allocationStatus = 'REASSIGNING', b.updatedAt = :now
+        where b.id = :bookingId
+          and b.status = 'ASSIGNED'
+          and b.allocationStatus = 'ALLOCATED'
+        """)
+    int tryClaimForReassignment(@Param("bookingId") UUID bookingId, @Param("now") java.time.Instant now);
 }

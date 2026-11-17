@@ -27,10 +27,20 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
 
     private final ReactiveStringRedisTemplate redisTemplate;
     private final GatewayErrorHandlers errorHandlers;
+    private final boolean blacklistFailClosed;
 
-    public TokenBlacklistFilter(ReactiveStringRedisTemplate redisTemplate, GatewayErrorHandlers errorHandlers) {
+    @org.springframework.beans.factory.annotation.Autowired
+    public TokenBlacklistFilter(
+            ReactiveStringRedisTemplate redisTemplate,
+            GatewayErrorHandlers errorHandlers,
+            @org.springframework.beans.factory.annotation.Value("${app.auth.blacklist-fail-closed:false}") boolean blacklistFailClosed) {
         this.redisTemplate = redisTemplate;
         this.errorHandlers = errorHandlers;
+        this.blacklistFailClosed = blacklistFailClosed;
+    }
+
+    public TokenBlacklistFilter(ReactiveStringRedisTemplate redisTemplate, GatewayErrorHandlers errorHandlers) {
+        this(redisTemplate, errorHandlers, false);
     }
 
     @Override
@@ -55,9 +65,11 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
                         return errorHandlers.writeError(exchange, CommonErrorCode.ACCESS_DENIED);
                     }
                     String sub = jwt.getSubject();
+                    boolean isMutation = exchange.getRequest().getMethod() != org.springframework.http.HttpMethod.GET
+                            && exchange.getRequest().getMethod() != org.springframework.http.HttpMethod.HEAD;
                     Mono<Boolean> userBlacklisted = (sub == null || sub.isBlank())
                             ? Mono.just(false)
-                            : hasBlacklistedKey(BLACKLIST_USER_KEY_PREFIX + sub);
+                            : hasBlacklistedKey(BLACKLIST_USER_KEY_PREFIX + sub, isMutation);
 
                     return userBlacklisted.flatMap(isUserBlocked -> {
                         if (Boolean.TRUE.equals(isUserBlocked)) {
@@ -69,7 +81,7 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
                             return chain.filter(exchange);
                         }
                         String key = BLACKLIST_SESSION_KEY_PREFIX + sid;
-                        return hasBlacklistedKey(key).flatMap(isBlacklisted -> {
+                        return hasBlacklistedKey(key, isMutation).flatMap(isBlacklisted -> {
                             if (Boolean.TRUE.equals(isBlacklisted)) {
                                 log.warn("Blocked request with blacklisted session key={}", key);
                                 return errorHandlers.writeError(exchange, CommonErrorCode.TOKEN_REVOKED);
@@ -80,7 +92,7 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
                 });
     }
 
-    private Mono<Boolean> hasBlacklistedKey(String key) {
+    private Mono<Boolean> hasBlacklistedKey(String key, boolean isMutation) {
         Mono<Boolean> lookup = redisTemplate.hasKey(key);
         if (lookup == null) {
             return Mono.just(false);
@@ -89,6 +101,10 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
                 .defaultIfEmpty(false)
                 .timeout(java.time.Duration.ofMillis(500))
                 .onErrorResume(exception -> {
+                    if (blacklistFailClosed && isMutation) {
+                        log.warn("Redis blacklist lookup failed (fail-closed) for key={}: {}", key, exception.getMessage());
+                        return Mono.just(true);
+                    }
                     log.warn("Redis blacklist lookup failed (fail-open) for key={}: {}", key, exception.getMessage());
                     return Mono.just(false);
                 });

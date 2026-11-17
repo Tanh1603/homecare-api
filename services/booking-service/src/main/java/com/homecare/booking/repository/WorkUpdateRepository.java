@@ -10,4 +10,5 @@ import com.homecare.booking.entity.WorkUpdateEntity;
 public interface WorkUpdateRepository extends JpaRepository<WorkUpdateEntity, UUID> {
     List<WorkUpdateEntity> findByBookingIdOrderByCreatedAtAsc(UUID bookingId);
     List<WorkUpdateEntity> findByBookingIdInOrderByCreatedAtAsc(List<UUID> bookingIds);
+    boolean existsByBookingIdAndExtraCostStatus(UUID bookingId, String extraCostStatus);
 }

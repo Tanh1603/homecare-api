@@ -32,6 +32,9 @@ public class Warranty {
     @Column(name = "owner_profile_id", nullable = false, length = 255)
     private String ownerProfileId;
 
+    @Column(name = "owner_name", length = 255)
+    private String ownerName;
+
     @Column(name = "organization_id")
     private UUID organizationId;
 

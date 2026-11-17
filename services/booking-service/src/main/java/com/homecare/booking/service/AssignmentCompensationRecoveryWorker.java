@@ -83,7 +83,93 @@ public class AssignmentCompensationRecoveryWorker {
             recoverCompensation(tx, attempt);
             return;
         }
+        if ("REASSIGN".equals(attempt.getAttemptType())) {
+            recoverReassignment(tx, attempt, claimedStatus);
+            return;
+        }
         recoverAllocation(tx, attempt, claimedStatus);
+    }
+
+    private void recoverReassignment(
+            TransactionTemplate tx,
+            AssignmentAttemptEntity attempt,
+            String expectedStatus) {
+        try {
+            var snap = providerGrpcClient.getBookingAllocation(attempt.getBookingId());
+            if (snap != null && snap.getFound()
+                    && attempt.getTechnicianId() != null
+                    && attempt.getTechnicianId().toString().equals(snap.getTechnicianId())) {
+                tx.executeWithoutResult(status -> {
+                    Instant now = Instant.now();
+                    BookingEntity booking = bookingRepository.lockById(attempt.getBookingId()).orElse(null);
+                    if (booking == null) return;
+                    int fenced = attemptRepository.transitionWithFence(
+                            attempt.getOperationId(), attempt.getClaimToken(), expectedStatus, "ALLOCATED", null, now);
+                    if (fenced == 0) return;
+                    booking.setAssignedTechnicianId(attempt.getTechnicianId());
+                    booking.setAssignedTechnicianProfileId(snap.getTechnicianProfileId());
+                    booking.setAssignedTechnicianName(snap.getTechnicianName());
+                    booking.setAllocationStatus("ALLOCATED");
+                    booking.setActiveAllocationOperationId(attempt.getOperationId());
+                    booking.setUpdatedAt(now);
+                    bookingRepository.saveAndFlush(booking);
+                    historyRepository.save(BookingHistoryEntry.builder()
+                            .id(UUID.randomUUID())
+                            .bookingId(booking.getId())
+                            .fromStatus("ASSIGNED")
+                            .toStatus("ASSIGNED")
+                            .actorId("RECOVERY_WORKER")
+                            .oldTechnicianId(attempt.getPreviousTechnicianId())
+                            .newTechnicianId(attempt.getTechnicianId())
+                            .reason("Reconciled technician reassignment")
+                            .occurredAt(now)
+                            .build());
+                });
+                return;
+            }
+            if (snap != null && snap.getFound()
+                    && attempt.getPreviousTechnicianId() != null
+                    && attempt.getPreviousTechnicianId().toString().equals(snap.getTechnicianId())) {
+                tx.executeWithoutResult(status -> {
+                    Instant now = Instant.now();
+                    int fenced = attemptRepository.transitionWithFence(
+                            attempt.getOperationId(), attempt.getClaimToken(), expectedStatus, "FAILED",
+                            "REASSIGN_REVERTED_TO_PREVIOUS", now);
+                    if (fenced == 1) {
+                        bookingRepository.lockById(attempt.getBookingId()).ifPresent(b -> {
+                            b.setAllocationStatus("ALLOCATED");
+                            b.setUpdatedAt(now);
+                            bookingRepository.save(b);
+                        });
+                    }
+                });
+                return;
+            }
+            if (snap != null && !snap.getFound()) {
+                tx.executeWithoutResult(status -> {
+                    Instant now = Instant.now();
+                    int fenced = attemptRepository.transitionWithFence(
+                            attempt.getOperationId(), attempt.getClaimToken(), expectedStatus, "FAILED",
+                            "ALLOCATION_RELEASED_DURING_REASSIGN", now);
+                    if (fenced == 1) {
+                        bookingRepository.lockById(attempt.getBookingId()).ifPresent(b -> {
+                            b.setStatus("REQUESTED");
+                            b.setAllocationStatus("UNALLOCATED");
+                            b.setAssignedTechnicianId(null);
+                            b.setAssignedTechnicianProfileId(null);
+                            b.setAssignedTechnicianName(null);
+                            b.setActiveAllocationOperationId(null);
+                            b.setUpdatedAt(now);
+                            bookingRepository.save(b);
+                        });
+                    }
+                });
+                return;
+            }
+            handleRetryOrManualIntervention(tx, attempt, expectedStatus, "RECONCILIATION_PENDING", "REASSIGN_STATE_MISMATCH");
+        } catch (Exception ex) {
+            handleRetryOrManualIntervention(tx, attempt, expectedStatus, "RECONCILIATION_PENDING", ex.getMessage());
+        }
     }
 
     private void recoverAllocation(
@@ -128,6 +214,7 @@ public class AssignmentCompensationRecoveryWorker {
                     booking.setAssignedTechnicianName(res.getTechnicianName());
                     booking.setStatus("ASSIGNED");
                     booking.setAllocationStatus("ALLOCATED");
+                    booking.setActiveAllocationOperationId(attempt.getOperationId());
                     booking.setUpdatedAt(now);
                     BookingEntity saved = bookingRepository.saveAndFlush(booking);
                     sagaRepository.findByBookingId(booking.getId()).ifPresent(saga -> {

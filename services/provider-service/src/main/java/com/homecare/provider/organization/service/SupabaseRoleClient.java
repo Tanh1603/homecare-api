@@ -5,6 +5,7 @@ import static com.homecare.common.error.CommonErrorCode.RESOURCE_NOT_FOUND;
 import static com.homecare.common.error.CommonErrorCode.VALIDATION_FAILED;
 
 import com.homecare.common.error.DomainException;
+import com.homecare.common.web.PageResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.AdminUserResponse;
 import java.time.Duration;
 import java.time.Instant;
@@ -20,7 +21,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException.NotFound;
 import org.springframework.web.client.RestClient;
@@ -42,8 +43,10 @@ public class SupabaseRoleClient {
         this.supabaseUrl = supabaseUrl;
         this.secretKey = secretKey;
         this.organizationRoleId = organizationRoleId;
-        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(Duration.ofSeconds(3));
+        java.net.http.HttpClient httpClient = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(Duration.ofSeconds(5));
         this.restClient = RestClient.builder().baseUrl(supabaseUrl).requestFactory(requestFactory).build();
     }
@@ -83,20 +86,62 @@ public class SupabaseRoleClient {
         log.info("[AUDIT-ROLE-SYNC] Revoked global ORGANIZATION role in Supabase public.user_roles for userId={}", userId);
     }
 
+    public record ProfileSummary(String fullName, String email) {
+    }
+
+    public Map<String, ProfileSummary> fetchProfilesBatch(Collection<String> userIds) {
+        if (!isConfigured() || userIds == null || userIds.isEmpty()) {
+            return Map.of();
+        }
+        String joined = userIds.stream()
+                .filter(id -> id != null && !id.isBlank())
+                .distinct()
+                .collect(java.util.stream.Collectors.joining(","));
+        if (joined.isBlank()) {
+            return Map.of();
+        }
+        try {
+            List<Map<String, Object>> rows = restClient.get()
+                    .uri("/rest/v1/profiles?id=in.({ids})&select=id,full_name,email", joined)
+                    .header("apikey", secretKey)
+                    .header("Authorization", "Bearer " + secretKey)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+            if (rows == null || rows.isEmpty()) {
+                return Map.of();
+            }
+            Map<String, ProfileSummary> result = new LinkedHashMap<>();
+            for (Map<String, Object> row : rows) {
+                String id = asString(row.get("id"));
+                if (id != null) {
+                    result.put(id, new ProfileSummary(asString(row.get("full_name")), asString(row.get("email"))));
+                }
+            }
+            return result;
+        } catch (Exception ex) {
+            log.warn("[ORG-MEMBERS] Failed batch profile lookup: {}", ex.getMessage());
+            return Map.of();
+        }
+    }
+
     public List<AdminUserResponse> listUsers() {
+        return listUsers(1, 100).items();
+    }
+
+    public PageResponse<AdminUserResponse> listUsers(int page, int size) {
         if (!isConfigured()) {
             log.warn("[ADMIN-USERS] Supabase secret key not configured; returning empty user list.");
-            return List.of();
+            return PageResponse.of(List.of(), page, size, 0L);
         }
         try {
             Map<String, Object> body = restClient.get()
-                    .uri("/auth/v1/admin/users?page=1&per_page=100")
+                    .uri("/auth/v1/admin/users?page={page}&per_page={size}", page, size)
                     .header("apikey", secretKey)
                     .header("Authorization", "Bearer " + secretKey)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {});
             if (body == null || !(body.get("users") instanceof Collection<?> rawUsers)) {
-                return List.of();
+                return PageResponse.of(List.of(), page, size, 0L);
             }
             List<AdminUserResponse> result = new ArrayList<>();
             for (Object entry : rawUsers) {
@@ -117,10 +162,18 @@ public class SupabaseRoleClient {
                 Instant createdAt = parseInstant(asString(user.get("created_at")));
                 result.add(new AdminUserResponse(id, fullName, email != null ? email : "", role, status, createdAt));
             }
-            return result;
+            long total = result.size();
+            if (body.get("total") instanceof Number n) {
+                total = n.longValue();
+            } else if (result.size() == size) {
+                total = (long) page * size + 1;
+            } else {
+                total = (long) (page - 1) * size + result.size();
+            }
+            return PageResponse.of(result, page, size, total);
         } catch (Exception ex) {
             log.warn("[ADMIN-USERS] Failed to query Supabase Auth Admin API: {}", ex.getMessage());
-            return List.of();
+            return PageResponse.of(List.of(), page, size, 0L);
         }
     }
 
@@ -143,6 +196,31 @@ public class SupabaseRoleClient {
                     .retrieve().toBodilessEntity();
         } catch (NotFound ex) {
             throw new DomainException(RESOURCE_NOT_FOUND);
+        }
+
+        List<Map<String, Object>> updatedProfiles = restClient.patch()
+                .uri("/rest/v1/profiles?id=eq.{id}", userId)
+                .header("apikey", secretKey)
+                .header("Authorization", "Bearer " + secretKey)
+                .header("Prefer", "return=representation")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("status", status))
+                .retrieve()
+                .body(new ParameterizedTypeReference<>() {});
+        if (updatedProfiles == null || updatedProfiles.isEmpty()) {
+            throw new DomainException(RESOURCE_NOT_FOUND, "User profile row not found.");
+        }
+
+        if ("SUSPENDED".equals(status)) {
+            try {
+                restClient.post().uri("/auth/v1/admin/users/{id}/logout", userId)
+                        .header("apikey", secretKey)
+                        .header("Authorization", "Bearer " + secretKey)
+                        .retrieve()
+                        .toBodilessEntity();
+            } catch (Exception ex) {
+                log.warn("[ADMIN-USERS] Best-effort session logout failed for userId={}: {}", userId, ex.getMessage());
+            }
         }
     }
 

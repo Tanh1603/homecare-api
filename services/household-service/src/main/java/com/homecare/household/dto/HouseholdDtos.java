@@ -108,6 +108,7 @@ public final class HouseholdDtos {
             UUID productId,
             String source,
             String providerName,
+            String ownerName,
             LocalDate startsOn,
             LocalDate startDate,
             LocalDate endsOn,
@@ -117,6 +118,13 @@ public final class HouseholdDtos {
             String documentUrl,
             String status,
             Instant createdAt) {
+        public WarrantyResponse(UUID id, UUID deviceId, UUID organizationId, UUID orderId, UUID orderLineId,
+                UUID productId, String source, String providerName, LocalDate startsOn, LocalDate startDate,
+                LocalDate endsOn, LocalDate endDate, String notes, String coverageSummary, String documentUrl,
+                String status, Instant createdAt) {
+            this(id, deviceId, organizationId, orderId, orderLineId, productId, source, providerName, null,
+                    startsOn, startDate, endsOn, endDate, notes, coverageSummary, documentUrl, status, createdAt);
+        }
     }
 
     public record CreateMaintenanceScheduleRequest(
