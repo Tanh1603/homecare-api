@@ -36,6 +36,7 @@ public class FcmPushConsumer {
             firebaseMessagingService.sendPushToUser(recipientId, title, body, data);
         } catch (Exception e) {
             log.error("Failed to process push dispatch message: {}", e.getMessage(), e);
+            throw new IllegalStateException("Failed to process push dispatch message", e);
         }
     }
 }
