@@ -7,7 +7,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.context.annotation.Bean;
@@ -35,8 +37,28 @@ public class HouseholdEventConsumer {
     }
 
     @Bean
+    public DirectExchange householdEventsDlx() {
+        return new DirectExchange(DomainEventContracts.DLX, true, false);
+    }
+
+    @Bean
     public Queue householdEventsQueue() {
-        return new Queue(QUEUE, true);
+        return QueueBuilder.durable(QUEUE)
+                .withArgument("x-dead-letter-exchange", DomainEventContracts.DLX)
+                .withArgument("x-dead-letter-routing-key", DomainEventContracts.dlqName(QUEUE))
+                .build();
+    }
+
+    @Bean
+    public Queue householdEventsDlq() {
+        return QueueBuilder.durable(DomainEventContracts.dlqName(QUEUE)).build();
+    }
+
+    @Bean
+    public Binding bindHouseholdEventsDlq(Queue householdEventsDlq, DirectExchange householdEventsDlx) {
+        return BindingBuilder.bind(householdEventsDlq)
+                .to(householdEventsDlx)
+                .with(DomainEventContracts.dlqName(QUEUE));
     }
 
     @Bean

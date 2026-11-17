@@ -7,5 +7,6 @@ public enum EntityStatus {
     ACTIVE,
     INACTIVE,
     PENDING,
-    PUBLISHED
+    PUBLISHED,
+    DEAD
 }

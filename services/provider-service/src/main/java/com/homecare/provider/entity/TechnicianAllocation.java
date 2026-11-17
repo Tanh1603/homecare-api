@@ -28,7 +28,10 @@ public class TechnicianAllocation {
     @Column(name = "intent_id", nullable = false, unique = true)
     private String intentId;
 
-    @Column(name = "booking_id", nullable = false, unique = true)
+    @Column(name = "operation_id")
+    private UUID operationId;
+
+    @Column(name = "booking_id", nullable = false)
     private UUID bookingId;
 
     @Column(name = "technician_id", nullable = false)

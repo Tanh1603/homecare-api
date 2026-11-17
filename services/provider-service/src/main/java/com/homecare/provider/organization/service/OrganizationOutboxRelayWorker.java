@@ -22,6 +22,7 @@ import lombok.RequiredArgsConstructor;
 public class OrganizationOutboxRelayWorker {
 
     private static final Logger log = LoggerFactory.getLogger(OrganizationOutboxRelayWorker.class);
+    static final int MAX_RETRIES = 10;
 
     private final ProviderOutboxEventRepository outboxRepository;
     private final RabbitTemplate rabbitTemplate;
@@ -42,10 +43,16 @@ public class OrganizationOutboxRelayWorker {
                 outboxRepository.save(event);
             } catch (Exception ex) {
                 int nextRetry = event.getRetryCount() + 1;
-                long backoffSeconds = Math.min(300L, nextRetry * 15L);
-                log.warn("Deferred publish for organization outbox event {}: {}", event.getId(), ex.getMessage());
                 event.setRetryCount(nextRetry);
-                event.setNextAttemptAt(Instant.now().plusSeconds(backoffSeconds));
+                if (nextRetry >= MAX_RETRIES) {
+                    event.setStatus(EntityStatus.DEAD.name());
+                    event.setNextAttemptAt(null);
+                    log.error("Organization outbox event {} exhausted {} retries -> DEAD: {}", event.getId(), MAX_RETRIES, ex.getMessage());
+                } else {
+                    long backoffSeconds = Math.min(300L, nextRetry * 15L);
+                    log.warn("Deferred publish for organization outbox event {}: {}", event.getId(), ex.getMessage());
+                    event.setNextAttemptAt(Instant.now().plusSeconds(backoffSeconds));
+                }
                 outboxRepository.save(event);
             }
         }

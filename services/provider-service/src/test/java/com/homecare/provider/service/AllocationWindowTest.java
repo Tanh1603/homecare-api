@@ -4,6 +4,8 @@ import static java.time.temporal.ChronoUnit.DAYS;
 import static java.time.temporal.ChronoUnit.SECONDS;
 import static org.assertj.core.api.Assertions.*;
 
+import com.homecare.common.security.AccessMode;
+import com.homecare.common.security.ActorContext;
 import com.homecare.provider.dto.ProviderDtos.CreateScheduleWindowRequest;
 import com.homecare.provider.repository.ProviderRepository;
 import com.homecare.provider.repository.ScheduleWindowRepository;
@@ -80,8 +82,9 @@ class AllocationWindowTest {
 
     @Test void releasedIntervalCanBeBookedTogetherWithItsAdjacentFreeTime() {
         Instant start = Instant.now().truncatedTo(SECONDS).plus(45, DAYS);
-        service.createScheduleWindow("me", "demo-technician",
-                new CreateScheduleWindowRequest(start, start.plusSeconds(3600)), false);
+        service.createScheduleWindow("me",
+                new ActorContext("demo-technician", AccessMode.PERSONAL, null, java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), java.util.Set.of()),
+                new CreateScheduleWindowRequest(start, start.plusSeconds(3600)));
         UUID booking = UUID.randomUUID();
         var allocated = service.allocateTechnicianForBooking("merge-" + booking, booking,
                 ProviderDataInitializer.SERVICE_AC_CLEAN_ID, "AC", start, start.plusSeconds(1800),
@@ -182,5 +185,55 @@ class AllocationWindowTest {
                 .doesNotThrowAnyException();
         assertThatCode(() -> consumer.onEvent("{\"eventType\":\"booking.completed.v1\",\"data\":{\"bookingId\":\"not-a-uuid\"}}"))
                 .doesNotThrowAnyException();
+    }
+
+    @Test void operationIdEnforcesIdempotencyReleasedTombstoneAndCachedFailure() {
+        Instant start = Instant.now().truncatedTo(SECONDS).plus(60, DAYS);
+        Instant end = start.plusSeconds(1800);
+        service.createScheduleWindow("me",
+                new ActorContext("demo-technician", AccessMode.PERSONAL, null, java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), java.util.Set.of()),
+                new CreateScheduleWindowRequest(start, start.plusSeconds(3600)));
+
+        // 1. Release before Allocate creates RELEASED tombstone and blocks late Allocate
+        UUID booking1 = UUID.randomUUID();
+        UUID opTombstone = UUID.randomUUID();
+        var relTombstone = service.releaseBookingByOperation(booking1, opTombstone, "CLIENT_TIMEOUT");
+        assertThat(relTombstone.released()).isTrue();
+        var lateAlloc = service.allocateTechnicianForBooking(opTombstone, "op-" + opTombstone, booking1,
+                ProviderDataInitializer.SERVICE_AC_CLEAN_ID, "AC", start, end,
+                ProviderDataInitializer.PROVIDER_1_ID, true, ProviderDataInitializer.DEMO_TECH_ID);
+        assertThat(lateAlloc.allocated()).isFalse();
+        assertThat(lateAlloc.failureReason()).isEqualTo("OPERATION_ALREADY_RELEASED");
+
+        // 2. Same operationId after ALLOCATED returns cached allocation; Release by same operationId releases it
+        UUID opSuccess = UUID.randomUUID();
+        var alloc1 = service.allocateTechnicianForBooking(opSuccess, "op-" + opSuccess, booking1,
+                ProviderDataInitializer.SERVICE_AC_CLEAN_ID, "AC", start, end,
+                ProviderDataInitializer.PROVIDER_1_ID, true, ProviderDataInitializer.DEMO_TECH_ID);
+        assertThat(alloc1.allocated()).isTrue();
+        var alloc1Replay = service.allocateTechnicianForBooking(opSuccess, "op-" + opSuccess, booking1,
+                ProviderDataInitializer.SERVICE_AC_CLEAN_ID, "AC", start, end,
+                ProviderDataInitializer.PROVIDER_1_ID, true, ProviderDataInitializer.DEMO_TECH_ID);
+        assertThat(alloc1Replay.allocationId()).isEqualTo(alloc1.allocationId());
+
+        // Release with a DIFFERENT operationId must NOT release opSuccess's allocation
+        UUID opOther = UUID.randomUUID();
+        service.releaseBookingByOperation(booking1, opOther, "OTHER_OP");
+        var opSuccessAgain = service.releaseBookingByOperation(booking1, opSuccess, "COMPENSATE");
+        assertThat(opSuccessAgain.released()).isTrue();
+
+        // 3. Failed operationId returns cached failure even after slot becomes free
+        UUID bookingFail = UUID.randomUUID();
+        UUID opFail = UUID.randomUUID();
+        Instant emptyStart = start.plus(10, DAYS);
+        var fail1 = service.allocateTechnicianForBooking(opFail, "op-" + opFail, bookingFail,
+                ProviderDataInitializer.SERVICE_AC_CLEAN_ID, "AC", emptyStart, emptyStart.plusSeconds(1800),
+                ProviderDataInitializer.PROVIDER_1_ID, true, ProviderDataInitializer.DEMO_TECH_ID);
+        assertThat(fail1.allocated()).isFalse();
+        var fail2 = service.allocateTechnicianForBooking(opFail, "op-" + opFail, bookingFail,
+                ProviderDataInitializer.SERVICE_AC_CLEAN_ID, "AC", start, end,
+                ProviderDataInitializer.PROVIDER_1_ID, true, ProviderDataInitializer.DEMO_TECH_ID);
+        assertThat(fail2.allocated()).isFalse();
+        assertThat(fail2.failureReason()).isEqualTo(fail1.failureReason());
     }
 }

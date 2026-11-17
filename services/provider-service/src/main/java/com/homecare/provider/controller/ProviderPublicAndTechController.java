@@ -1,9 +1,8 @@
 package com.homecare.provider.controller;
 
-import com.homecare.common.error.CommonErrorCode;
-import com.homecare.common.error.DomainException;
+import com.homecare.common.security.ActorContext;
+import com.homecare.common.security.ActorContextResolver;
 import com.homecare.common.security.RbacConstants;
-import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
@@ -15,6 +14,7 @@ import com.homecare.provider.dto.ProviderDtos.ScheduleWindowResponse;
 import com.homecare.provider.dto.ProviderDtos.ServiceOfferingResponse;
 import com.homecare.provider.dto.ProviderDtos.TechnicianResponse;
 import com.homecare.provider.dto.ProviderDtos.UpdateScheduleWindowRequest;
+import com.homecare.provider.security.ProviderAccessPolicy;
 import com.homecare.provider.service.ProviderDomainService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -44,6 +44,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class ProviderPublicAndTechController {
 
     private final ProviderDomainService service;
+    private final ProviderAccessPolicy accessPolicy;
     private final ServletApiResponseFactory responseFactory;
 
     @GetMapping("/services")
@@ -120,11 +121,14 @@ public class ProviderPublicAndTechController {
     public ResponseEntity<ApiResponse<List<ScheduleWindowResponse>>> listSchedules(
             @PathVariable String technicianId,
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             HttpServletRequest httpRequest) {
-        String sub = jwt != null ? jwt.getSubject() : null;
+        ActorContext actor = jwt != null
+                ? ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId), accessPolicy)
+                : null;
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.listScheduleWindows(technicianId, sub, isGlobalAdmin(jwt)),
+                service.listScheduleWindows(technicianId, actor),
                 httpRequest));
     }
 
@@ -132,11 +136,11 @@ public class ProviderPublicAndTechController {
     public ResponseEntity<ApiResponse<ScheduleWindowResponse>> createSchedule(
             @PathVariable String technicianId,
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @Valid @RequestBody CreateScheduleWindowRequest request,
             HttpServletRequest httpRequest) {
-        verifyScheduleManager(jwt);
-        String sub = jwt != null ? jwt.getSubject() : null;
-        ScheduleWindowResponse created = service.createScheduleWindow(technicianId, sub, request, isGlobalAdmin(jwt));
+        ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId), accessPolicy);
+        ScheduleWindowResponse created = service.createScheduleWindow(technicianId, actor, request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .header(HttpHeaders.ETAG, EtagSupport.format(created.version()))
                 .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
@@ -147,29 +151,14 @@ public class ProviderPublicAndTechController {
             @PathVariable String technicianId,
             @PathVariable UUID windowId,
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @RequestBody UpdateScheduleWindowRequest request,
             HttpServletRequest httpRequest) {
-        verifyScheduleManager(jwt);
-        String sub = jwt != null ? jwt.getSubject() : null;
-        ScheduleWindowResponse updated = service.updateScheduleWindow(
-                technicianId, sub, windowId, ifMatch, request, isGlobalAdmin(jwt));
+        ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId), accessPolicy);
+        ScheduleWindowResponse updated = service.updateScheduleWindow(technicianId, actor, windowId, ifMatch, request);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
                 .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
-    }
-
-    private boolean isGlobalAdmin(Jwt jwt) {
-        return jwt != null && SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
-                jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ADMIN_ALL);
-    }
-
-    private void verifyScheduleManager(Jwt jwt) {
-        if (!SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
-                jwt,
-                new String[]{RbacConstants.ROLE_TECHNICIAN, RbacConstants.ROLE_ORGANIZATION, RbacConstants.ROLE_ADMIN},
-                RbacConstants.PERM_SCHEDULE_MANAGE, RbacConstants.PERM_ADMIN_ALL)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
     }
 }

@@ -115,7 +115,7 @@ class ReviewDomainServiceTest {
     }
 
     @Test
-    void enforcesProviderAndProductMatchAndPreventsCrossTypeUpdate() {
+    void enforcesProviderAndProductMatchAndPreventsCrossTypeUpdate() throws Exception {
         UUID bookingId = UUID.randomUUID();
         UUID actualProviderId = UUID.fromString("11111111-1111-1111-1111-111111111111");
         UUID spoofedProviderId = UUID.fromString("22222222-2222-2222-2222-222222222222");
@@ -155,5 +155,23 @@ class ReviewDomainServiceTest {
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("VALIDATION_FAILED");
+
+        // Owner-only mutation & fail-closed X-Organization-Id rejection
+        assertThatThrownBy(() -> service.updateProductReview(
+                "other-user",
+                actualProductId,
+                productReview.id(),
+                new UpdateReviewRequest(1, "Hijack")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
+
+        var mvc = MockMvcBuilders.webAppContextSetup(webContext)
+                .apply(SecurityMockMvcConfigurers.springSecurity()).build();
+        mvc.perform(MockMvcRequestBuilders.patch("/api/v1/products/" + actualProductId + "/reviews/" + productReview.id())
+                        .header("X-Organization-Id", UUID.randomUUID())
+                        .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject("user-2")))
+                        .contentType("application/json").content("{\"rating\":4}"))
+                .andExpect(MockMvcResultMatchers.status().isForbidden());
     }
 }

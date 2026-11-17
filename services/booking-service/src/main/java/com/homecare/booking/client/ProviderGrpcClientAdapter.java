@@ -1,10 +1,14 @@
 package com.homecare.booking.client;
 
 import com.homecare.common.error.DomainException;
+import com.homecare.common.security.OrganizationMembershipVerifier;
+import com.homecare.common.security.VerifiedMembership;
 import com.homecare.grpc.interceptor.WorkloadAuthClientInterceptor;
 import com.homecare.provider.v1.AllocateTechnicianRequest;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.ProviderAllocationServiceGrpc;
+import com.homecare.provider.v1.ReleaseBookingRequest;
+import com.homecare.provider.v1.ReleaseBookingResponse;
 import com.homecare.provider.v1.VerifyOfferingRequest;
 import com.homecare.provider.v1.VerifyOfferingResponse;
 import com.homecare.provider.v1.VerifyOrganizationMembershipRequest;
@@ -23,7 +27,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 @Component
-public class ProviderGrpcClientAdapter {
+public class ProviderGrpcClientAdapter implements OrganizationMembershipVerifier {
 
     private static final Logger log = LoggerFactory.getLogger(ProviderGrpcClientAdapter.class);
     private static final Metadata.Key<String> WORKLOAD_TOKEN_KEY =
@@ -63,6 +67,20 @@ public class ProviderGrpcClientAdapter {
             Instant preferredEnd,
             UUID providerId,
             boolean strictProviderMatch) {
+        return allocateTechnician(null, intentId, bookingId, serviceId, deviceType,
+                preferredStart, preferredEnd, providerId, strictProviderMatch);
+    }
+
+    public AllocateTechnicianResponse allocateTechnician(
+            UUID operationId,
+            String intentId,
+            UUID bookingId,
+            UUID serviceId,
+            String deviceType,
+            Instant preferredStart,
+            Instant preferredEnd,
+            UUID providerId,
+            boolean strictProviderMatch) {
         AllocateTechnicianRequest.Builder builder = AllocateTechnicianRequest.newBuilder()
                 .setIntentId(intentId)
                 .setBookingId(bookingId.toString())
@@ -71,6 +89,9 @@ public class ProviderGrpcClientAdapter {
                 .setPreferredStartIso(preferredStart.toString())
                 .setPreferredEndIso(preferredEnd.toString())
                 .setStrictProviderMatch(strictProviderMatch);
+        if (operationId != null) {
+            builder.setOperationId(operationId.toString());
+        }
         if (providerId != null) {
             builder.setProviderId(providerId.toString());
         }
@@ -79,9 +100,10 @@ public class ProviderGrpcClientAdapter {
                 .allocateTechnician(builder.build());
     }
 
-    public boolean verifyOrganizationMembership(UUID organizationId, String userId) {
+    @Override
+    public VerifiedMembership verify(UUID organizationId, String userId) {
         if (organizationId == null || userId == null || userId.isBlank()) {
-            return false;
+            return VerifiedMembership.of(organizationId, userId, null, false);
         }
         try {
             VerifyOrganizationMembershipResponse response = withInternalMetadata(providerStub)
@@ -90,20 +112,31 @@ public class ProviderGrpcClientAdapter {
                             .setOrganizationId(organizationId.toString())
                             .setUserId(userId)
                             .build());
-            return response.getValid();
+            return VerifiedMembership.of(organizationId, userId, response.getRole(), response.getValid());
         } catch (StatusRuntimeException e) {
             throw new DomainException(HttpStatus.SERVICE_UNAVAILABLE,
                     "MEMBERSHIP_UNAVAILABLE", "Membership verification unavailable");
         } catch (Exception e) {
             log.warn("Provider org membership gRPC verification failed for org {} user {}: {}",
                     organizationId, userId, e.getMessage());
-            return false;
+            return VerifiedMembership.of(organizationId, userId, null, false);
         }
+    }
+
+    public boolean verifyOrganizationMembership(UUID organizationId, String userId) {
+        return verify(organizationId, userId).active();
     }
 
     public AllocateTechnicianResponse assignTechnician(UUID bookingId, UUID serviceId, String deviceType,
             Instant start, Instant end, UUID providerId, UUID technicianId) {
-        AllocateTechnicianRequest.Builder builder = AllocateTechnicianRequest.newBuilder().setIntentId("alloc-" + bookingId)
+        return assignTechnician(UUID.randomUUID(), bookingId, serviceId, deviceType, start, end, providerId, technicianId);
+    }
+
+    public AllocateTechnicianResponse assignTechnician(UUID operationId, UUID bookingId, UUID serviceId, String deviceType,
+            Instant start, Instant end, UUID providerId, UUID technicianId) {
+        AllocateTechnicianRequest.Builder builder = AllocateTechnicianRequest.newBuilder()
+                .setOperationId(operationId.toString())
+                .setIntentId("op-" + operationId)
                 .setBookingId(bookingId.toString()).setServiceId(serviceId.toString())
                 .setDeviceType(deviceType == null ? "" : deviceType)
                 .setPreferredStartIso(start.toString()).setPreferredEndIso(end.toString())
@@ -113,6 +146,18 @@ public class ProviderGrpcClientAdapter {
         }
         return withInternalMetadata(providerStub).withDeadlineAfter(3, TimeUnit.SECONDS)
                 .allocateTechnician(builder.build());
+    }
+
+    public ReleaseBookingResponse releaseBooking(UUID bookingId, UUID operationId, String reason) {
+        ReleaseBookingRequest.Builder builder = ReleaseBookingRequest.newBuilder()
+                .setBookingId(bookingId.toString())
+                .setReason(reason == null ? "" : reason);
+        if (operationId != null) {
+            builder.setOperationId(operationId.toString());
+        }
+        return withInternalMetadata(providerStub)
+                .withDeadlineAfter(3, TimeUnit.SECONDS)
+                .releaseBooking(builder.build());
     }
 
     private ProviderAllocationServiceGrpc.ProviderAllocationServiceBlockingStub withInternalMetadata(

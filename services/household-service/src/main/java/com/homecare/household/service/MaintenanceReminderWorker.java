@@ -23,6 +23,7 @@ import lombok.RequiredArgsConstructor;
 public class MaintenanceReminderWorker {
 
     private static final Logger log = LoggerFactory.getLogger(MaintenanceReminderWorker.class);
+    static final int MAX_RETRIES = 10;
     public static final String EXCHANGE = DomainEventContracts.EXCHANGE;
     public static final String ROUTING_KEY = "maintenance.reminder.due.v1";
 
@@ -42,9 +43,16 @@ public class MaintenanceReminderWorker {
                 event.setPublishedAt(Instant.now());
                 outboxEventRepository.save(event);
             } catch (Exception e) {
-                log.warn("RabbitMQ publish deferred for outbox event {}: {}", event.getId(), e.getMessage());
-                event.setRetryCount(event.getRetryCount() + 1);
-                event.setNextAttemptAt(Instant.now().plusSeconds(30));
+                int nextRetry = event.getRetryCount() + 1;
+                event.setRetryCount(nextRetry);
+                if (nextRetry >= MAX_RETRIES) {
+                    event.setStatus(EntityStatus.DEAD.name());
+                    event.setNextAttemptAt(null);
+                    log.error("Household outbox event {} exhausted {} retries -> DEAD: {}", event.getId(), MAX_RETRIES, e.getMessage());
+                } else {
+                    log.warn("RabbitMQ publish deferred for outbox event {}: {}", event.getId(), e.getMessage());
+                    event.setNextAttemptAt(Instant.now().plusSeconds(Math.min(300L, nextRetry * 15L)));
+                }
                 outboxEventRepository.save(event);
             }
         }

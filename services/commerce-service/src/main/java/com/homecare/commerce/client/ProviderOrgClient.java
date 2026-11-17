@@ -3,6 +3,9 @@ package com.homecare.commerce.client;
 import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
 
 import com.homecare.common.error.DomainException;
+import com.homecare.common.security.OrganizationMembershipVerifier;
+import com.homecare.common.security.RbacConstants;
+import com.homecare.common.security.VerifiedMembership;
 import com.homecare.grpc.interceptor.WorkloadAuthClientInterceptor;
 import com.homecare.provider.v1.*;
 import io.grpc.Metadata;
@@ -16,21 +19,33 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 @Component
-public class ProviderOrgClient {
+public class ProviderOrgClient implements OrganizationMembershipVerifier {
     @GrpcClient("providerService") private ProviderAllocationServiceGrpc.ProviderAllocationServiceBlockingStub stub;
     @Value("${homecare.internal.workload-token}") private String workloadToken;
-    public boolean canOperate(UUID organizationId, String userId) {
-        if (organizationId == null || userId == null || userId.isBlank()) return false;
+
+    @Override
+    public VerifiedMembership verify(UUID organizationId, String userId) {
+        if (organizationId == null || userId == null || userId.isBlank()) {
+            return VerifiedMembership.of(organizationId, userId, null, false);
+        }
         Metadata metadata = new Metadata();
         metadata.put(WorkloadAuthClientInterceptor.WORKLOAD_TOKEN_KEY, workloadToken);
         try {
             var result = stub.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata))
                     .withDeadlineAfter(3, TimeUnit.SECONDS).verifyOrganizationMembership(
                         VerifyOrganizationMembershipRequest.newBuilder().setOrganizationId(organizationId.toString()).setUserId(userId).build());
-            return result.getValid() && Set.of("ORG_OWNER", "ORG_ADMIN", "ORG_STAFF").contains(result.getRole());
+            return VerifiedMembership.of(organizationId, userId, result.getRole(), result.getValid());
         } catch (StatusRuntimeException ex) {
             throw new DomainException(SERVICE_UNAVAILABLE,
                     "MEMBERSHIP_UNAVAILABLE", "Membership verification unavailable");
         }
+    }
+
+    public boolean canOperate(UUID organizationId, String userId) {
+        VerifiedMembership membership = verify(organizationId, userId);
+        return membership.active() && Set.of(
+                RbacConstants.ORG_ROLE_OWNER,
+                RbacConstants.ORG_ROLE_ADMIN,
+                RbacConstants.ORG_ROLE_STAFF).contains(membership.role());
     }
 }

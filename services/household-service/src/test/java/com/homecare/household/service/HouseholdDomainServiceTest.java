@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.DomainException;
+import com.homecare.common.security.VerifiedMembership;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.household.client.ProviderOrgClient;
 import com.homecare.household.dto.HouseholdDtos.CareRecordResponse;
@@ -274,6 +275,63 @@ class HouseholdDomainServiceTest {
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("OPERATION_FORBIDDEN");
+    }
+
+    @Test
+    void rejectsOrgHeaderOnPersonalHouseholdsAndScopesOrgWarrantiesStrictly() throws Exception {
+        UUID orgA = UUID.randomUUID();
+        UUID orgB = UUID.randomUUID();
+        String buyer = "buyer-w-" + UUID.randomUUID();
+        eventConsumer.onDomainEvent("""
+                {"eventId":"%s","eventType":"order.line.delivered.v1","data":{"orderId":"%s","orderLineId":"%s","buyerProfileId":"%s","organizationId":"%s","merchantName":"Store A","productId":"%s","productName":"AC","category":"AC","brand":"B","productType":"MAJOR_PART","warrantyMonths":12,"returnWindowDays":15}}
+                """.formatted(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), buyer, orgA, UUID.randomUUID()).strip());
+
+        var mvc = MockMvcBuilders.webAppContextSetup(webContext)
+                .apply(SecurityMockMvcConfigurers.springSecurity())
+                .build();
+
+        // Personal households and devices reject X-Organization-Id with 403
+        mvc.perform(MockMvcRequestBuilders.get("/api/v1/households")
+                        .header("X-Organization-Id", orgA)
+                        .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject(buyer))))
+                .andExpect(MockMvcResultMatchers.status().isForbidden());
+        mvc.perform(MockMvcRequestBuilders.get("/api/v1/devices")
+                        .header("X-Organization-Id", orgA)
+                        .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject(buyer))))
+                .andExpect(MockMvcResultMatchers.status().isForbidden());
+
+        // ORG_TECHNICIAN without warranty:read cannot list org warranties
+        when(providerOrgClient.verify(orgA, "tech-only"))
+                .thenReturn(VerifiedMembership.of(orgA, "tech-only", "ORG_TECHNICIAN", true));
+        mvc.perform(MockMvcRequestBuilders.get("/api/v1/warranties")
+                        .header("X-Organization-Id", orgA)
+                        .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject("tech-only"))))
+                .andExpect(MockMvcResultMatchers.status().isForbidden());
+
+        // ORG_STAFF with warranty:read sees OrgA warranties and is blocked on mismatched ?organizationId=OrgB
+        when(providerOrgClient.verify(orgA, "staff-a"))
+                .thenReturn(VerifiedMembership.of(orgA, "staff-a", "ORG_STAFF", true));
+        mvc.perform(MockMvcRequestBuilders.get("/api/v1/warranties")
+                        .header("X-Organization-Id", orgA)
+                        .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject("staff-a"))))
+                .andExpect(MockMvcResultMatchers.status().isOk())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.data.pagination.totalItems").value(1));
+        mvc.perform(MockMvcRequestBuilders.get("/api/v1/warranties?organizationId=" + orgB)
+                        .header("X-Organization-Id", orgA)
+                        .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject("staff-a"))))
+                .andExpect(MockMvcResultMatchers.status().isForbidden());
+
+        // Global admin without membership in OrgA is blocked in ORGANIZATION mode, but allowed via PERSONAL mode ?organizationId=
+        when(providerOrgClient.verify(orgA, "global-admin"))
+                .thenReturn(VerifiedMembership.of(orgA, "global-admin", null, false));
+        mvc.perform(MockMvcRequestBuilders.get("/api/v1/warranties")
+                        .header("X-Organization-Id", orgA)
+                        .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject("global-admin").claim("user_roles", List.of("ADMIN")))))
+                .andExpect(MockMvcResultMatchers.status().isForbidden());
+        mvc.perform(MockMvcRequestBuilders.get("/api/v1/warranties?organizationId=" + orgA)
+                        .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject("global-admin").claim("user_roles", List.of("ADMIN")))))
+                .andExpect(MockMvcResultMatchers.status().isOk())
+                .andExpect(MockMvcResultMatchers.jsonPath("$.data.pagination.totalItems").value(1));
     }
 
     @Test

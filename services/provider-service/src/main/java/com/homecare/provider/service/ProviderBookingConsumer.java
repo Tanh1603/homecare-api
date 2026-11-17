@@ -18,7 +18,16 @@ public class ProviderBookingConsumer {
     public static final String QUEUE = "provider.booking.release.q";
     private final ProviderDomainService service;
     private final ObjectMapper mapper;
-    @Bean Queue providerBookingQueue() { return new Queue(QUEUE, true); }
+    @Bean Queue providerBookingQueue() {
+        return QueueBuilder.durable(QUEUE)
+                .withArgument("x-dead-letter-exchange", DomainEventContracts.DLX)
+                .withArgument("x-dead-letter-routing-key", DomainEventContracts.dlqName(QUEUE))
+                .build();
+    }
+    @Bean Queue providerBookingDlq() { return QueueBuilder.durable(DomainEventContracts.dlqName(QUEUE)).build(); }
+    @Bean Binding bindProviderBookingDlq(Queue providerBookingDlq, DirectExchange providerEventsDlx) {
+        return BindingBuilder.bind(providerBookingDlq).to(providerEventsDlx).with(DomainEventContracts.dlqName(QUEUE));
+    }
     @Bean Binding providerBookingCompleted() { return new Binding(QUEUE, Binding.DestinationType.QUEUE, DomainEventContracts.EXCHANGE, "booking.completed.v1", null); }
     @Bean Binding providerBookingCancelled() { return new Binding(QUEUE, Binding.DestinationType.QUEUE, DomainEventContracts.EXCHANGE, "booking.cancelled.v1", null); }
     @RabbitListener(queues = QUEUE)

@@ -33,8 +33,30 @@ configure(subprojects.findAll { it.path.startsWith(':services:') }) {
 		}
 	}
 
+	sourceSets {
+		integrationTest {
+			java.srcDir 'src/integrationTest/java'
+			resources.srcDir 'src/integrationTest/resources'
+			compileClasspath += sourceSets.main.output + sourceSets.test.output
+			runtimeClasspath += sourceSets.main.output + sourceSets.test.output
+		}
+	}
+
+	configurations {
+		integrationTestImplementation.extendsFrom testImplementation
+		integrationTestRuntimeOnly.extendsFrom testRuntimeOnly
+	}
+
 	tasks.withType(Test).configureEach {
 		useJUnitPlatform()
+	}
+
+	tasks.register('integrationTest', Test) {
+		description = 'Runs Testcontainers PostgreSQL and RabbitMQ integration tests.'
+		group = 'verification'
+		testClassesDirs = sourceSets.integrationTest.output.classesDirs
+		classpath = sourceSets.integrationTest.runtimeClasspath
+		shouldRunAfter tasks.named('test')
 	}
 
 	dependencies {
@@ -43,5 +65,22 @@ configure(subprojects.findAll { it.path.startsWith(':services:') }) {
 		implementation 'org.springframework.boot:spring-boot-starter-actuator'
         testImplementation("org.springframework.security:spring-security-test")
 		testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+		integrationTestImplementation 'org.springframework.boot:spring-boot-testcontainers'
+		integrationTestImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+		integrationTestImplementation 'org.testcontainers:testcontainers-postgresql'
+		integrationTestImplementation 'org.testcontainers:testcontainers-rabbitmq'
 	}
+}
+
+tasks.register('integrationTest') {
+	description = 'Runs PostgreSQL and RabbitMQ Testcontainers integration tests across domain services.'
+	group = 'verification'
+	dependsOn(
+		':services:provider-service:integrationTest',
+		':services:booking-service:integrationTest',
+		':services:commerce-service:integrationTest',
+		':services:household-service:integrationTest',
+		':services:review-service:integrationTest',
+		':services:notification-service:integrationTest'
+	)
 }

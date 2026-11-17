@@ -5,6 +5,8 @@ import tools.jackson.databind.ObjectMapper;
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
+import com.homecare.common.security.ActorContext;
+import com.homecare.household.security.HouseholdAccessPolicy;
 import com.homecare.common.event.DomainEventContracts;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
@@ -65,6 +67,7 @@ public class HouseholdDomainService {
     private final CareRecordRepository careRecordRepository;
     private final HouseholdOutboxEventRepository outboxEventRepository;
     private final ProviderOrgClient providerOrgClient;
+    private final HouseholdAccessPolicy accessPolicy;
     private final ObjectMapper objectMapper;
 
     @Transactional
@@ -208,6 +211,16 @@ public class HouseholdDomainService {
         scheduleRepository.deleteByDeviceId(deviceId);
         warrantyRepository.deleteByDeviceId(deviceId);
         deviceRepository.delete(device);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<WarrantyResponse> warrantiesPage(ActorContext actor, UUID requestedOrgId, int page, int size) {
+        var pageable = pageRequest(page, size, "endsOn");
+        UUID orgScope = accessPolicy.resolveWarrantyOrganizationScope(actor, requestedOrgId);
+        var result = orgScope != null
+                ? warrantyRepository.search(null, orgScope, pageable)
+                : warrantyRepository.search(actor.isGlobalAdmin() ? null : actor.userId(), null, pageable);
+        return PageResponse.of(result.map(this::toWarrantyResponse).getContent(), page, size, result.getTotalElements());
     }
 
     @Transactional(readOnly = true)

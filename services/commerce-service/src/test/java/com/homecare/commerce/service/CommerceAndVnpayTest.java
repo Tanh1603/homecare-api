@@ -277,6 +277,26 @@ class CommerceAndVnpayTest {
         assertThat(service.handleVnpayIpn(badAmount).get("RspCode")).isEqualTo("04");
         assertThat(service.getOrder("buyer-sec-1", order.id()).status()).isEqualTo("AWAITING_PAYMENT");
 
+        // Non-00 IPN fails only the attempt and keeps the order AWAITING_PAYMENT for retry
+        Map<String, String> failedIpn = new HashMap<>();
+        failedIpn.put("vnp_TxnRef", attempt.txnRef());
+        failedIpn.put("vnp_Amount", String.valueOf(attempt.amount() * 100L));
+        failedIpn.put("vnp_ResponseCode", "24");
+        failedIpn.put("vnp_TmnCode", "HOMECARE01");
+        failedIpn.put("vnp_SecureHash", vnpayStrategy.signParamsForTest(failedIpn));
+        assertThat(service.handleVnpayIpn(failedIpn).get("RspCode")).isEqualTo("00");
+        assertThat(service.getOrder("buyer-sec-1", order.id()).status()).isEqualTo("AWAITING_PAYMENT");
+
+        PaymentAttemptResponse retryAttempt = service.createPaymentAttempt("buyer-sec-1", order.id());
+        Map<String, String> retrySuccessIpn = new HashMap<>();
+        retrySuccessIpn.put("vnp_TxnRef", retryAttempt.txnRef());
+        retrySuccessIpn.put("vnp_Amount", String.valueOf(retryAttempt.amount() * 100L));
+        retrySuccessIpn.put("vnp_ResponseCode", "00");
+        retrySuccessIpn.put("vnp_TmnCode", "HOMECARE01");
+        retrySuccessIpn.put("vnp_SecureHash", vnpayStrategy.signParamsForTest(retrySuccessIpn));
+        assertThat(service.handleVnpayIpn(retrySuccessIpn).get("RspCode")).isEqualTo("00");
+        assertThat(service.getOrder("buyer-sec-1", order.id()).status()).isEqualTo("CONFIRMED");
+
         assertThatThrownBy(() -> service.ordersPage(
                 "stranger-org-user", CommerceDataInitializer.MERCHANT_1_ID, false, true, null, null, null, 1, 20))
                 .isInstanceOf(DomainException.class)

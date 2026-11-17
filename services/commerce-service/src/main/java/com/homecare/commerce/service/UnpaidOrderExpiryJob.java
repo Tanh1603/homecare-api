@@ -1,5 +1,6 @@
 package com.homecare.commerce.service;
 
+import com.homecare.commerce.entity.OrderStatus;
 import com.homecare.commerce.repository.OrderRepository;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +19,8 @@ public class UnpaidOrderExpiryJob {
     @Scheduled(fixedDelayString = "${homecare.orders.expiry-poll-ms:60000}", initialDelayString = "${homecare.orders.expiry-poll-ms:60000}")
     public void expire() {
         Instant now = Instant.now();
-        for (var order : orders.findByStatusAndQuoteExpiresAtBefore("AWAITING_PAYMENT", now, PageRequest.of(0, 100))) {
+        for (var order : orders.findByStatusAndQuoteExpiresAtBefore(
+                OrderStatus.AWAITING_PAYMENT.name(), now, PageRequest.of(0, 100))) {
             try {
                 service.expireOrder(order.getId(), now);
             } catch (Exception ex) {

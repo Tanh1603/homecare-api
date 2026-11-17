@@ -21,8 +21,11 @@ import com.homecare.commerce.entity.MerchantEntity;
 import com.homecare.commerce.entity.OrderEntity;
 import com.homecare.commerce.entity.OrderLineEntity;
 import com.homecare.commerce.entity.OrderReturnRequestEntity;
+import com.homecare.commerce.entity.OrderStatus;
 import com.homecare.commerce.entity.PaymentAttemptEntity;
+import com.homecare.commerce.entity.PaymentAttemptStatus;
 import com.homecare.commerce.entity.ProductEntity;
+import com.homecare.commerce.entity.ProductType;
 import com.homecare.commerce.exception.CommerceErrorCode;
 import com.homecare.commerce.repository.CommerceOutboxEventRepository;
 import com.homecare.commerce.repository.InventoryRepository;
@@ -33,6 +36,11 @@ import com.homecare.commerce.repository.OrderRepository;
 import com.homecare.commerce.repository.OrderReturnRequestRepository;
 import com.homecare.commerce.repository.PaymentAttemptRepository;
 import com.homecare.commerce.repository.ProductRepository;
+import com.homecare.commerce.security.CommerceAccessPolicy;
+import com.homecare.commerce.security.OrderReadScope;
+import com.homecare.commerce.security.OrderSpecifications;
+import com.homecare.common.security.AccessMode;
+import com.homecare.common.security.ActorContext;
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
@@ -78,6 +86,7 @@ public class CommerceDomainService {
     private final VnpaySandboxStrategy vnpayStrategy;
     private final ObjectMapper objectMapper;
     private final ProviderOrgClient providerOrgClient;
+    private final CommerceAccessPolicy accessPolicy;
 
     private MerchantEntity requireMerchant(UUID merchantId, UUID organizationId, String user, boolean admin) {
         var merchant = merchantRepository.findById(merchantId).orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_NOT_FOUND));
@@ -119,6 +128,44 @@ public class CommerceDomainService {
     }
 
     @Transactional(readOnly = true)
+    public PageResponse<OrderResponse> ordersPage(
+            ActorContext actor, String status, String q, String sort, int page, int size) {
+        MerchantEntity merchant = actor.mode() == AccessMode.ORGANIZATION
+                ? merchantRepository.findByOrganizationId(actor.organizationId())
+                        .orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN))
+                : null;
+        OrderReadScope scope = accessPolicy.orderReadScope(actor, merchant);
+        var result = orderRepository.findAll(
+                OrderSpecifications.withScope(scope, status, q),
+                pageRequest(page, size, sort, false));
+        List<OrderEntity> content = result.getContent();
+        if (content.isEmpty()) {
+            return PageResponse.of(List.of(), page, size, result.getTotalElements());
+        }
+        List<UUID> orderIds = content.stream().map(OrderEntity::getId).toList();
+        var linesByOrder = orderLineRepository.findByOrderIdIn(orderIds).stream()
+                .collect(java.util.stream.Collectors.groupingBy(OrderLineEntity::getOrderId));
+        var attemptsByOrder = paymentAttemptRepository.findByOrderIdInOrderByCreatedAtDesc(orderIds).stream()
+                .collect(java.util.stream.Collectors.groupingBy(PaymentAttemptEntity::getOrderId));
+        var items = content.stream()
+                .map(o -> toOrderResponse(o,
+                        linesByOrder.getOrDefault(o.getId(), List.of()),
+                        attemptsByOrder.getOrDefault(o.getId(), List.of())))
+                .toList();
+        return PageResponse.of(items, page, size, result.getTotalElements());
+    }
+
+    @Transactional(readOnly = true)
+    public OrderResponse getOrderForPortal(ActorContext actor, UUID id) {
+        var order = orderRepository.findById(id).orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
+        MerchantEntity merchant = merchantRepository.findById(order.getMerchantId()).orElse(null);
+        if (!accessPolicy.isOrderVisible(actor, order, merchant)) {
+            throw new DomainException(CommerceErrorCode.ORDER_NOT_FOUND);
+        }
+        return toOrderResponse(order);
+    }
+
+    @Transactional(readOnly = true)
     public PageResponse<OrderResponse> ordersPage(String user, UUID organizationId, boolean admin,
             boolean operator, String status, String q, String sort, int page, int size) {
         UUID merchant = null;
@@ -157,22 +204,37 @@ public class CommerceDomainService {
     }
 
     @Transactional
+    public ProductResponse saveProduct(UUID id, ProductInput input, ActorContext actor) {
+        var item = id == null ? new ProductEntity() : productRepository.findById(id).orElseThrow(() -> new DomainException(CommerceErrorCode.PRODUCT_NOT_FOUND));
+        UUID merchantId = id == null ? input.merchantId() : item.getMerchantId();
+        if (merchantId == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        MerchantEntity merchant = merchantRepository.findById(merchantId)
+                .orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_NOT_FOUND));
+        accessPolicy.assertCanManageCatalog(actor, merchant);
+        return saveProductInternal(id, item, merchantId, input);
+    }
+
+    @Transactional
     public ProductResponse saveProduct(UUID id, ProductInput input, UUID org, String user, boolean admin) {
         var item = id == null ? new ProductEntity() : productRepository.findById(id).orElseThrow(() -> new DomainException(CommerceErrorCode.PRODUCT_NOT_FOUND));
         UUID merchant = id == null ? input.merchantId() : item.getMerchantId();
         if (merchant == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         requireMerchant(merchant, org, user, admin);
+        return saveProductInternal(id, item, merchant, input);
+    }
+
+    private ProductResponse saveProductInternal(UUID id, ProductEntity item, UUID merchant, ProductInput input) {
         if (input.merchantId() != null && !merchant.equals(input.merchantId())) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         if (id == null) {
             if (input.sku() == null || input.name() == null || input.category() == null || input.brand() == null || input.unitPrice() == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
             item.setId(UUID.randomUUID()); item.setMerchantId(merchant); item.setCreatedAt(Instant.now());
-            item.setStatus("ACTIVE"); item.setProductType("SMALL_PART"); item.setReturnWindowDays(7);
+            item.setStatus("ACTIVE"); item.setProductType(ProductType.SMALL_PART.name()); item.setReturnWindowDays(7);
         }
         if (input.sku() != null) item.setSku(input.sku());
         if (input.name() != null) item.setName(input.name());
         if (input.category() != null) item.setCategory(input.category());
         if (input.brand() != null) item.setBrand(input.brand());
-        if (input.productType() != null) item.setProductType(input.productType());
+        if (input.productType() != null) item.setProductType(input.productType().name());
         if (input.warrantyMonths() != null) item.setWarrantyMonths(input.warrantyMonths());
         if (input.returnWindowDays() != null) item.setReturnWindowDays(input.returnWindowDays());
         if (input.description() != null) item.setDescription(input.description());
@@ -185,9 +247,30 @@ public class CommerceDomainService {
     }
 
     @Transactional
+    public void deleteProduct(UUID id, ActorContext actor) {
+        var item = productRepository.findById(id).orElseThrow(() -> new DomainException(CommerceErrorCode.PRODUCT_NOT_FOUND));
+        MerchantEntity merchant = merchantRepository.findById(item.getMerchantId())
+                .orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_NOT_FOUND));
+        accessPolicy.assertCanManageCatalog(actor, merchant);
+        item.setStatus("INACTIVE"); productRepository.save(item);
+    }
+
+    @Transactional
     public void deleteProduct(UUID id, UUID org, String user, boolean admin) {
         var item = productRepository.findById(id).orElseThrow(() -> new DomainException(CommerceErrorCode.PRODUCT_NOT_FOUND));
         requireMerchant(item.getMerchantId(), org, user, admin); item.setStatus("INACTIVE"); productRepository.save(item);
+    }
+
+    @Transactional
+    public ProductResponse updateInventory(UUID id, int quantity, ActorContext actor) {
+        if (quantity < 0) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        var item = productRepository.findById(id).orElseThrow(() -> new DomainException(CommerceErrorCode.PRODUCT_NOT_FOUND));
+        MerchantEntity merchant = merchantRepository.findById(item.getMerchantId())
+                .orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_NOT_FOUND));
+        accessPolicy.assertCanManageCatalog(actor, merchant);
+        var inventory = inventoryRepository.lockByProductId(id).orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_NOT_FOUND));
+        inventory.setAvailableQty(quantity); inventory.setUpdatedAt(Instant.now()); inventoryRepository.save(inventory);
+        return toProductResponse(item);
     }
 
     @Transactional
@@ -201,13 +284,25 @@ public class CommerceDomainService {
     }
 
     @Transactional
+    public OrderResponse cancelOrder(UUID id, ActorContext actor) {
+        var order = orderRepository.lockById(id).orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
+        MerchantEntity merchant = merchantRepository.findById(order.getMerchantId()).orElse(null);
+        accessPolicy.assertCanCancelOrder(actor, order, merchant);
+        return cancelOrderInternal(order);
+    }
+
+    @Transactional
     public OrderResponse cancelOrder(UUID id, String user, UUID org, boolean admin) {
         var order = orderRepository.lockById(id).orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
         if (!user.equals(order.getBuyerProfileId())) requireMerchant(order.getMerchantId(), org, user, admin);
-        if ("CANCELLED".equals(order.getStatus())) return toOrderResponse(order);
-        if (!"AWAITING_PAYMENT".equals(order.getStatus())) throw new DomainException(CommerceErrorCode.ORDER_INVALID_STATE);
+        return cancelOrderInternal(order);
+    }
+
+    private OrderResponse cancelOrderInternal(OrderEntity order) {
+        if (OrderStatus.CANCELLED.name().equals(order.getStatus())) return toOrderResponse(order);
+        if (!OrderStatus.AWAITING_PAYMENT.name().equals(order.getStatus())) throw new DomainException(CommerceErrorCode.ORDER_INVALID_STATE);
         releaseReservations(order);
-        order.setStatus("CANCELLED"); order.setUpdatedAt(Instant.now()); orderRepository.save(order);
+        order.setStatus(OrderStatus.CANCELLED.name()); order.setUpdatedAt(Instant.now()); orderRepository.save(order);
         publishDomainEvent("order.cancelled.v1", order);
         return toOrderResponse(order);
     }
@@ -215,9 +310,9 @@ public class CommerceDomainService {
     @Transactional
     public void expireOrder(UUID id, Instant now) {
         var order = orderRepository.lockById(id).orElse(null);
-        if (order == null || !"AWAITING_PAYMENT".equals(order.getStatus()) || order.getQuoteExpiresAt().isAfter(now)) return;
+        if (order == null || !OrderStatus.AWAITING_PAYMENT.name().equals(order.getStatus()) || order.getQuoteExpiresAt().isAfter(now)) return;
         releaseReservations(order);
-        order.setStatus("CANCELLED"); order.setUpdatedAt(now); orderRepository.save(order);
+        order.setStatus(OrderStatus.CANCELLED.name()); order.setUpdatedAt(now); orderRepository.save(order);
         publishDomainEvent("order.cancelled.v1", order);
     }
 
@@ -313,7 +408,7 @@ public class CommerceDomainService {
                 .merchantId(merchantIds.iterator().next())
                 .shippingAddress(request.shippingAddress().trim())
                 .totalAmount(total)
-                .status("AWAITING_PAYMENT")
+                .status(OrderStatus.AWAITING_PAYMENT.name())
                 .paymentStatus("UNPAID")
                 .quoteExpiresAt(quoteExpiresAt)
                 .createdAt(now)
@@ -340,7 +435,7 @@ public class CommerceDomainService {
     @Transactional
     public PaymentAttemptResponse createPaymentAttempt(String buyerProfileId, UUID orderId, String customReturnUrl) {
         OrderEntity order = requireOwnedOrder(buyerProfileId, orderId);
-        if (!"AWAITING_PAYMENT".equals(order.getStatus())) {
+        if (!OrderStatus.AWAITING_PAYMENT.name().equals(order.getStatus())) {
             throw new DomainException(CommerceErrorCode.ORDER_INVALID_STATE, "Order is already paid.");
         }
         if (Instant.now().isAfter(order.getQuoteExpiresAt())) {
@@ -357,7 +452,7 @@ public class CommerceDomainService {
                 .txnRef(txnRef)
                 .provider("VNPAY_SANDBOX")
                 .amount(order.getTotalAmount())
-                .status("PENDING")
+                .status(PaymentAttemptStatus.PENDING.name())
                 .paymentUrl(url)
                 .createdAt(now)
                 .updatedAt(now)
@@ -380,7 +475,7 @@ public class CommerceDomainService {
         if (attempt == null) {
             return Map.of("RspCode", "01", "Message", "Order not Found");
         }
-        if (!"PENDING".equals(attempt.getStatus())) {
+        if (!PaymentAttemptStatus.PENDING.name().equals(attempt.getStatus())) {
             return Map.of("RspCode", "02", "Message", "Order already confirmed");
         }
         long vnpAmount;
@@ -393,17 +488,17 @@ public class CommerceDomainService {
             return Map.of("RspCode", "04", "Message", "Invalid Amount");
         }
         OrderEntity order = orderRepository.lockById(attempt.getOrderId()).orElseThrow();
-        if (!"AWAITING_PAYMENT".equals(order.getStatus()) || !order.getQuoteExpiresAt().isAfter(Instant.now())) return Map.of("RspCode", "02", "Message", "Order no longer payable");
+        if (!OrderStatus.AWAITING_PAYMENT.name().equals(order.getStatus()) || !order.getQuoteExpiresAt().isAfter(Instant.now())) return Map.of("RspCode", "02", "Message", "Order no longer payable");
         Instant now = Instant.now();
         attempt.setResponseCode(rspCode);
         attempt.setUpdatedAt(now);
 
         if ("00".equals(rspCode)) {
-            attempt.setStatus("SUCCEEDED");
+            attempt.setStatus(PaymentAttemptStatus.SUCCEEDED.name());
             paymentAttemptRepository.save(attempt);
 
             order.setPaymentStatus("PAID");
-            order.setStatus("CONFIRMED");
+            order.setStatus(OrderStatus.CONFIRMED.name());
             order.setUpdatedAt(now);
             orderRepository.save(order);
 
@@ -425,15 +520,8 @@ public class CommerceDomainService {
             }
             publishDomainEvent("order.payment.succeeded.v1", order);
         } else {
-            attempt.setStatus("FAILED");
+            attempt.setStatus(PaymentAttemptStatus.FAILED.name());
             paymentAttemptRepository.save(attempt);
-
-            order.setPaymentStatus("FAILED");
-            order.setStatus("PAYMENT_FAILED");
-            order.setUpdatedAt(now);
-            orderRepository.save(order);
-
-            releaseReservations(order);
             publishDomainEvent("order.payment.failed.v1", order);
         }
         return Map.of("RspCode", "00", "Message", "Confirm Success");
@@ -450,6 +538,15 @@ public class CommerceDomainService {
     }
 
     @Transactional
+    public OrderResponse fulfillOrderLine(ActorContext actor, UUID orderId, UUID lineId) {
+        OrderEntity order = orderRepository.lockById(orderId)
+                .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
+        MerchantEntity merchant = merchantRepository.findById(order.getMerchantId()).orElse(null);
+        accessPolicy.assertCanFulfillOrder(actor, merchant);
+        return fulfillOrderLineInternal(order, lineId);
+    }
+
+    @Transactional
     public OrderResponse fulfillOrderLine(
             String actorProfileId,
             UUID orderId,
@@ -459,6 +556,11 @@ public class CommerceDomainService {
         OrderEntity order = orderRepository.lockById(orderId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
         verifyActiveMerchantScope(actorProfileId, order, orgIdHeader, isGlobalAdmin);
+        return fulfillOrderLineInternal(order, lineId);
+    }
+
+    private OrderResponse fulfillOrderLineInternal(OrderEntity order, UUID lineId) {
+        UUID orderId = order.getId();
         OrderLineEntity line = orderLineRepository.findById(lineId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_LINE_NOT_FOUND));
         if (!line.getOrderId().equals(orderId)) {
@@ -588,6 +690,19 @@ public class CommerceDomainService {
 
     @Transactional
     public OrderReturnResponse resolveOrderReturnRequest(
+            ActorContext actor,
+            UUID orderId,
+            UUID returnId,
+            ResolveOrderReturnRequest request) {
+        OrderEntity order = orderRepository.lockById(orderId)
+                .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
+        MerchantEntity merchant = merchantRepository.findById(order.getMerchantId()).orElse(null);
+        accessPolicy.assertCanResolveReturn(actor, merchant);
+        return resolveOrderReturnRequestInternal(order, returnId, request);
+    }
+
+    @Transactional
+    public OrderReturnResponse resolveOrderReturnRequest(
             String actorProfileId,
             UUID orderId,
             UUID returnId,
@@ -597,6 +712,14 @@ public class CommerceDomainService {
         OrderEntity order = orderRepository.lockById(orderId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
         verifyActiveMerchantScope(actorProfileId, order, orgIdHeader, isGlobalAdmin);
+        return resolveOrderReturnRequestInternal(order, returnId, request);
+    }
+
+    private OrderReturnResponse resolveOrderReturnRequestInternal(
+            OrderEntity order,
+            UUID returnId,
+            ResolveOrderReturnRequest request) {
+        UUID orderId = order.getId();
         OrderReturnRequestEntity ret = returnRequestRepository.findById(returnId)
                 .orElseThrow(() -> new DomainException(CommerceErrorCode.RETURN_REQUEST_NOT_FOUND));
         if (!ret.getOrderId().equals(orderId)) {
@@ -633,6 +756,20 @@ public class CommerceDomainService {
         }
 
         return toOrderReturnResponse(returnRequestRepository.save(ret));
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrderReturnResponse> listOrderReturns(ActorContext actor, UUID orderId) {
+        OrderEntity order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
+        MerchantEntity merchant = merchantRepository.findById(order.getMerchantId()).orElse(null);
+        if (!accessPolicy.canListOrderReturns(actor, order, merchant)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        return returnRequestRepository.findByOrderIdOrderByCreatedAtDesc(orderId)
+                .stream()
+                .map(this::toOrderReturnResponse)
+                .toList();
     }
 
     @Transactional(readOnly = true)
