@@ -16,3 +16,10 @@ grpc:
 homecare:
   internal:
     workload-token: test-internal-token
+  organization:
+    outbox-poll-ms: 3600000
+
+supabase:
+  url: http://localhost:54321
+  secret-key: placeholder-secret-key
+  organization-role-id: 00000000-0000-0000-0001-000000000002

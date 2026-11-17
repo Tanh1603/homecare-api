@@ -11,6 +11,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.homecare.common.domain.EntityStatus;
+import com.homecare.common.event.DomainEventContracts;
 import com.homecare.household.entity.HouseholdOutboxEvent;
 import com.homecare.household.repository.HouseholdOutboxEventRepository;
 
@@ -21,7 +23,8 @@ import lombok.RequiredArgsConstructor;
 public class MaintenanceReminderWorker {
 
     private static final Logger log = LoggerFactory.getLogger(MaintenanceReminderWorker.class);
-    public static final String EXCHANGE = "homecare.domain.events";
+    static final int MAX_RETRIES = 10;
+    public static final String EXCHANGE = DomainEventContracts.EXCHANGE;
     public static final String ROUTING_KEY = "maintenance.reminder.due.v1";
 
     private final HouseholdDomainService domainService;
@@ -32,17 +35,24 @@ public class MaintenanceReminderWorker {
     @Transactional
     public void emitDueMaintenanceReminders() {
         domainService.enqueueDueMaintenanceReminders(LocalDate.now());
-        List<HouseholdOutboxEvent> pending = outboxEventRepository.findByStatusOrderByCreatedAtAsc("PENDING");
+        List<HouseholdOutboxEvent> pending = outboxEventRepository.findPendingDueEvents(Instant.now());
         for (HouseholdOutboxEvent event : pending) {
             try {
                 rabbitTemplate.convertAndSend(EXCHANGE, event.getRoutingKey(), event.getPayloadJson());
-                event.setStatus("PUBLISHED");
+                event.setStatus(EntityStatus.PUBLISHED.name());
                 event.setPublishedAt(Instant.now());
                 outboxEventRepository.save(event);
             } catch (Exception e) {
-                log.warn("RabbitMQ publish deferred for outbox event {}: {}", event.getId(), e.getMessage());
-                event.setRetryCount(event.getRetryCount() + 1);
-                event.setNextAttemptAt(Instant.now().plusSeconds(30));
+                int nextRetry = event.getRetryCount() + 1;
+                event.setRetryCount(nextRetry);
+                if (nextRetry >= MAX_RETRIES) {
+                    event.setStatus(EntityStatus.DEAD.name());
+                    event.setNextAttemptAt(null);
+                    log.error("Household outbox event {} exhausted {} retries -> DEAD: {}", event.getId(), MAX_RETRIES, e.getMessage());
+                } else {
+                    log.warn("RabbitMQ publish deferred for outbox event {}: {}", event.getId(), e.getMessage());
+                    event.setNextAttemptAt(Instant.now().plusSeconds(Math.min(300L, nextRetry * 15L)));
+                }
                 outboxEventRepository.save(event);
             }
         }

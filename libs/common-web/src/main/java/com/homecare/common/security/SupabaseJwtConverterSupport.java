@@ -10,6 +10,7 @@ import java.util.Set;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.InvalidBearerTokenException;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 
 /**
@@ -22,12 +23,32 @@ public final class SupabaseJwtConverterSupport {
 
     public static JwtAuthenticationConverter createJwtAuthenticationConverter() {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
-        converter.setJwtGrantedAuthoritiesConverter(SupabaseJwtConverterSupport::extractAuthorities);
+        converter.setJwtGrantedAuthoritiesConverter(jwt -> {
+            if (isUserStatusBlocked(jwt)) {
+                throw new InvalidBearerTokenException("User account is suspended or banned.");
+            }
+            return extractAuthorities(jwt);
+        });
         return converter;
     }
 
-    public static List<GrantedAuthority> extractAuthorities(Jwt jwt) {
+    public static boolean isUserStatusBlocked(Jwt jwt) {
         if (jwt == null) {
+            return false;
+        }
+        String status = jwt.getClaimAsString("user_status");
+        if (status == null || status.isBlank()) {
+            Object appMetadata = jwt.getClaim("app_metadata");
+            if (appMetadata instanceof Map<?, ?> map && map.get("user_status") != null) {
+                status = map.get("user_status").toString();
+            }
+        }
+        return status != null
+                && ("SUSPENDED".equalsIgnoreCase(status.trim()) || "BANNED".equalsIgnoreCase(status.trim()));
+    }
+
+    public static List<GrantedAuthority> extractAuthorities(Jwt jwt) {
+        if (jwt == null || isUserStatusBlocked(jwt)) {
             return List.of();
         }
         List<GrantedAuthority> authorities = new ArrayList<>();
@@ -41,7 +62,7 @@ public final class SupabaseJwtConverterSupport {
     }
 
     public static Set<String> extractRoles(Jwt jwt) {
-        if (jwt == null) {
+        if (jwt == null || isUserStatusBlocked(jwt)) {
             return Set.of();
         }
         Set<String> roles = new LinkedHashSet<>();
@@ -60,7 +81,7 @@ public final class SupabaseJwtConverterSupport {
     }
 
     public static Set<String> extractPermissions(Jwt jwt) {
-        if (jwt == null) {
+        if (jwt == null || isUserStatusBlocked(jwt)) {
             return Set.of();
         }
         Set<String> permissions = new LinkedHashSet<>();
@@ -100,6 +121,10 @@ public final class SupabaseJwtConverterSupport {
             }
         }
         return false;
+    }
+
+    public static boolean hasAnyRoleOrPermission(Jwt jwt, String[] targetRoles, String... targetPermissions) {
+        return hasAnyRole(jwt, targetRoles) || hasAnyPermission(jwt, targetPermissions);
     }
 
     private static void extractStringsFromClaim(Object claim, Set<String> accumulator) {

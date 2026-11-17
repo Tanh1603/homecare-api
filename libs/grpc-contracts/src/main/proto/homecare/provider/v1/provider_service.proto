@@ -9,6 +9,8 @@ option java_outer_classname = "ProviderServiceProto";
 service ProviderAllocationService {
   rpc VerifyOffering (VerifyOfferingRequest) returns (VerifyOfferingResponse);
   rpc AllocateTechnician (AllocateTechnicianRequest) returns (AllocateTechnicianResponse);
+  rpc ReleaseBooking (ReleaseBookingRequest) returns (ReleaseBookingResponse);
+  rpc VerifyOrganizationMembership (VerifyOrganizationMembershipRequest) returns (VerifyOrganizationMembershipResponse);
 }
 
 message VerifyOfferingRequest {
@@ -35,6 +37,19 @@ message AllocateTechnicianRequest {
   string device_type = 6;
   string provider_id = 7;
   bool strict_provider_match = 8;
+  string technician_id = 9;
+  string operation_id = 10;
+}
+
+message ReleaseBookingRequest {
+  string booking_id = 1;
+  string operation_id = 2;
+  string reason = 3;
+}
+
+message ReleaseBookingResponse {
+  bool released = 1;
+  string status = 2;
 }
 
 message AllocateTechnicianResponse {
@@ -46,4 +61,14 @@ message AllocateTechnicianResponse {
   string technician_profile_id = 6;
   string technician_name = 7;
   string allocation_id = 8;
+}
+
+message VerifyOrganizationMembershipRequest {
+  string organization_id = 1;
+  string user_id = 2;
+}
+
+message VerifyOrganizationMembershipResponse {
+  bool valid = 1;
+  string role = 2;
 }

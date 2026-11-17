@@ -13,7 +13,12 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 
 import com.homecare.common.error.DomainException;
+import com.homecare.common.security.AccessMode;
+import com.homecare.common.security.ActorContext;
+import com.homecare.common.web.EtagSupport;
 import com.homecare.provider.dto.ProviderDtos.CreateScheduleWindowRequest;
+import com.homecare.provider.dto.ProviderDtos.ScheduleWindowResponse;
+import com.homecare.provider.dto.ProviderDtos.UpdateScheduleWindowRequest;
 import com.homecare.provider.service.ProviderDomainService.AllocationOutcome;
 
 @SpringBootTest
@@ -25,8 +30,8 @@ class ProviderDomainServiceTest {
 
     @Test
     void seedsCatalogRanksHighestScoreTechnicianAndEnforcesIdempotentIntentAndOverlapGuard() {
-        assertThat(service.listOfferings(null)).hasSizeGreaterThanOrEqualTo(6);
-        assertThat(service.listProviders()).hasSizeGreaterThanOrEqualTo(2);
+        assertThat(service.offeringsPage(null, null, null, 1, 20).pagination().totalItems()).isGreaterThanOrEqualTo(6);
+        assertThat(service.providersPage(null, null, 1, 20).pagination().totalItems()).isGreaterThanOrEqualTo(2);
 
         Instant start = Instant.now().plus(2, ChronoUnit.HOURS);
         Instant end = start.plus(60, ChronoUnit.MINUTES);
@@ -54,7 +59,7 @@ class ProviderDomainServiceTest {
 
         assertThatThrownBy(() -> service.createScheduleWindow(
                 "me",
-                "demo-technician",
+                personalActor("demo-technician"),
                 new CreateScheduleWindowRequest(start, end)))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
@@ -108,5 +113,57 @@ class ProviderDomainServiceTest {
                 false);
         assertThat(fallbackPaid.allocated()).isTrue();
         assertThat(fallbackPaid.providerId()).isEqualTo(ProviderDataInitializer.PROVIDER_1_ID);
+    }
+
+    @Test
+    void rejectsCrossTechnicianScheduleMutationAndMeDemoFallbackAndInvalidUpdate() {
+        Instant s1 = Instant.now().plus(40, ChronoUnit.DAYS);
+        Instant e1 = s1.plus(2, ChronoUnit.HOURS);
+
+        assertThatThrownBy(() -> service.createScheduleWindow(
+                "me", personalActor("unknown-user-sub"), new CreateScheduleWindowRequest(s1, e1)))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("TECHNICIAN_NOT_FOUND");
+
+        Instant s2 = Instant.now().plus(41, ChronoUnit.DAYS);
+        Instant e2 = s2.plus(2, ChronoUnit.HOURS);
+        assertThatThrownBy(() -> service.createScheduleWindow(
+                ProviderDataInitializer.DEMO_TECH_ID.toString(),
+                personalActor("stranger-tech-sub"),
+                new CreateScheduleWindowRequest(s2, e2)))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
+
+        Instant s3 = Instant.now().plus(42, ChronoUnit.DAYS);
+        Instant e3 = s3.plus(2, ChronoUnit.HOURS);
+        ScheduleWindowResponse win = service.createScheduleWindow(
+                "me", personalActor("demo-technician"), new CreateScheduleWindowRequest(s3, e3));
+
+        assertThatThrownBy(() -> service.updateScheduleWindow(
+                "me",
+                personalActor("demo-technician"),
+                win.id(),
+                EtagSupport.format(win.version()),
+                new UpdateScheduleWindowRequest(win.endsAt(), win.startsAt(), null)))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("VALIDATION_FAILED");
+
+        assertThatThrownBy(() -> service.updateScheduleWindow(
+                "me",
+                personalActor("demo-technician"),
+                win.id(),
+                EtagSupport.format(win.version()),
+                new UpdateScheduleWindowRequest(null, null, "HACKED_STATUS")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("VALIDATION_FAILED");
+    }
+
+    private static ActorContext personalActor(String userId) {
+        return new ActorContext(userId, AccessMode.PERSONAL, null,
+                java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), java.util.Set.of());
     }
 }

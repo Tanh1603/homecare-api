@@ -10,6 +10,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.grpc.interceptor.WorkloadAuthClientInterceptor;
 import com.homecare.grpc.interceptor.WorkloadAuthServerInterceptor;
 import com.homecare.household.dto.HouseholdDtos.VerifyDeviceReferenceResponse;
@@ -44,7 +45,7 @@ class HouseholdVerificationGrpcServiceTest {
 
         when(domainService.verifyDeviceReference(eq(deviceId), eq(requester)))
                 .thenReturn(new VerifyDeviceReferenceResponse(
-                        true, deviceId, householdId, "AIR_CONDITIONER", "Panasonic Inverter", "ACTIVE"));
+                        true, deviceId, householdId, "AIR_CONDITIONER", "Panasonic Inverter", EntityStatus.ACTIVE.name()));
 
         final com.homecare.household.v1.VerifyDeviceReferenceResponse[] holder = new com.homecare.household.v1.VerifyDeviceReferenceResponse[1];
 
@@ -74,7 +75,7 @@ class HouseholdVerificationGrpcServiceTest {
         assertThat(holder[0].getHouseholdId()).isEqualTo(householdId.toString());
         assertThat(holder[0].getDeviceType()).isEqualTo("AIR_CONDITIONER");
         assertThat(holder[0].getDeviceName()).isEqualTo("Panasonic Inverter");
-        assertThat(holder[0].getStatus()).isEqualTo("ACTIVE");
+        assertThat(holder[0].getStatus()).isEqualTo(EntityStatus.ACTIVE.name());
     }
 
     @Test
@@ -116,7 +117,7 @@ class HouseholdVerificationGrpcServiceTest {
 
         when(domainService.verifyWarrantyEligibility(eq(warrantyId), eq(requester)))
                 .thenReturn(new VerifyWarrantyResponse(
-                        true, false, warrantyId, deviceId, "WASHING_MACHINE", orgId, "LG Service", endsOn, "ACTIVE"));
+                        true, false, warrantyId, deviceId, "WASHING_MACHINE", orgId, "LG Service", endsOn, EntityStatus.ACTIVE.name()));
 
         final com.homecare.household.v1.VerifyWarrantyResponse[] holder = new com.homecare.household.v1.VerifyWarrantyResponse[1];
 
@@ -148,7 +149,7 @@ class HouseholdVerificationGrpcServiceTest {
         assertThat(holder[0].getDeviceType()).isEqualTo("WASHING_MACHINE");
         assertThat(holder[0].getOrganizationId()).isEqualTo(orgId.toString());
         assertThat(holder[0].getProviderName()).isEqualTo("LG Service");
-        assertThat(holder[0].getStatus()).isEqualTo("ACTIVE");
+        assertThat(holder[0].getStatus()).isEqualTo(EntityStatus.ACTIVE.name());
     }
 
     @Test

@@ -1,19 +1,21 @@
 package com.homecare.provider.grpc;
 
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.UUID;
-
 import com.homecare.provider.dto.ProviderDtos.ServiceOfferingResponse;
 import com.homecare.provider.service.ProviderDomainService;
 import com.homecare.provider.service.ProviderDomainService.AllocationOutcome;
 import com.homecare.provider.v1.AllocateTechnicianRequest;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.ProviderAllocationServiceGrpc;
+import com.homecare.provider.v1.ReleaseBookingRequest;
+import com.homecare.provider.v1.ReleaseBookingResponse;
 import com.homecare.provider.v1.VerifyOfferingRequest;
 import com.homecare.provider.v1.VerifyOfferingResponse;
-
+import com.homecare.provider.v1.VerifyOrganizationMembershipRequest;
+import com.homecare.provider.v1.VerifyOrganizationMembershipResponse;
 import io.grpc.stub.StreamObserver;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import net.devh.boot.grpc.server.service.GrpcService;
 
@@ -30,12 +32,13 @@ public class ProviderAllocationGrpcService extends ProviderAllocationServiceGrpc
         try {
             UUID serviceId = UUID.fromString(request.getServiceId());
             ServiceOfferingResponse offering = domainService.getOffering(serviceId);
+            boolean providerActive = domainService.isProviderActive(offering.providerId());
             VerifyOfferingResponse response = VerifyOfferingResponse.newBuilder()
                     .setServiceId(offering.id().toString())
                     .setProviderId(offering.providerId().toString())
                     .setName(offering.name())
                     .setBasePrice(offering.basePrice())
-                    .setActive(offering.active())
+                    .setActive(offering.active() && providerActive)
                     .setCategory(offering.category())
                     .setEstimatedDurationMinutes(offering.estimatedDurationMinutes())
                     .setProviderName(offering.providerName())
@@ -61,6 +64,7 @@ public class ProviderAllocationGrpcService extends ProviderAllocationServiceGrpc
         UUID preferredProviderId = parseUuidOrNull(request.getProviderId());
 
         AllocationOutcome outcome = domainService.allocateTechnicianForBooking(
+                parseUuidOrNull(request.getOperationId()),
                 request.getIntentId(),
                 UUID.fromString(request.getBookingId()),
                 UUID.fromString(request.getServiceId()),
@@ -68,7 +72,8 @@ public class ProviderAllocationGrpcService extends ProviderAllocationServiceGrpc
                 start,
                 end,
                 preferredProviderId,
-                request.getStrictProviderMatch());
+                request.getStrictProviderMatch(),
+                request.getTechnicianId().isBlank() ? null : UUID.fromString(request.getTechnicianId()));
 
         AllocateTechnicianResponse.Builder builder = AllocateTechnicianResponse.newBuilder()
                 .setIntentId(request.getIntentId())
@@ -92,6 +97,34 @@ public class ProviderAllocationGrpcService extends ProviderAllocationServiceGrpc
         }
 
         responseObserver.onNext(builder.build());
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void releaseBooking(
+            ReleaseBookingRequest request,
+            StreamObserver<ReleaseBookingResponse> responseObserver) {
+        UUID bookingId = UUID.fromString(request.getBookingId());
+        UUID operationId = parseUuidOrNull(request.getOperationId());
+        var outcome = domainService.releaseBookingByOperation(bookingId, operationId, request.getReason());
+        responseObserver.onNext(ReleaseBookingResponse.newBuilder()
+                .setReleased(outcome.released())
+                .setStatus(outcome.status())
+                .build());
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void verifyOrganizationMembership(
+            VerifyOrganizationMembershipRequest request,
+            StreamObserver<VerifyOrganizationMembershipResponse> responseObserver) {
+        UUID orgId = parseUuidOrNull(request.getOrganizationId());
+        var role = domainService.resolveMembershipRole(orgId, request.getUserId());
+        VerifyOrganizationMembershipResponse response = VerifyOrganizationMembershipResponse.newBuilder()
+                .setValid(role.isPresent())
+                .setRole(role.orElse(""))
+                .build();
+        responseObserver.onNext(response);
         responseObserver.onCompleted();
     }
 

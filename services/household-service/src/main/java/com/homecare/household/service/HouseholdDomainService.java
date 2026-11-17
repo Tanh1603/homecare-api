@@ -1,17 +1,16 @@
 package com.homecare.household.service;
 
-import java.time.Instant;
-import java.time.LocalDate;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+import tools.jackson.databind.ObjectMapper;
 
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
+import com.homecare.common.security.ActorContext;
+import com.homecare.household.security.HouseholdAccessPolicy;
+import com.homecare.common.event.DomainEventContracts;
 import com.homecare.common.web.EtagSupport;
+import com.homecare.common.web.PageResponse;
+import com.homecare.household.client.ProviderOrgClient;
 import com.homecare.household.dto.HouseholdDtos.CareRecordResponse;
 import com.homecare.household.dto.HouseholdDtos.CreateCareRecordRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateDeviceRequest;
@@ -42,8 +41,20 @@ import com.homecare.household.repository.HouseholdOutboxEventRepository;
 import com.homecare.household.repository.HouseholdRepository;
 import com.homecare.household.repository.MaintenanceScheduleRepository;
 import com.homecare.household.repository.WarrantyRepository;
-
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -55,6 +66,9 @@ public class HouseholdDomainService {
     private final MaintenanceScheduleRepository scheduleRepository;
     private final CareRecordRepository careRecordRepository;
     private final HouseholdOutboxEventRepository outboxEventRepository;
+    private final ProviderOrgClient providerOrgClient;
+    private final HouseholdAccessPolicy accessPolicy;
+    private final ObjectMapper objectMapper;
 
     @Transactional
     public HouseholdResponse createHousehold(String ownerProfileId, CreateHouseholdRequest request) {
@@ -74,11 +88,10 @@ public class HouseholdDomainService {
     }
 
     @Transactional(readOnly = true)
-    public List<HouseholdResponse> listHouseholds(String ownerProfileId) {
-        return householdRepository.findByOwnerProfileIdOrderByCreatedAtDesc(ownerProfileId)
-                .stream()
-                .map(this::toHouseholdResponse)
-                .toList();
+    public PageResponse<HouseholdResponse> householdsPage(String ownerProfileId, int page, int size) {
+        var pageable = pageRequest(page, size, "createdAt");
+        var result = householdRepository.findByOwnerProfileIdOrderByCreatedAtDesc(ownerProfileId, pageable);
+        return PageResponse.of(result.map(this::toHouseholdResponse).getContent(), page, size, result.getTotalElements());
     }
 
     @Transactional(readOnly = true)
@@ -106,6 +119,9 @@ public class HouseholdDomainService {
     @Transactional
     public void deleteHousehold(String ownerProfileId, UUID householdId) {
         Household h = requireOwnedHousehold(ownerProfileId, householdId);
+        for (var device : deviceRepository.findByHouseholdIdOrderByCreatedAtDesc(householdId)) {
+            deleteDevice(ownerProfileId, device.getId());
+        }
         householdRepository.delete(h);
     }
 
@@ -128,7 +144,7 @@ public class HouseholdDomainService {
                 .model(request.model().trim())
                 .serialNumber(request.serialNumber())
                 .purchaseDate(request.purchaseDate())
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(now)
                 .updatedAt(now)
                 .build());
@@ -136,12 +152,13 @@ public class HouseholdDomainService {
     }
 
     @Transactional(readOnly = true)
-    public List<DeviceResponse> listDevices(String ownerProfileId, UUID householdId) {
-        List<Device> devices = householdId != null
+    public PageResponse<DeviceResponse> devicesPage(String ownerProfileId, UUID householdId, int page, int size) {
+        var pageable = pageRequest(page, size, "createdAt");
+        var result = householdId != null
                 ? deviceRepository.findByHouseholdIdOrderByCreatedAtDesc(
-                        requireOwnedHousehold(ownerProfileId, householdId).getId())
-                : deviceRepository.findByOwnerProfileIdOrderByCreatedAtDesc(ownerProfileId);
-        return devices.stream().map(this::toDeviceResponse).toList();
+                        requireOwnedHousehold(ownerProfileId, householdId).getId(), pageable)
+                : deviceRepository.findByOwnerProfileIdOrderByCreatedAtDesc(ownerProfileId, pageable);
+        return PageResponse.of(result.map(this::toDeviceResponse).getContent(), page, size, result.getTotalElements());
     }
 
     @Transactional(readOnly = true)
@@ -185,7 +202,48 @@ public class HouseholdDomainService {
     @Transactional
     public void deleteDevice(String ownerProfileId, UUID deviceId) {
         Device device = requireOwnedDevice(ownerProfileId, deviceId);
+        if (warrantyRepository.findByDeviceIdOrderByEndsOnDesc(deviceId).stream()
+                .anyMatch(w -> "ORDER_AUTO_ACTIVATED".equalsIgnoreCase(w.getSource()))) {
+            throw new DomainException(CommonErrorCode.OPERATION_FORBIDDEN,
+                    "Cannot delete a device with an electronic store warranty.");
+        }
+        careRecordRepository.deleteByDeviceId(deviceId);
+        scheduleRepository.deleteByDeviceId(deviceId);
+        warrantyRepository.deleteByDeviceId(deviceId);
         deviceRepository.delete(device);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<WarrantyResponse> warrantiesPage(ActorContext actor, UUID requestedOrgId, int page, int size) {
+        var pageable = pageRequest(page, size, "endsOn");
+        UUID orgScope = accessPolicy.resolveWarrantyOrganizationScope(actor, requestedOrgId);
+        var result = orgScope != null
+                ? warrantyRepository.search(null, orgScope, pageable)
+                : warrantyRepository.search(actor.isGlobalAdmin() ? null : actor.userId(), null, pageable);
+        return PageResponse.of(result.map(this::toWarrantyResponse).getContent(), page, size, result.getTotalElements());
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<WarrantyResponse> warrantiesPage(String user, UUID org, boolean admin, boolean operator, int page, int size) {
+        var pageable = pageRequest(page, size, "endsOn");
+        if (org != null && !admin && (!operator || !providerOrgClient.verifyOrganizationMembership(org, user))) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        var result = org != null
+                ? warrantyRepository.search(null, org, pageable)
+                : warrantyRepository.search(admin ? null : user, null, pageable);
+        return PageResponse.of(result.map(this::toWarrantyResponse).getContent(), page, size, result.getTotalElements());
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<MaintenanceScheduleResponse> schedulesPage(String user, int page, int size) {
+        var result = scheduleRepository.findByOwnerProfileId(user, pageRequest(page, size, "dueOn"));
+        return PageResponse.of(result.map(this::toScheduleResponse).getContent(), page, size, result.getTotalElements());
+    }
+
+    private Pageable pageRequest(int page, int size, String field) {
+        if (page < 1 || size < 1 || size > 100) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        return PageRequest.of(page - 1, size, Sort.by(field, "id"));
     }
 
     @Transactional
@@ -200,14 +258,14 @@ public class HouseholdDomainService {
                 .id(UUID.randomUUID())
                 .deviceId(device.getId())
                 .ownerProfileId(ownerProfileId)
-                .organizationId(request.organizationId())
+                .organizationId(null)
                 .source("MANUAL")
                 .providerName(request.providerName().trim())
                 .startsOn(request.startsOn())
                 .endsOn(request.endsOn())
                 .notes(request.notes())
                 .documentUrl(request.documentUrl())
-                .status(request.endsOn().isBefore(LocalDate.now()) ? "EXPIRED" : "ACTIVE")
+                .status(request.endsOn().isBefore(LocalDate.now()) ? "EXPIRED" : EntityStatus.ACTIVE.name())
                 .createdAt(Instant.now())
                 .build());
         return toWarrantyResponse(saved);
@@ -246,7 +304,7 @@ public class HouseholdDomainService {
                 .brand(brand != null && !brand.isBlank() ? brand.trim() : "HomeCare")
                 .model(productType != null && !productType.isBlank() ? productType.trim() : "MAJOR_PART")
                 .purchaseDate(today)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(now)
                 .updatedAt(now)
                 .build());
@@ -265,7 +323,7 @@ public class HouseholdDomainService {
                 .startsOn(today)
                 .endsOn(today.plusMonths(warrantyMonths))
                 .notes("Bảo hành điện tử tự động kích hoạt (" + warrantyMonths + " tháng) từ đơn hàng #" + orderId)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(now)
                 .build());
         return toWarrantyResponse(savedWarranty);
@@ -318,11 +376,7 @@ public class HouseholdDomainService {
 
     @Transactional
     public WarrantyResponse updateWarranty(String ownerProfileId, UUID warrantyId, UpdateWarrantyRequest request) {
-        Warranty w = warrantyRepository.findById(warrantyId)
-                .orElseThrow(() -> new DomainException(HouseholdErrorCode.WARRANTY_NOT_FOUND));
-        if (!w.getOwnerProfileId().equals(ownerProfileId)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this warranty.");
-        }
+        Warranty w = requireMutableOwnedWarranty(ownerProfileId, warrantyId);
         LocalDate newStarts = request.startsOn() != null ? request.startsOn() : w.getStartsOn();
         LocalDate newEnds = request.endsOn() != null ? request.endsOn() : w.getEndsOn();
         if (newEnds.isBefore(newStarts)) {
@@ -349,12 +403,20 @@ public class HouseholdDomainService {
 
     @Transactional
     public void deleteWarranty(String ownerProfileId, UUID warrantyId) {
+        Warranty w = requireMutableOwnedWarranty(ownerProfileId, warrantyId);
+        warrantyRepository.delete(w);
+    }
+
+    private Warranty requireMutableOwnedWarranty(String ownerProfileId, UUID warrantyId) {
         Warranty w = warrantyRepository.findById(warrantyId)
                 .orElseThrow(() -> new DomainException(HouseholdErrorCode.WARRANTY_NOT_FOUND));
         if (!w.getOwnerProfileId().equals(ownerProfileId)) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this warranty.");
         }
-        warrantyRepository.delete(w);
+        if ("ORDER_AUTO_ACTIVATED".equalsIgnoreCase(w.getSource())) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Store-issued warranties cannot be modified or deleted.");
+        }
+        return w;
     }
 
     @Transactional
@@ -499,7 +561,7 @@ public class HouseholdDomainService {
     @Transactional(readOnly = true)
     public VerifyDeviceReferenceResponse verifyDeviceReference(UUID deviceId, String requesterProfileId) {
         return deviceRepository.findById(deviceId)
-                .filter(d -> d.getOwnerProfileId().equals(requesterProfileId) && "ACTIVE".equals(d.getStatus()))
+                .filter(d -> d.getOwnerProfileId().equals(requesterProfileId) && EntityStatus.ACTIVE.name().equals(d.getStatus()))
                 .map(d -> new VerifyDeviceReferenceResponse(
                         true,
                         d.getId(),
@@ -534,7 +596,19 @@ public class HouseholdDomainService {
         Warranty w = warrantyOpt.get();
         Device device = deviceRepository.findById(w.getDeviceId()).orElse(null);
         String deviceType = device != null ? device.getDeviceType() : "AC";
-        boolean isExpired = w.getEndsOn().isBefore(LocalDate.now()) || !"ACTIVE".equalsIgnoreCase(w.getStatus());
+        if (!"ORDER_AUTO_ACTIVATED".equalsIgnoreCase(w.getSource()) || w.getOrganizationId() == null) {
+            return new VerifyWarrantyResponse(
+                    false,
+                    false,
+                    w.getId(),
+                    w.getDeviceId(),
+                    deviceType,
+                    null,
+                    w.getProviderName(),
+                    w.getEndsOn(),
+                    "NOT_STORE_WARRANTY");
+        }
+        boolean isExpired = w.getEndsOn().isBefore(LocalDate.now()) || !EntityStatus.ACTIVE.name().equalsIgnoreCase(w.getStatus());
         if (isExpired) {
             return new VerifyWarrantyResponse(
                     false,
@@ -567,20 +641,33 @@ public class HouseholdDomainService {
         for (MaintenanceSchedule schedule : due) {
             schedule.setNotifiedAt(now);
             scheduleRepository.save(schedule);
-            UUID eventId = UUID.randomUUID();
-            String payloadJson = """
-                    {"eventId":"%s","eventType":"maintenance.reminder.due.v1","occurredAt":"%s","producer":"household-service","correlationId":"%s","data":{"scheduleId":"%s","deviceId":"%s","ownerProfileId":"%s","title":"%s","dueOn":"%s"}}
-                    """
-                    .formatted(
-                            eventId,
-                            now,
-                            eventId,
-                            schedule.getId(),
-                            schedule.getDeviceId(),
-                            schedule.getOwnerProfileId(),
-                            schedule.getTitle(),
-                            schedule.getDueOn())
-                    .strip();
+            UUID eventId = UUID.nameUUIDFromBytes(
+                    ("maint-due-" + schedule.getId() + "-" + schedule.getDueOn()).getBytes(StandardCharsets.UTF_8));
+            if (outboxEventRepository.existsById(eventId)) {
+                continue;
+            }
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("scheduleId", schedule.getId());
+            data.put("deviceId", schedule.getDeviceId());
+            data.put("ownerProfileId", schedule.getOwnerProfileId());
+            data.put("title", schedule.getTitle());
+            data.put("dueOn", schedule.getDueOn().toString());
+
+            Map<String, Object> envelope = new LinkedHashMap<>();
+            envelope.put(DomainEventContracts.FIELD_EVENT_ID, eventId);
+            envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, "maintenance.reminder.due.v1");
+            envelope.put(DomainEventContracts.FIELD_OCCURRED_AT, now.toString());
+            envelope.put(DomainEventContracts.FIELD_PRODUCER, "household-service");
+            envelope.put("correlationId", eventId);
+            envelope.put(DomainEventContracts.FIELD_DATA, data);
+
+            String payloadJson;
+            try {
+                payloadJson = objectMapper.writeValueAsString(envelope);
+            } catch (Exception e) {
+                throw new IllegalStateException("Failed to serialize household outbox payload", e);
+            }
+
             outboxEventRepository.save(HouseholdOutboxEvent.builder()
                     .id(eventId)
                     .aggregateType("MaintenanceSchedule")
@@ -588,7 +675,7 @@ public class HouseholdDomainService {
                     .eventType("maintenance.reminder.due.v1")
                     .routingKey("maintenance.reminder.due.v1")
                     .payloadJson(payloadJson)
-                    .status("PENDING")
+                    .status(EntityStatus.PENDING.name())
                     .retryCount(0)
                     .nextAttemptAt(now)
                     .createdAt(now)

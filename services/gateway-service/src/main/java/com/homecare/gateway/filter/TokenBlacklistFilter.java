@@ -1,16 +1,11 @@
 package com.homecare.gateway.filter;
 
-import java.nio.charset.StandardCharsets;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
-import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
-import org.springframework.http.MediaType;
-import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
@@ -18,24 +13,24 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 
 import com.homecare.common.error.CommonErrorCode;
-import com.homecare.common.web.ApiResponse;
-import com.homecare.common.web.CorrelationIdSupport;
+import com.homecare.common.security.SupabaseJwtConverterSupport;
+import com.homecare.gateway.config.GatewayErrorHandlers;
 
 import reactor.core.publisher.Mono;
-import tools.jackson.databind.ObjectMapper;
 
 @Component
 public class TokenBlacklistFilter implements GlobalFilter, Ordered {
 
     private static final Logger log = LoggerFactory.getLogger(TokenBlacklistFilter.class);
     public static final String BLACKLIST_SESSION_KEY_PREFIX = "auth:blacklist:session:";
+    public static final String BLACKLIST_USER_KEY_PREFIX = "auth:blacklist:user:";
 
     private final ReactiveStringRedisTemplate redisTemplate;
-    private final ObjectMapper objectMapper;
+    private final GatewayErrorHandlers errorHandlers;
 
-    public TokenBlacklistFilter(ReactiveStringRedisTemplate redisTemplate, ObjectMapper objectMapper) {
+    public TokenBlacklistFilter(ReactiveStringRedisTemplate redisTemplate, GatewayErrorHandlers errorHandlers) {
         this.redisTemplate = redisTemplate;
-        this.objectMapper = objectMapper;
+        this.errorHandlers = errorHandlers;
     }
 
     @Override
@@ -55,53 +50,47 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
                         return chain.filter(exchange);
                     }
                     Jwt jwt = optionalAuth.get().getToken();
-                    String sid = jwt.getClaimAsString("session_id");
-
-                    if (sid == null || sid.isBlank()) {
-                        return chain.filter(exchange);
+                    if (SupabaseJwtConverterSupport.isUserStatusBlocked(jwt)) {
+                        log.warn("Blocked request for suspended/banned user sub={}", jwt.getSubject());
+                        return errorHandlers.writeError(exchange, CommonErrorCode.ACCESS_DENIED);
                     }
+                    String sub = jwt.getSubject();
+                    Mono<Boolean> userBlacklisted = (sub == null || sub.isBlank())
+                            ? Mono.just(false)
+                            : hasBlacklistedKey(BLACKLIST_USER_KEY_PREFIX + sub);
 
-                    String key = BLACKLIST_SESSION_KEY_PREFIX + sid;
-
-                    return redisTemplate.hasKey(key)
-                            .onErrorResume(exception -> {
-                                log.warn("Redis session blacklist lookup failed (fail-open): {}", exception.getMessage());
-                                return Mono.just(false);
-                            })
-                            .flatMap(isBlacklisted -> {
-                                if (Boolean.TRUE.equals(isBlacklisted)) {
-                                    log.warn("Blocked request with blacklisted session key={}", key);
-                                    return onTokenRevoked(exchange);
-                                }
-                                return chain.filter(exchange);
-                            });
+                    return userBlacklisted.flatMap(isUserBlocked -> {
+                        if (Boolean.TRUE.equals(isUserBlocked)) {
+                            log.warn("Blocked request for Redis-blacklisted user sub={}", sub);
+                            return errorHandlers.writeError(exchange, CommonErrorCode.TOKEN_REVOKED);
+                        }
+                        String sid = jwt.getClaimAsString("session_id");
+                        if (sid == null || sid.isBlank()) {
+                            return chain.filter(exchange);
+                        }
+                        String key = BLACKLIST_SESSION_KEY_PREFIX + sid;
+                        return hasBlacklistedKey(key).flatMap(isBlacklisted -> {
+                            if (Boolean.TRUE.equals(isBlacklisted)) {
+                                log.warn("Blocked request with blacklisted session key={}", key);
+                                return errorHandlers.writeError(exchange, CommonErrorCode.TOKEN_REVOKED);
+                            }
+                            return chain.filter(exchange);
+                        });
+                    });
                 });
     }
 
-    private Mono<Void> onTokenRevoked(ServerWebExchange exchange) {
-        CommonErrorCode errorCode = CommonErrorCode.TOKEN_REVOKED;
-        ServerHttpResponse response = exchange.getResponse();
-        response.setStatusCode(errorCode.status());
-        response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
-
-        String suppliedId = exchange.getRequest().getHeaders().getFirst(CorrelationIdSupport.HEADER_NAME);
-        String correlationId = CorrelationIdSupport.resolveOrGenerate(suppliedId);
-        response.getHeaders().set(CorrelationIdSupport.HEADER_NAME, correlationId);
-
-        ApiResponse<Void> errorResponse = ApiResponse.error(
-                errorCode.status().value(),
-                errorCode.name(),
-                errorCode.defaultMessage(),
-                correlationId);
-
-        byte[] bytes;
-        try {
-            bytes = objectMapper.writeValueAsBytes(errorResponse);
-        } catch (Exception e) {
-            bytes = "{\"success\":false,\"code\":401,\"errorCode\":\"TOKEN_REVOKED\",\"message\":\"Token has been revoked\",\"data\":null}".getBytes(StandardCharsets.UTF_8);
+    private Mono<Boolean> hasBlacklistedKey(String key) {
+        Mono<Boolean> lookup = redisTemplate.hasKey(key);
+        if (lookup == null) {
+            return Mono.just(false);
         }
-
-        DataBuffer buffer = response.bufferFactory().wrap(bytes);
-        return response.writeWith(Mono.just(buffer));
+        return lookup
+                .defaultIfEmpty(false)
+                .timeout(java.time.Duration.ofMillis(500))
+                .onErrorResume(exception -> {
+                    log.warn("Redis blacklist lookup failed (fail-open) for key={}: {}", key, exception.getMessage());
+                    return Mono.just(false);
+                });
     }
 }

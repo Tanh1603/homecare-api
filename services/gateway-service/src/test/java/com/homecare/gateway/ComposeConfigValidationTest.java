@@ -1,6 +1,7 @@
 package com.homecare.gateway;
 
 import static org.assertj.core.api.Assertions.assertThat;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,10 @@ class ComposeConfigValidationTest {
         assertThat(infra).contains("rabbitmq:").contains("init-multiple-dbs.sh");
         assertThat(script).contains("household_db", "provider_db",
                 "booking_db", "commerce_db", "review_db", "notification_db");
-        assertThat(app).contains("9083:9083"); // gRPC port for provider-service
+        assertThat(app).doesNotContain("9083:9083").contains("- \"9083\""); // internal gRPC port only
+        String household = app.substring(app.indexOf("  household-service:"), app.indexOf("  provider-service:"));
+        assertThat(household).contains("PROVIDER_GRPC_ADDRESS: \"static://provider-service:9083\"", "- provider-service");
+        String commerce = app.substring(app.indexOf("  commerce-service:"), app.indexOf("  review-service:"));
+        assertThat(commerce).contains("PROVIDER_GRPC_ADDRESS: \"static://provider-service:9083\"");
     }
 }

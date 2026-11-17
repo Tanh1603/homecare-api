@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.homecare.booking.entity.BookingOutboxEventEntity;
 import com.homecare.booking.repository.BookingOutboxEventRepository;
+import com.homecare.common.domain.EntityStatus;
 
 import lombok.RequiredArgsConstructor;
 
@@ -22,6 +23,7 @@ import lombok.RequiredArgsConstructor;
 public class BookingOutboxRelayWorker {
 
     private static final Logger log = LoggerFactory.getLogger(BookingOutboxRelayWorker.class);
+    static final int MAX_RETRIES = 10;
 
     private final BookingOutboxEventRepository repository;
     private final RabbitTemplate rabbitTemplate;
@@ -29,19 +31,28 @@ public class BookingOutboxRelayWorker {
     @Scheduled(fixedDelayString = "${homecare.outbox.relay-interval-ms:10000}")
     @Transactional
     public void relayPendingEvents() {
-        List<BookingOutboxEventEntity> pending = repository.findByStatusOrderByCreatedAtAsc("PENDING");
+        List<BookingOutboxEventEntity> pending = repository.findPendingDueEvents(Instant.now());
         if (pending.isEmpty()) {
             return;
         }
         for (BookingOutboxEventEntity event : pending) {
             try {
                 rabbitTemplate.convertAndSend(BookingLifecycleService.EXCHANGE, event.getRoutingKey(), event.getPayloadJson());
-                event.setStatus("PUBLISHED");
+                event.setStatus(EntityStatus.PUBLISHED.name());
                 event.setPublishedAt(Instant.now());
                 repository.save(event);
             } catch (Exception e) {
-                log.warn("Booking outbox relay skipped/failed for event {}: {}", event.getId(), e.getMessage());
-                break;
+                int nextRetry = event.getRetryCount() + 1;
+                event.setRetryCount(nextRetry);
+                if (nextRetry >= MAX_RETRIES) {
+                    event.setStatus(EntityStatus.DEAD.name());
+                    event.setNextAttemptAt(null);
+                    log.error("Booking outbox event {} exhausted {} retries -> DEAD: {}", event.getId(), MAX_RETRIES, e.getMessage());
+                } else {
+                    event.setNextAttemptAt(Instant.now().plusSeconds(Math.min(300L, nextRetry * 15L)));
+                    log.warn("Booking outbox relay skipped/failed for event {}: {}", event.getId(), e.getMessage());
+                }
+                repository.save(event);
             }
         }
     }

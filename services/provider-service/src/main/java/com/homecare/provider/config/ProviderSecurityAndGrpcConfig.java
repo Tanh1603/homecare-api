@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -24,6 +25,7 @@ import net.devh.boot.grpc.server.interceptor.GrpcGlobalServerInterceptor;
 
 @Configuration
 @EnableMethodSecurity
+@EnableScheduling
 public class ProviderSecurityAndGrpcConfig {
 
     @Value("${homecare.internal.workload-token}")
@@ -66,7 +68,11 @@ public class ProviderSecurityAndGrpcConfig {
                                 "/swagger-ui/**",
                                 "/swagger-ui.html")
                         .permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/technicians/me/**").authenticated()
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/v1/technicians/me",
+                                "/api/v1/technicians/me/**",
+                                "/api/v1/technicians/*/schedules")
+                        .authenticated()
                         .requestMatchers(HttpMethod.GET,
                                 "/api/v1/services", "/api/v1/services/**",
                                 "/api/v1/providers", "/api/v1/providers/**",

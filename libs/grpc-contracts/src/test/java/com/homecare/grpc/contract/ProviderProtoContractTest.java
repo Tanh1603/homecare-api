@@ -61,6 +61,11 @@ class ProviderProtoContractTest {
         Metadata validHeaders = new Metadata();
         validHeaders.put(WorkloadAuthClientInterceptor.WORKLOAD_TOKEN_KEY, "secret-token-123");
         validator.verifyMetadata(validHeaders);
+
+        WorkloadAuthServerInterceptor blankValidator = new WorkloadAuthServerInterceptor("   ");
+        assertThatThrownBy(() -> blankValidator.verifyMetadata(missingHeaders))
+                .isInstanceOf(StatusRuntimeException.class)
+                .hasMessageContaining("UNAUTHENTICATED");
     }
 
     @Test

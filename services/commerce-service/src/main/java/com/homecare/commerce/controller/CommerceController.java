@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.homecare.commerce.client.ProviderOrgClient;
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderRequest;
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderReturnRequest;
 import com.homecare.commerce.dto.CommerceDtos.CreatePaymentAttemptRequest;
@@ -28,9 +29,13 @@ import com.homecare.commerce.dto.CommerceDtos.PaymentAttemptResponse;
 import com.homecare.commerce.dto.CommerceDtos.ProductResponse;
 import com.homecare.commerce.dto.CommerceDtos.ResolveOrderReturnRequest;
 import com.homecare.commerce.service.CommerceDomainService;
+import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.idempotency.IdempotencyService;
-import com.homecare.common.security.SupabaseJwtConverterSupport;
+import com.homecare.common.security.ActorContext;
+import com.homecare.common.security.ActorContextResolver;
+import com.homecare.common.security.RbacConstants;
+import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
@@ -47,19 +52,25 @@ import lombok.RequiredArgsConstructor;
 public class CommerceController {
 
     private final CommerceDomainService service;
+    private final ProviderOrgClient providerOrgClient;
     private final IdempotencyService idempotencyService;
     private final ServletApiResponseFactory responseFactory;
 
     @GetMapping("/products")
     public ResponseEntity<ApiResponse<PageResponse<ProductResponse>>> listProducts(
             @RequestParam(required = false) String category,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Long minPrice,
+            @RequestParam(required = false) Long maxPrice,
+            @RequestParam(required = false) UUID merchantId,
+            @RequestParam(required = false) Boolean inStock,
+            @RequestParam(required = false) String sort,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<ProductResponse> items = service.listProducts(category);
         return ResponseEntity.ok(responseFactory.ok(
-                "Products retrieved",
-                PageResponse.of(items, page, size, items.size()),
+                ApiMessages.RETRIEVED,
+                service.productsPage(category, q, merchantId, minPrice, maxPrice, inStock, sort, page, size),
                 httpRequest));
     }
 
@@ -68,7 +79,7 @@ public class CommerceController {
             @PathVariable UUID productId,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
-                "Product retrieved",
+                ApiMessages.RETRIEVED,
                 service.getProduct(productId),
                 httpRequest));
     }
@@ -76,10 +87,12 @@ public class CommerceController {
     @PostMapping("/orders")
     public ResponseEntity<ApiResponse<OrderResponse>> createOrder(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody CreateOrderRequest request,
             HttpServletRequest httpRequest) {
-        String sub = jwt.getSubject();
+        String sub = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId))
+                .userId();
         OrderResponse created;
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
             created = idempotencyService.execute(
@@ -93,41 +106,57 @@ public class CommerceController {
         }
         return ResponseEntity.status(HttpStatus.CREATED)
                 .header(HttpHeaders.ETAG, EtagSupport.format(created.version()))
-                .body(responseFactory.created("Order created", created, httpRequest));
+                .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
     }
 
     @GetMapping("/orders")
     public ResponseEntity<ApiResponse<PageResponse<OrderResponse>>> listOrders(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestParam(required = false) UUID organizationId,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String sort,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<OrderResponse> items = service.listOrders(jwt.getSubject());
+        UUID orgIdHeader = ActorContextResolver.parseOrganizationId(rawOrgId);
+        if (orgIdHeader != null && organizationId != null && !orgIdHeader.equals(organizationId)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        UUID effectiveOrgId = orgIdHeader != null ? orgIdHeader : organizationId;
+        ActorContext actor = ActorContextResolver.resolve(jwt, effectiveOrgId, providerOrgClient);
+        var result = service.ordersPage(actor, status, q, sort, page, size);
         return ResponseEntity.ok(responseFactory.ok(
-                "Orders retrieved",
-                PageResponse.of(items, page, size, items.size()),
+                ApiMessages.RETRIEVED,
+                result,
                 httpRequest));
     }
 
     @GetMapping("/orders/{orderId}")
     public ResponseEntity<ApiResponse<OrderResponse>> getOrder(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID orderId,
             HttpServletRequest httpRequest) {
-        OrderResponse order = service.getOrder(jwt.getSubject(), orderId);
+        ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId),
+                providerOrgClient);
+        OrderResponse order = service.getOrderForPortal(actor, orderId);
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(order.version()))
-                .body(responseFactory.ok("Order retrieved", order, httpRequest));
+                .body(responseFactory.ok(ApiMessages.RETRIEVED, order, httpRequest));
     }
 
     @PostMapping("/orders/{orderId}/payment-attempts")
     public ResponseEntity<ApiResponse<PaymentAttemptResponse>> createPaymentAttempt(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID orderId,
             @RequestBody(required = false) CreatePaymentAttemptRequest body,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             HttpServletRequest httpRequest) {
-        String sub = jwt.getSubject();
+        String sub = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId))
+                .userId();
         String returnUrl = body != null ? body.returnUrl() : null;
         PaymentAttemptResponse attempt;
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
@@ -135,13 +164,13 @@ public class CommerceController {
                     sub,
                     "POST:/api/v1/orders/" + orderId + "/payment-attempts",
                     idempotencyKey,
-                    orderId.toString(),
+                    orderId + "|" + (returnUrl == null ? "" : returnUrl),
                     () -> service.createPaymentAttempt(sub, orderId, returnUrl));
         } else {
             attempt = service.createPaymentAttempt(sub, orderId, returnUrl);
         }
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(responseFactory.created("Payment attempt created", attempt, httpRequest));
+                .body(responseFactory.created(ApiMessages.CREATED, attempt, httpRequest));
     }
 
     @GetMapping("/payments/vnpay/ipn")
@@ -159,25 +188,30 @@ public class CommerceController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID orderId,
             @PathVariable UUID lineId,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             HttpServletRequest httpRequest) {
-        verifyOrganizationOrAdmin(jwt, "Only organization or admin can fulfill order lines.");
+        ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId),
+                providerOrgClient);
         return ResponseEntity.ok(responseFactory.ok(
-                "Order line fulfilled",
-                service.fulfillOrderLine(jwt.getSubject(), orderId, lineId),
+                ApiMessages.PROCESSED,
+                service.fulfillOrderLine(actor, orderId, lineId),
                 httpRequest));
     }
 
     @PostMapping("/orders/{orderId}/lines/{lineId}/returns")
     public ResponseEntity<ApiResponse<OrderReturnResponse>> createOrderReturn(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID orderId,
             @PathVariable UUID lineId,
             @Valid @RequestBody CreateOrderReturnRequest request,
             HttpServletRequest httpRequest) {
+        String sub = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId))
+                .userId();
         OrderReturnResponse created = service.createOrderReturnRequest(
-                jwt.getSubject(), orderId, lineId, request);
+                sub, orderId, lineId, request);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(responseFactory.created("Order return request created", created, httpRequest));
+                .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
     }
 
     @PostMapping("/orders/{orderId}/returns/{returnId}/resolve")
@@ -185,29 +219,26 @@ public class CommerceController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID orderId,
             @PathVariable UUID returnId,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @Valid @RequestBody ResolveOrderReturnRequest request,
             HttpServletRequest httpRequest) {
-        verifyOrganizationOrAdmin(jwt, "Only organization or admin can resolve order returns.");
-        OrderReturnResponse resolved = service.resolveOrderReturnRequest(
-                jwt.getSubject(), orderId, returnId, request);
-        return ResponseEntity.ok(responseFactory.ok("Order return request resolved", resolved, httpRequest));
-    }
-
-    private void verifyOrganizationOrAdmin(Jwt jwt, String message) {
-        if (!SupabaseJwtConverterSupport.hasAnyRole(jwt, "ORGANIZATION", "ADMIN")) {
-            throw new DomainException(HttpStatus.FORBIDDEN, "RESOURCE_FORBIDDEN", message);
-        }
+        ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId),
+                providerOrgClient);
+        OrderReturnResponse resolved = service.resolveOrderReturnRequest(actor, orderId, returnId, request);
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.PROCESSED, resolved, httpRequest));
     }
 
     @GetMapping("/orders/{orderId}/returns")
     public ResponseEntity<ApiResponse<List<OrderReturnResponse>>> listOrderReturns(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID orderId,
             HttpServletRequest httpRequest) {
-        boolean isPrivileged = SupabaseJwtConverterSupport.hasAnyRole(jwt, "ORGANIZATION", "ADMIN");
+        ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId),
+                providerOrgClient);
         return ResponseEntity.ok(responseFactory.ok(
-                "Order return requests retrieved",
-                service.listOrderReturns(jwt.getSubject(), isPrivileged, orderId),
+                ApiMessages.RETRIEVED,
+                service.listOrderReturns(actor, orderId),
                 httpRequest));
     }
 }

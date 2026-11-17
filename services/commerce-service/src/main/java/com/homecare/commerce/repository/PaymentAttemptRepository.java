@@ -1,5 +1,6 @@
 package com.homecare.commerce.repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -11,4 +12,5 @@ import com.homecare.commerce.entity.PaymentAttemptEntity;
 public interface PaymentAttemptRepository extends JpaRepository<PaymentAttemptEntity, UUID> {
     Optional<PaymentAttemptEntity> findByTxnRef(String txnRef);
     List<PaymentAttemptEntity> findByOrderIdOrderByCreatedAtDesc(UUID orderId);
+    List<PaymentAttemptEntity> findByOrderIdInOrderByCreatedAtDesc(Collection<UUID> orderIds);
 }

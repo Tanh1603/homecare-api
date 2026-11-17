@@ -2,7 +2,9 @@ package com.homecare.notification.config;
 
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -32,8 +34,28 @@ public class NotificationSecurityAndRabbitConfig {
     }
 
     @Bean
+    public DirectExchange domainEventsDlx() {
+        return new DirectExchange(com.homecare.common.event.DomainEventContracts.DLX, true, false);
+    }
+
+    @Bean
     public Queue notificationInboxQueue() {
-        return new Queue(DomainEventConsumer.QUEUE, true);
+        return QueueBuilder.durable(DomainEventConsumer.QUEUE)
+                .withArgument("x-dead-letter-exchange", com.homecare.common.event.DomainEventContracts.DLX)
+                .withArgument("x-dead-letter-routing-key", com.homecare.common.event.DomainEventContracts.dlqName(DomainEventConsumer.QUEUE))
+                .build();
+    }
+
+    @Bean
+    public Queue notificationInboxDlq() {
+        return QueueBuilder.durable(com.homecare.common.event.DomainEventContracts.dlqName(DomainEventConsumer.QUEUE)).build();
+    }
+
+    @Bean
+    public Binding notificationInboxDlqBinding(Queue notificationInboxDlq, DirectExchange domainEventsDlx) {
+        return BindingBuilder.bind(notificationInboxDlq)
+                .to(domainEventsDlx)
+                .with(com.homecare.common.event.DomainEventContracts.dlqName(DomainEventConsumer.QUEUE));
     }
 
     @Bean
@@ -53,7 +75,22 @@ public class NotificationSecurityAndRabbitConfig {
 
     @Bean
     public Queue notificationPushDispatchQueue() {
-        return new Queue(com.homecare.notification.service.FcmPushConsumer.QUEUE, true);
+        return QueueBuilder.durable(com.homecare.notification.service.FcmPushConsumer.QUEUE)
+                .withArgument("x-dead-letter-exchange", com.homecare.common.event.DomainEventContracts.DLX)
+                .withArgument("x-dead-letter-routing-key", com.homecare.common.event.DomainEventContracts.dlqName(com.homecare.notification.service.FcmPushConsumer.QUEUE))
+                .build();
+    }
+
+    @Bean
+    public Queue notificationPushDispatchDlq() {
+        return QueueBuilder.durable(com.homecare.common.event.DomainEventContracts.dlqName(com.homecare.notification.service.FcmPushConsumer.QUEUE)).build();
+    }
+
+    @Bean
+    public Binding notificationPushDispatchDlqBinding(Queue notificationPushDispatchDlq, DirectExchange domainEventsDlx) {
+        return BindingBuilder.bind(notificationPushDispatchDlq)
+                .to(domainEventsDlx)
+                .with(com.homecare.common.event.DomainEventContracts.dlqName(com.homecare.notification.service.FcmPushConsumer.QUEUE));
     }
 
     @Bean

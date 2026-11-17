@@ -7,11 +7,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
+
+import com.homecare.common.event.DomainEventContracts;
 
 import lombok.RequiredArgsConstructor;
 import tools.jackson.databind.ObjectMapper;
@@ -22,7 +26,7 @@ public class HouseholdEventConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(HouseholdEventConsumer.class);
     public static final String QUEUE = "household.events.q";
-    public static final String EXCHANGE = "homecare.domain.events";
+    public static final String EXCHANGE = DomainEventContracts.EXCHANGE;
 
     private final HouseholdDomainService domainService;
     private final ObjectMapper objectMapper;
@@ -33,8 +37,28 @@ public class HouseholdEventConsumer {
     }
 
     @Bean
+    public DirectExchange householdEventsDlx() {
+        return new DirectExchange(DomainEventContracts.DLX, true, false);
+    }
+
+    @Bean
     public Queue householdEventsQueue() {
-        return new Queue(QUEUE, true);
+        return QueueBuilder.durable(QUEUE)
+                .withArgument("x-dead-letter-exchange", DomainEventContracts.DLX)
+                .withArgument("x-dead-letter-routing-key", DomainEventContracts.dlqName(QUEUE))
+                .build();
+    }
+
+    @Bean
+    public Queue householdEventsDlq() {
+        return QueueBuilder.durable(DomainEventContracts.dlqName(QUEUE)).build();
+    }
+
+    @Bean
+    public Binding bindHouseholdEventsDlq(Queue householdEventsDlq, DirectExchange householdEventsDlx) {
+        return BindingBuilder.bind(householdEventsDlq)
+                .to(householdEventsDlx)
+                .with(DomainEventContracts.dlqName(QUEUE));
     }
 
     @Bean
@@ -52,8 +76,8 @@ public class HouseholdEventConsumer {
     public void onDomainEvent(String payloadJson) {
         try {
             Map<String, Object> root = objectMapper.readValue(payloadJson, Map.class);
-            String eventType = String.valueOf(root.getOrDefault("eventType", ""));
-            Map<String, Object> data = root.get("data") instanceof Map<?, ?> m
+            String eventType = String.valueOf(root.getOrDefault(DomainEventContracts.FIELD_EVENT_TYPE, ""));
+            Map<String, Object> data = root.get(DomainEventContracts.FIELD_DATA) instanceof Map<?, ?> m
                     ? (Map<String, Object>) m
                     : Map.of();
 
@@ -91,6 +115,7 @@ public class HouseholdEventConsumer {
             }
         } catch (Exception e) {
             log.warn("HouseholdEventConsumer failed to process event: {}", e.getMessage());
+            throw new IllegalStateException("Failed to process household event", e);
         }
     }
 

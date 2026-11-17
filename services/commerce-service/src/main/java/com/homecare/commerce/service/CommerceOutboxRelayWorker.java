@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.homecare.commerce.entity.CommerceOutboxEventEntity;
 import com.homecare.commerce.repository.CommerceOutboxEventRepository;
+import com.homecare.common.domain.EntityStatus;
 
 import lombok.RequiredArgsConstructor;
 
@@ -22,6 +23,7 @@ import lombok.RequiredArgsConstructor;
 public class CommerceOutboxRelayWorker {
 
     private static final Logger log = LoggerFactory.getLogger(CommerceOutboxRelayWorker.class);
+    static final int MAX_RETRIES = 10;
 
     private final CommerceOutboxEventRepository repository;
     private final RabbitTemplate rabbitTemplate;
@@ -29,19 +31,28 @@ public class CommerceOutboxRelayWorker {
     @Scheduled(fixedDelayString = "${homecare.outbox.relay-interval-ms:10000}")
     @Transactional
     public void relayPendingEvents() {
-        List<CommerceOutboxEventEntity> pending = repository.findByStatusOrderByCreatedAtAsc("PENDING");
+        List<CommerceOutboxEventEntity> pending = repository.findPendingDueEvents(Instant.now());
         if (pending.isEmpty()) {
             return;
         }
         for (CommerceOutboxEventEntity event : pending) {
             try {
                 rabbitTemplate.convertAndSend(CommerceDomainService.EXCHANGE, event.getRoutingKey(), event.getPayloadJson());
-                event.setStatus("PUBLISHED");
+                event.setStatus(EntityStatus.PUBLISHED.name());
                 event.setPublishedAt(Instant.now());
                 repository.save(event);
             } catch (Exception e) {
-                log.warn("Commerce outbox relay skipped/failed for event {}: {}", event.getId(), e.getMessage());
-                break;
+                int nextRetry = event.getRetryCount() + 1;
+                event.setRetryCount(nextRetry);
+                if (nextRetry >= MAX_RETRIES) {
+                    event.setStatus(EntityStatus.DEAD.name());
+                    event.setNextAttemptAt(null);
+                    log.error("Commerce outbox event {} exhausted {} retries -> DEAD: {}", event.getId(), MAX_RETRIES, e.getMessage());
+                } else {
+                    event.setNextAttemptAt(Instant.now().plusSeconds(Math.min(300L, nextRetry * 15L)));
+                    log.warn("Commerce outbox relay skipped/failed for event {}: {}", event.getId(), e.getMessage());
+                }
+                repository.save(event);
             }
         }
     }

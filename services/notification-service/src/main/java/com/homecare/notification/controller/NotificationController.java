@@ -1,8 +1,23 @@
 package com.homecare.notification.controller;
 
-import java.util.List;
-import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 
+import com.homecare.common.security.ActorContext;
+import com.homecare.common.security.ActorContextResolver;
+import com.homecare.common.security.RbacConstants;
+import com.homecare.common.web.ApiMessages;
+import com.homecare.common.web.ApiResponse;
+import com.homecare.common.web.PageResponse;
+import com.homecare.common.web.servlet.ServletApiResponseFactory;
+import com.homecare.notification.dto.NotificationDtos.DeviceRegistrationResponse;
+import com.homecare.notification.dto.NotificationDtos.NotificationResponse;
+import com.homecare.notification.dto.NotificationDtos.RegisterDeviceRequest;
+import com.homecare.notification.security.NotificationAccessPolicy;
+import com.homecare.notification.service.NotificationInboxService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import java.util.Map;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -13,21 +28,10 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import com.homecare.common.web.ApiResponse;
-import com.homecare.common.web.PageResponse;
-import com.homecare.common.web.servlet.ServletApiResponseFactory;
-import com.homecare.notification.dto.NotificationDtos.DeviceRegistrationResponse;
-import com.homecare.notification.dto.NotificationDtos.NotificationResponse;
-import com.homecare.notification.dto.NotificationDtos.RegisterDeviceRequest;
-import com.homecare.notification.service.NotificationInboxService;
-
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -36,50 +40,82 @@ import lombok.RequiredArgsConstructor;
 public class NotificationController {
 
     private final NotificationInboxService service;
+    private final NotificationAccessPolicy accessPolicy;
     private final ServletApiResponseFactory responseFactory;
+
+    @GetMapping("/notifications/unread-count")
+    public ResponseEntity<?> unreadCount(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            HttpServletRequest request) {
+        ActorContext actor = resolvePersonal(jwt, rawOrgId);
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.RETRIEVED, Map.of("count", service.unreadCount(actor.userId())), request));
+    }
+
+    @PostMapping("/notifications/read-all")
+    public ResponseEntity<?> readAll(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            HttpServletRequest request) {
+        ActorContext actor = resolvePersonal(jwt, rawOrgId);
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.UPDATED, Map.of("updated", service.markAllRead(actor.userId())), request));
+    }
 
     @GetMapping("/notifications")
     public ResponseEntity<ApiResponse<PageResponse<NotificationResponse>>> listNotifications(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<NotificationResponse> items = service.listInbox(jwt.getSubject());
+        ActorContext actor = resolvePersonal(jwt, rawOrgId);
         return ResponseEntity.ok(responseFactory.ok(
-                "Notifications retrieved",
-                PageResponse.of(items, page, size, items.size()),
+                ApiMessages.RETRIEVED,
+                service.inboxPage(actor.userId(), page, size),
                 httpRequest));
     }
 
     @PostMapping("/notifications/{notificationId}/read")
     public ResponseEntity<ApiResponse<NotificationResponse>> markRead(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID notificationId,
             HttpServletRequest httpRequest) {
+        ActorContext actor = resolvePersonal(jwt, rawOrgId);
         return ResponseEntity.ok(responseFactory.ok(
-                "Notification marked as read",
-                service.markAsRead(jwt.getSubject(), notificationId),
+                ApiMessages.UPDATED,
+                service.markAsRead(actor.userId(), notificationId),
                 httpRequest));
     }
 
     @PostMapping("/notification-devices")
     public ResponseEntity<ApiResponse<DeviceRegistrationResponse>> registerDevice(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @Valid @RequestBody RegisterDeviceRequest request,
             HttpServletRequest httpRequest) {
+        ActorContext actor = resolvePersonal(jwt, rawOrgId);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(
-                        "Notification device registered",
-                        service.registerDevice(jwt.getSubject(), request),
+                        ApiMessages.CREATED,
+                        service.registerDevice(actor.userId(), request),
                         httpRequest));
     }
 
     @DeleteMapping("/notification-devices/{deviceId}")
     public ResponseEntity<ApiResponse<Void>> deactivateDevice(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID deviceId,
             HttpServletRequest httpRequest) {
-        service.deactivateDevice(jwt.getSubject(), deviceId);
-        return ResponseEntity.ok(responseFactory.ok("Notification device deactivated", null, httpRequest));
+        ActorContext actor = resolvePersonal(jwt, rawOrgId);
+        service.deactivateDevice(actor.userId(), deviceId);
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.DELETED, null, httpRequest));
+    }
+
+    private ActorContext resolvePersonal(Jwt jwt, String rawOrgId) {
+        ActorContext actor = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId));
+        accessPolicy.assertPersonalRecipient(actor);
+        return actor;
     }
 }

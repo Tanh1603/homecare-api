@@ -1,14 +1,16 @@
 package com.homecare.notification.service;
 
-import java.util.Map;
+import tools.jackson.databind.ObjectMapper;
 
+import com.homecare.common.event.DomainEventContracts;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
-
-import lombok.RequiredArgsConstructor;
-import tools.jackson.databind.ObjectMapper;
 
 @Component
 @RequiredArgsConstructor
@@ -16,7 +18,7 @@ public class DomainEventConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(DomainEventConsumer.class);
     public static final String QUEUE = "notification.inbox.q";
-    public static final String EXCHANGE = "homecare.domain.events";
+    public static final String EXCHANGE = DomainEventContracts.EXCHANGE;
 
     private final NotificationInboxService inboxService;
     private final ObjectMapper objectMapper;
@@ -26,13 +28,23 @@ public class DomainEventConsumer {
     public void onDomainEvent(String payloadJson) {
         try {
             Map<String, Object> root = objectMapper.readValue(payloadJson, Map.class);
-            String eventId = String.valueOf(root.getOrDefault("eventId", "evt-unknown"));
-            String eventType = String.valueOf(root.getOrDefault("eventType", "domain.event"));
-            Map<String, Object> data = root.get("data") instanceof Map<?, ?> m
+            Object rawEventId = root.get(DomainEventContracts.FIELD_EVENT_ID);
+            String eventId = rawEventId != null && !String.valueOf(rawEventId).isBlank()
+                    && !"null".equalsIgnoreCase(String.valueOf(rawEventId))
+                    ? String.valueOf(rawEventId)
+                    : UUID.randomUUID().toString();
+            String eventType = String.valueOf(root.getOrDefault(DomainEventContracts.FIELD_EVENT_TYPE, "domain.event"));
+            Map<String, Object> data = root.get(DomainEventContracts.FIELD_DATA) instanceof Map<?, ?> m
                     ? (Map<String, Object>) m
                     : Map.of();
 
             switch (eventType) {
+                case "booking.cancelled.v1" -> {
+                    for (String field : List.of("requesterProfileId", "technicianProfileId")) {
+                        inboxService.recordIfAbsent(eventId, stringField(data, field), eventType,
+                                "Lịch hẹn đã hủy", "Lịch hẹn dịch vụ đã được hủy.", Map.of("bookingId", stringField(data, "bookingId")));
+                    }
+                }
                 case "booking.requested.v1" -> inboxService.recordIfAbsent(
                         eventId,
                         stringField(data, "requesterProfileId"),
@@ -119,7 +131,8 @@ public class DomainEventConsumer {
                 default -> log.debug("Ignored domain event type {}", eventType);
             }
         } catch (Exception e) {
-            log.warn("Failed to parse domain event payload: {}", e.getMessage());
+            log.warn("Failed to parse/process domain event payload: {}", e.getMessage());
+            throw new IllegalStateException("Failed to process domain event", e);
         }
     }
 

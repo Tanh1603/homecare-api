@@ -1,16 +1,34 @@
 package com.homecare.commerce.dto;
 
+import com.homecare.commerce.entity.ProductType;
+import jakarta.validation.constraints.NotNull;
+
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
+import jakarta.validation.Valid;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotEmpty;
-import jakarta.validation.constraints.NotNull;
-
 public final class CommerceDtos {
+    public record ProductInput(UUID merchantId,
+            @Pattern(regexp = ".*\\S.*") @Size(max = 255) String sku,
+            @Pattern(regexp = ".*\\S.*") @Size(max = 255) String name,
+            @Pattern(regexp = ".*\\S.*") @Size(max = 255) String category,
+            @Pattern(regexp = ".*\\S.*") @Size(max = 255) String brand,
+            ProductType productType,
+            @PositiveOrZero Integer warrantyMonths,
+            @PositiveOrZero Integer returnWindowDays,
+            @Size(max = 1500) String description,
+            @Size(max = 255) String imageUrl,
+            @Positive Long unitPrice,
+            @Pattern(regexp = "ACTIVE|INACTIVE") String status) {}
+    public record InventoryInput(@NotNull @Min(0) Integer availableQty) {}
 
     private CommerceDtos() {
     }

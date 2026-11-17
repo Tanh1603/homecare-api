@@ -3,6 +3,10 @@ server:
     forward-headers-strategy: framework
 
 grpc:
+    client:
+        providerService:
+            address: ${PROVIDER_GRPC_ADDRESS:static://localhost:9083}
+            negotiation-type: plaintext
     server:
         port: ${COMMERCE_GRPC_PORT:9085}
 
@@ -27,6 +31,15 @@ spring:
         port: ${RABBITMQ_PORT:5672}
         username: ${RABBITMQ_DEFAULT_USER:homecare}
         password: ${RABBITMQ_DEFAULT_PASS:123456}
+        listener:
+            simple:
+                default-requeue-rejected: false
+                retry:
+                    enabled: true
+                    max-retries: 2
+                    initial-interval: 500ms
+                    multiplier: 2.0
+                    max-interval: 5000ms
     security:
         oauth2:
             resourceserver:

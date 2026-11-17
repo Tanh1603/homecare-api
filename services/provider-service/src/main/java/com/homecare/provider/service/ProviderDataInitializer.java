@@ -9,10 +9,18 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.provider.entity.ProviderEntity;
 import com.homecare.provider.entity.ScheduleWindow;
 import com.homecare.provider.entity.ServiceOffering;
 import com.homecare.provider.entity.Technician;
+import com.homecare.provider.organization.entity.OrgRole;
+import com.homecare.provider.organization.entity.OrganizationEntity;
+import com.homecare.provider.organization.entity.OrganizationMemberEntity;
+import com.homecare.provider.organization.entity.OrganizationStatus;
+import com.homecare.provider.organization.entity.OrganizationType;
+import com.homecare.provider.organization.repository.OrganizationMemberRepository;
+import com.homecare.provider.organization.repository.OrganizationRepository;
 import com.homecare.provider.repository.ProviderRepository;
 import com.homecare.provider.repository.ScheduleWindowRepository;
 import com.homecare.provider.repository.ServiceOfferingRepository;
@@ -38,14 +46,18 @@ public class ProviderDataInitializer implements CommandLineRunner {
     private final ServiceOfferingRepository offeringRepository;
     private final TechnicianRepository technicianRepository;
     private final ScheduleWindowRepository scheduleWindowRepository;
+    private final OrganizationRepository organizationRepository;
+    private final OrganizationMemberRepository organizationMemberRepository;
 
     @Override
     @Transactional
     public void run(String... args) {
+        Instant now = Instant.now();
+        seedOrganizationsIfEmpty(now);
+
         if (providerRepository.count() > 0) {
             return;
         }
-        Instant now = Instant.now();
 
         ProviderEntity p1 = providerRepository.save(ProviderEntity.builder()
                 .id(PROVIDER_1_ID)
@@ -56,7 +68,7 @@ public class ProviderDataInitializer implements CommandLineRunner {
                 .city("TP. Hồ Chí Minh")
                 .phone("0901234567")
                 .ratingAvg(4.9)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(now)
                 .build());
 
@@ -69,7 +81,7 @@ public class ProviderDataInitializer implements CommandLineRunner {
                 .city("TP. Hồ Chí Minh")
                 .phone("0909888777")
                 .ratingAvg(4.8)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(now)
                 .build());
 
@@ -150,7 +162,7 @@ public class ProviderDataInitializer implements CommandLineRunner {
                 .experienceYears(7)
                 .ratingAvg(4.95)
                 .activeAllocations(0)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(now)
                 .build());
 
@@ -163,7 +175,7 @@ public class ProviderDataInitializer implements CommandLineRunner {
                 .experienceYears(4)
                 .ratingAvg(4.7)
                 .activeAllocations(1)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(now)
                 .build());
 
@@ -176,7 +188,7 @@ public class ProviderDataInitializer implements CommandLineRunner {
                 .experienceYears(6)
                 .ratingAvg(4.85)
                 .activeAllocations(0)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(now)
                 .build());
 
@@ -192,5 +204,62 @@ public class ProviderDataInitializer implements CommandLineRunner {
                     .createdAt(now)
                     .build());
         }
+    }
+
+    private void seedOrganizationsIfEmpty(Instant now) {
+        if (organizationRepository.count() > 0) {
+            return;
+        }
+        String supabaseOrgOwnerId = "a0000000-0000-0000-0000-000000000002";
+
+        organizationRepository.save(OrganizationEntity.builder()
+                .id(PROVIDER_1_ID)
+                .name("Điện Lạnh Bách Khoa Sài Gòn")
+                .type(OrganizationType.BOTH)
+                .status(OrganizationStatus.APPROVED)
+                .taxCode("0312345678")
+                .phone("0901234567")
+                .city("TP. Hồ Chí Minh")
+                .address("123 Lý Thường Kiệt, Quận 10, TP. Hồ Chí Minh")
+                .description("Chuyên bảo dưỡng, vệ sinh và sửa chữa máy lạnh, tủ lạnh, máy giặt chính hãng")
+                .ownerUserId(supabaseOrgOwnerId)
+                .createdAt(now)
+                .updatedAt(now)
+                .build());
+
+        organizationRepository.save(OrganizationEntity.builder()
+                .id(PROVIDER_2_ID)
+                .name("HomeCare Pro Kỹ Thuật Số")
+                .type(OrganizationType.SERVICE)
+                .status(OrganizationStatus.APPROVED)
+                .taxCode("0387654321")
+                .phone("0909888777")
+                .city("TP. Hồ Chí Minh")
+                .address("456 Nguyễn Thị Minh Khai, Quận 3, TP. Hồ Chí Minh")
+                .description("Dịch vụ chăm sóc thiết bị gia dụng thông minh, lọc nước, điện dân dụng")
+                .ownerUserId(supabaseOrgOwnerId)
+                .createdAt(now)
+                .updatedAt(now)
+                .build());
+
+        organizationMemberRepository.save(OrganizationMemberEntity.builder()
+                .id(UUID.randomUUID())
+                .organizationId(PROVIDER_1_ID)
+                .userId(supabaseOrgOwnerId)
+                .role(OrgRole.ORG_OWNER)
+                .status(EntityStatus.ACTIVE.name())
+                .joinedAt(now)
+                .createdAt(now)
+                .build());
+
+        organizationMemberRepository.save(OrganizationMemberEntity.builder()
+                .id(UUID.randomUUID())
+                .organizationId(PROVIDER_2_ID)
+                .userId(supabaseOrgOwnerId)
+                .role(OrgRole.ORG_ADMIN)
+                .status(EntityStatus.ACTIVE.name())
+                .joinedAt(now)
+                .createdAt(now)
+                .build());
     }
 }

@@ -1,12 +1,37 @@
 package com.homecare.provider.dto;
 
+import jakarta.validation.constraints.NotNull;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-import jakarta.validation.constraints.NotNull;
-
 public final class ProviderDtos {
+
+    public record OfferingInput(UUID providerId,
+            @Pattern(regexp = ".*\\S.*") @Size(max = 255) String name,
+            @Pattern(regexp = ".*\\S.*") @Size(max = 255) String category,
+            @Size(max = 1000) String description,
+            @PositiveOrZero Long basePrice,
+            @Positive Integer estimatedDurationMinutes, Boolean active) {}
+
+    public record TechnicianInput(UUID providerId,
+            @Pattern(regexp = ".*\\S.*") @Size(max = 255) String profileId,
+            @Pattern(regexp = ".*\\S.*") @Size(max = 255) String fullName,
+            @Size(min = 1) List<@NotBlank String> specialties,
+            @PositiveOrZero Integer experienceYears,
+            @Pattern(regexp = "ACTIVE|INACTIVE") String status) {}
+
+    public record ProviderInput(
+            @Pattern(regexp = ".*\\S.*") @Size(max = 255) String name,
+            @Size(max = 1000) String description,
+            @Pattern(regexp = ".*\\S.*") @Size(max = 255) String city,
+            @Pattern(regexp = ".*\\S.*") @Size(max = 255) String phone) {}
 
     private ProviderDtos() {
     }

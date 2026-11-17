@@ -18,6 +18,8 @@ spring:
         hibernate:
             ddl-auto: update
         open-in-view: false
+    flyway:
+        enabled: false
     data:
         redis:
             host: ${REDIS_HOST:localhost}
@@ -27,6 +29,15 @@ spring:
         port: ${RABBITMQ_PORT:5672}
         username: ${RABBITMQ_DEFAULT_USER:homecare}
         password: ${RABBITMQ_DEFAULT_PASS:123456}
+        listener:
+            simple:
+                default-requeue-rejected: false
+                retry:
+                    enabled: true
+                    max-retries: 2
+                    initial-interval: 500ms
+                    multiplier: 2.0
+                    max-interval: 5000ms
     security:
         oauth2:
             resourceserver:
@@ -39,6 +50,13 @@ homecare:
     security:
         enforce-gateway: ${HOMECARE_SECURITY_ENFORCE_GATEWAY:false}
         internal-gateway-secret: ${INTERNAL_GATEWAY_SECRET:homecare-internal-secret-2026}
+    organization:
+        outbox-poll-ms: ${ORGANIZATION_OUTBOX_POLL_MS:5000}
+
+supabase:
+    url: ${SUPABASE_URL:https://placeholder.supabase.co}
+    secret-key: ${SUPABASE_SECRET_KEY:placeholder-secret-key}
+    organization-role-id: ${SUPABASE_ORGANIZATION_ROLE_ID:00000000-0000-0000-0001-000000000002}
 
 springdoc:
     api-docs:

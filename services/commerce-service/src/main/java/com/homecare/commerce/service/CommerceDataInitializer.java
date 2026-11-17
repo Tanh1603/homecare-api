@@ -13,7 +13,9 @@ import com.homecare.commerce.entity.MerchantEntity;
 import com.homecare.commerce.entity.ProductEntity;
 import com.homecare.commerce.repository.InventoryRepository;
 import com.homecare.commerce.repository.MerchantRepository;
+import com.homecare.commerce.repository.OrderReturnRequestRepository;
 import com.homecare.commerce.repository.ProductRepository;
+import com.homecare.common.domain.EntityStatus;
 
 import lombok.RequiredArgsConstructor;
 
@@ -32,10 +34,12 @@ public class CommerceDataInitializer implements CommandLineRunner {
     private final MerchantRepository merchantRepository;
     private final ProductRepository productRepository;
     private final InventoryRepository inventoryRepository;
+    private final OrderReturnRequestRepository returnRequestRepository;
 
     @Override
     @Transactional
     public void run(String... args) {
+        returnRequestRepository.backfillNullVersions();
         if (productRepository.count() > 0) {
             return;
         }
@@ -48,7 +52,7 @@ public class CommerceDataInitializer implements CommandLineRunner {
                 .name("Điện Lạnh Bách Khoa Sài Gòn")
                 .city("TP. Hồ Chí Minh")
                 .ratingAvg(4.9)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(now)
                 .build());
 
@@ -59,7 +63,7 @@ public class CommerceDataInitializer implements CommandLineRunner {
                 .name("HomeCare Pro Kỹ Thuật Số")
                 .city("TP. Hồ Chí Minh")
                 .ratingAvg(4.85)
-                .status("ACTIVE")
+                .status(EntityStatus.ACTIVE.name())
                 .createdAt(now)
                 .build());
 
@@ -107,7 +111,7 @@ public class CommerceDataInitializer implements CommandLineRunner {
                     .description("Sản phẩm chính hãng " + sp.brand() + " phân phối bởi Cửa hàng đối tác HomeCare.")
                     .imageUrl("https://images.unsplash.com/photo-1581092160607-ee22621dd758?auto=format&fit=crop&w=600&q=80")
                     .unitPrice(sp.price())
-                    .status("ACTIVE")
+                    .status(EntityStatus.ACTIVE.name())
                     .createdAt(now)
                     .build());
 

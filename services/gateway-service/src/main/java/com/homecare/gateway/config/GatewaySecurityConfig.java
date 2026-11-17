@@ -22,6 +22,12 @@ public class GatewaySecurityConfig {
                         .pathMatchers("/api/v1/payments/vnpay/ipn").permitAll()
                         .pathMatchers(
                                 HttpMethod.GET,
+                                "/api/v1/technicians/me",
+                                "/api/v1/technicians/me/**",
+                                "/api/v1/technicians/*/schedules")
+                        .authenticated()
+                        .pathMatchers(
+                                HttpMethod.GET,
                                 "/api/v1/services",
                                 "/api/v1/services/**",
                                 "/api/v1/providers",
