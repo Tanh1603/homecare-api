@@ -58,6 +58,12 @@ homecare:
         pay-url: ${VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
         return-url: ${VNPAY_RETURN_URL:http://localhost:3000/orders/payment-result}
 
+app:
+    vnpay:
+        refund-enabled: ${VNPAY_REFUND_ENABLED:false}
+    commerce:
+        allow-exchange-returns: ${COMMERCE_ALLOW_EXCHANGE_RETURNS:false}
+
 springdoc:
     api-docs:
         path: /v3/api-docs

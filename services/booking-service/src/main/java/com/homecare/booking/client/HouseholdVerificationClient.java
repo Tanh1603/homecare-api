@@ -5,7 +5,6 @@ import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import com.homecare.booking.exception.BookingErrorCode;
@@ -22,6 +21,8 @@ import io.grpc.Metadata;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.MetadataUtils;
 import net.devh.boot.grpc.client.inject.GrpcClient;
+import com.homecare.common.config.HomecareSecurityProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 
 @Component
@@ -33,8 +34,15 @@ public class HouseholdVerificationClient {
     @GrpcClient("householdService")
     private HouseholdVerificationServiceGrpc.HouseholdVerificationServiceBlockingStub householdStub;
 
-    @Value("${homecare.internal.workload-token}")
     private String workloadToken;
+
+    public HouseholdVerificationClient() {
+    }
+
+    @Autowired
+    public HouseholdVerificationClient(HomecareSecurityProperties securityProperties) {
+        this.workloadToken = securityProperties.getInternal().getWorkloadToken();
+    }
 
     public String verifyDeviceOrFallback(UUID deviceId, String requesterProfileId, String fallbackDeviceType) {
         if (deviceId == null) {

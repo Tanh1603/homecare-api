@@ -1,7 +1,6 @@
 package com.homecare.household.config;
 
 import org.springframework.amqp.core.TopicExchange;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -22,15 +21,13 @@ import com.homecare.grpc.interceptor.WorkloadAuthServerInterceptor;
 import com.homecare.household.service.MaintenanceReminderWorker;
 
 import io.grpc.ServerInterceptor;
+import com.homecare.common.config.HomecareSecurityProperties;
 import net.devh.boot.grpc.server.interceptor.GrpcGlobalServerInterceptor;
 
 @Configuration
 @EnableMethodSecurity
 @EnableScheduling
 public class HouseholdSecurityConfig {
-
-    @Value("${homecare.internal.workload-token:change_me_internal_workload_token}")
-    private String expectedWorkloadToken;
 
     @Bean
     public TopicExchange domainEventsExchange() {
@@ -48,16 +45,17 @@ public class HouseholdSecurityConfig {
     }
 
     @Bean
-    public GatewayOriginFilter gatewayOriginFilter(
-            @Value("${homecare.security.enforce-gateway:false}") boolean enforceGateway,
-            @Value("${homecare.security.internal-gateway-secret:homecare-internal-secret-2026}") String gatewaySecret) {
-        return new GatewayOriginFilter(enforceGateway, gatewaySecret, expectedWorkloadToken);
+    public GatewayOriginFilter gatewayOriginFilter(HomecareSecurityProperties securityProperties) {
+        return new GatewayOriginFilter(
+                securityProperties.getSecurity().isEnforceGateway(),
+                securityProperties.getSecurity().getInternalGatewaySecret(),
+                securityProperties.getInternal().getWorkloadToken());
     }
 
     @Bean
     @GrpcGlobalServerInterceptor
-    public ServerInterceptor internalWorkloadGrpcInterceptor() {
-        return new WorkloadAuthServerInterceptor(expectedWorkloadToken);
+    public ServerInterceptor internalWorkloadGrpcInterceptor(HomecareSecurityProperties securityProperties) {
+        return new WorkloadAuthServerInterceptor(securityProperties.getInternal().getWorkloadToken());
     }
 
     @Bean

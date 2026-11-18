@@ -1,11 +1,13 @@
 package com.homecare.booking.service;
 
+import com.homecare.booking.config.BookingEvidenceProperties;
+import com.homecare.booking.config.BookingSupabaseProperties;
 import java.net.URI;
 import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -20,10 +22,20 @@ public class SupabaseWorkEvidenceStorageAdapter implements WorkEvidenceStoragePo
     private final String serviceRoleKey;
     private final String bucket;
 
+    @Autowired
     public SupabaseWorkEvidenceStorageAdapter(
-            @Value("${homecare.supabase.url:}") String supabaseUrl,
-            @Value("${homecare.supabase.service-role-key:}") String serviceRoleKey,
-            @Value("${homecare.bookings.evidence-bucket:booking-work-evidence}") String bucket) {
+            BookingSupabaseProperties supabaseProperties,
+            BookingEvidenceProperties evidenceProperties) {
+        this(
+                supabaseProperties.getUrl(),
+                supabaseProperties.getServiceRoleKey(),
+                evidenceProperties.getEvidenceBucket());
+    }
+
+    public SupabaseWorkEvidenceStorageAdapter(
+            String supabaseUrl,
+            String serviceRoleKey,
+            String bucket) {
         this.restClient = RestClient.create();
         this.supabaseUrl = supabaseUrl == null ? "" : supabaseUrl.replaceAll("/+$", "");
         this.serviceRoleKey = serviceRoleKey == null ? "" : serviceRoleKey.trim();

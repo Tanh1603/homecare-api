@@ -14,6 +14,7 @@ import org.springframework.web.server.ServerWebExchange;
 
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
+import com.homecare.gateway.config.GatewayAuthProperties;
 import com.homecare.gateway.config.GatewayErrorHandlers;
 
 import reactor.core.publisher.Mono;
@@ -33,7 +34,14 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
     public TokenBlacklistFilter(
             ReactiveStringRedisTemplate redisTemplate,
             GatewayErrorHandlers errorHandlers,
-            @org.springframework.beans.factory.annotation.Value("${app.auth.blacklist-fail-closed:false}") boolean blacklistFailClosed) {
+            GatewayAuthProperties authProperties) {
+        this(redisTemplate, errorHandlers, authProperties != null && authProperties.isBlacklistFailClosed());
+    }
+
+    public TokenBlacklistFilter(
+            ReactiveStringRedisTemplate redisTemplate,
+            GatewayErrorHandlers errorHandlers,
+            boolean blacklistFailClosed) {
         this.redisTemplate = redisTemplate;
         this.errorHandlers = errorHandlers;
         this.blacklistFailClosed = blacklistFailClosed;

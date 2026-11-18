@@ -18,11 +18,11 @@ import jakarta.validation.Valid;
 import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
+import com.homecare.provider.config.ProviderAuthProperties;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -41,7 +41,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/admin/users")
 @PreAuthorize(RbacConstants.EXPR_ORG_REVIEW)
 @Validated
-@RequiredArgsConstructor
 public class AdminUserController {
 
     private static final Logger log = LoggerFactory.getLogger(AdminUserController.class);
@@ -50,9 +49,26 @@ public class AdminUserController {
     private final SupabaseRoleClient supabaseRoleClient;
     private final ServletApiResponseFactory responseFactory;
     private final ObjectProvider<StringRedisTemplate> redisTemplateProvider;
+    private final ProviderAuthProperties authProperties;
 
-    @Value("${app.auth.user-blacklist-ttl:PT24H}")
-    private Duration userBlacklistTtl = Duration.ofHours(24);
+    @org.springframework.beans.factory.annotation.Autowired
+    public AdminUserController(
+            SupabaseRoleClient supabaseRoleClient,
+            ServletApiResponseFactory responseFactory,
+            ObjectProvider<StringRedisTemplate> redisTemplateProvider,
+            ProviderAuthProperties authProperties) {
+        this.supabaseRoleClient = supabaseRoleClient;
+        this.responseFactory = responseFactory;
+        this.redisTemplateProvider = redisTemplateProvider;
+        this.authProperties = authProperties;
+    }
+
+    public AdminUserController(
+            SupabaseRoleClient supabaseRoleClient,
+            ServletApiResponseFactory responseFactory,
+            ObjectProvider<StringRedisTemplate> redisTemplateProvider) {
+        this(supabaseRoleClient, responseFactory, redisTemplateProvider, new ProviderAuthProperties());
+    }
 
     public record StatusRequest(@NotNull @Pattern(regexp = "ACTIVE|SUSPENDED") String status) {}
 
@@ -78,7 +94,7 @@ public class AdminUserController {
         String key = BLACKLIST_USER_KEY_PREFIX + userId;
         try {
             if ("SUSPENDED".equals(status)) {
-                redis.opsForValue().set(key, "SUSPENDED", userBlacklistTtl);
+                redis.opsForValue().set(key, "SUSPENDED", authProperties.getUserBlacklistTtl());
             } else {
                 redis.delete(key);
             }

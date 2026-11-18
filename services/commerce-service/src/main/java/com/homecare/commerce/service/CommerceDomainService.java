@@ -38,9 +38,9 @@ import com.homecare.commerce.repository.OrderRepository;
 import com.homecare.commerce.repository.OrderReturnRequestRepository;
 import com.homecare.commerce.repository.PaymentAttemptRepository;
 import com.homecare.commerce.repository.ProductRepository;
+import com.homecare.commerce.config.CommerceAppProperties;
 import com.homecare.commerce.repository.RefundOperationRepository;
 import com.homecare.common.web.EtagSupport;
-import org.springframework.beans.factory.annotation.Value;
 import com.homecare.commerce.security.CommerceAccessPolicy;
 import com.homecare.commerce.security.OrderReadScope;
 import com.homecare.commerce.security.OrderSpecifications;
@@ -93,12 +93,7 @@ public class CommerceDomainService {
     private final ObjectMapper objectMapper;
     private final ProviderOrgClient providerOrgClient;
     private final CommerceAccessPolicy accessPolicy;
-
-    @Value("${app.vnpay.refund-enabled:false}")
-    private boolean vnpayRefundEnabled = false;
-
-    @Value("${app.commerce.allow-exchange-returns:false}")
-    private boolean allowExchangeReturns = false;
+    private final CommerceAppProperties appProperties;
 
     private MerchantEntity requireMerchant(UUID merchantId, UUID organizationId, String user, boolean admin) {
         var merchant = merchantRepository.findById(merchantId).orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_NOT_FOUND));
@@ -672,7 +667,7 @@ public class CommerceDomainService {
         if (!"REFUND".equals(returnType) && !"EXCHANGE".equals(returnType)) {
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         }
-        if ("EXCHANGE".equals(returnType) && !allowExchangeReturns) {
+        if ("EXCHANGE".equals(returnType) && !appProperties.getCommerce().isAllowExchangeReturns()) {
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         }
 
@@ -805,7 +800,8 @@ public class CommerceDomainService {
                     });
                     ret.setRestocked(true);
                 }
-                ret.setStatus(vnpayRefundEnabled ? "REFUND_FAILED" : "APPROVED_PENDING_MANUAL_REFUND");
+                boolean refundEnabled = appProperties.getVnpay().isRefundEnabled();
+                ret.setStatus(refundEnabled ? "REFUND_FAILED" : "APPROVED_PENDING_MANUAL_REFUND");
                 long refundAmount = line.getUnitPrice() * ret.getQuantity();
                 PaymentAttemptEntity paidAttempt = paymentAttemptRepository
                         .findByOrderIdOrderByCreatedAtDesc(orderId)
@@ -821,7 +817,7 @@ public class CommerceDomainService {
                                 .txnRef(paidAttempt != null ? paidAttempt.getTxnRef() : null)
                                 .vnpTransactionNo(paidAttempt != null ? paidAttempt.getVnpTransactionNo() : null)
                                 .amount(refundAmount)
-                                .status(vnpayRefundEnabled ? "REFUND_FAILED" : "PENDING_MANUAL_REFUND")
+                                .status(refundEnabled ? "REFUND_FAILED" : "PENDING_MANUAL_REFUND")
                                 .note(request.resolutionNote())
                                 .createdAt(now)
                                 .updatedAt(now)
@@ -908,7 +904,7 @@ public class CommerceDomainService {
         if (!"REFUND_FAILED".equals(ret.getStatus())) {
             throw new DomainException(CommerceErrorCode.RETURN_ALREADY_RESOLVED);
         }
-        if (!vnpayRefundEnabled) {
+        if (!appProperties.getVnpay().isRefundEnabled()) {
             ret.setStatus("APPROVED_PENDING_MANUAL_REFUND");
             ret.setResolvedAt(Instant.now());
             return toOrderReturnResponse(returnRequestRepository.saveAndFlush(ret));

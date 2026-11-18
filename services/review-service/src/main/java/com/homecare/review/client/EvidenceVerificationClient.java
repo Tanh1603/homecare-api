@@ -5,7 +5,6 @@ import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import com.homecare.booking.v1.BookingVerificationServiceGrpc;
@@ -33,8 +32,11 @@ public class EvidenceVerificationClient {
     @GrpcClient("commerceService")
     private CommerceVerificationServiceGrpc.CommerceVerificationServiceBlockingStub commerceStub;
 
-    @Value("${homecare.internal.workload-token}")
-    private String workloadToken;
+    private final String workloadToken;
+
+    public EvidenceVerificationClient(com.homecare.common.config.HomecareSecurityProperties securityProperties) {
+        this.workloadToken = securityProperties.getInternal().getWorkloadToken();
+    }
 
     public BookingEligibility verifyBookingEligible(UUID bookingId, String requesterProfileId) {
         try {

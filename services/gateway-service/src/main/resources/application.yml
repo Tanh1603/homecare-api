@@ -129,3 +129,7 @@ springdoc:
         url: /review-service/v3/api-docs
       - name: Notification Service
         url: /notification-service/v3/api-docs
+
+app:
+  auth:
+    blacklist-fail-closed: ${AUTH_BLACKLIST_FAIL_CLOSED:false}

@@ -5,7 +5,6 @@ import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
@@ -22,6 +21,8 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.stub.MetadataUtils;
 import net.devh.boot.grpc.client.inject.GrpcClient;
 
+import com.homecare.common.config.HomecareSecurityProperties;
+
 @Component
 public class ProviderOrgClient implements OrganizationMembershipVerifier {
 
@@ -32,8 +33,11 @@ public class ProviderOrgClient implements OrganizationMembershipVerifier {
     @GrpcClient("providerService")
     private ProviderAllocationServiceGrpc.ProviderAllocationServiceBlockingStub providerStub;
 
-    @Value("${homecare.internal.workload-token}")
-    private String workloadToken;
+    private final String workloadToken;
+
+    public ProviderOrgClient(HomecareSecurityProperties securityProperties) {
+        this.workloadToken = securityProperties.getInternal().getWorkloadToken();
+    }
 
     @Override
     public VerifiedMembership verify(UUID organizationId, String userId) {

@@ -2,6 +2,7 @@ package com.homecare.commerce.client;
 
 import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
 
+import com.homecare.common.config.HomecareSecurityProperties;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.security.OrganizationMembershipVerifier;
 import com.homecare.common.security.RbacConstants;
@@ -15,13 +16,21 @@ import java.util.concurrent.TimeUnit;
 import java.util.Set;
 import java.util.UUID;
 import net.devh.boot.grpc.client.inject.GrpcClient;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
 public class ProviderOrgClient implements OrganizationMembershipVerifier {
     @GrpcClient("providerService") private ProviderAllocationServiceGrpc.ProviderAllocationServiceBlockingStub stub;
-    @Value("${homecare.internal.workload-token}") private String workloadToken;
+    private String workloadToken;
+
+    public ProviderOrgClient() {
+    }
+
+    @Autowired
+    public ProviderOrgClient(HomecareSecurityProperties securityProperties) {
+        this.workloadToken = securityProperties.getInternal().getWorkloadToken();
+    }
 
     @Override
     public VerifiedMembership verify(UUID organizationId, String userId) {

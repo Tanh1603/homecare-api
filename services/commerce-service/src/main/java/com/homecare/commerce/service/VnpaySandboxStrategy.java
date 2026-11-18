@@ -14,9 +14,9 @@ import java.util.stream.Collectors;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import com.homecare.commerce.config.VnpayProperties;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 
@@ -30,11 +30,16 @@ public class VnpaySandboxStrategy {
     private final String payUrl;
     private final String returnUrl;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    public VnpaySandboxStrategy(VnpayProperties properties) {
+        this(properties.getTmnCode(), properties.getHashSecret(), properties.getPayUrl(), properties.getReturnUrl());
+    }
+
     public VnpaySandboxStrategy(
-            @Value("${homecare.vnpay.tmn-code}") String tmnCode,
-            @Value("${homecare.vnpay.hash-secret}") String hashSecret,
-            @Value("${homecare.vnpay.pay-url}") String payUrl,
-            @Value("${homecare.vnpay.return-url}") String returnUrl) {
+            String tmnCode,
+            String hashSecret,
+            String payUrl,
+            String returnUrl) {
         this.tmnCode = tmnCode;
         this.hashSecret = hashSecret;
         this.payUrl = payUrl;

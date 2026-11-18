@@ -18,10 +18,11 @@ import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
+import com.homecare.provider.config.SupabaseProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException.NotFound;
 import org.springframework.web.client.RestClient;
@@ -36,10 +37,15 @@ public class SupabaseRoleClient {
     private final String organizationRoleId;
     private final RestClient restClient;
 
+    @Autowired
+    public SupabaseRoleClient(SupabaseProperties properties) {
+        this(properties.getUrl(), properties.getSecretKey(), properties.getOrganizationRoleId());
+    }
+
     public SupabaseRoleClient(
-            @Value("${supabase.url:https://placeholder.supabase.co}") String supabaseUrl,
-            @Value("${supabase.secret-key:placeholder-secret-key}") String secretKey,
-            @Value("${supabase.organization-role-id:00000000-0000-0000-0001-000000000002}") String organizationRoleId) {
+            String supabaseUrl,
+            String secretKey,
+            String organizationRoleId) {
         this.supabaseUrl = supabaseUrl;
         this.secretKey = secretKey;
         this.organizationRoleId = organizationRoleId;

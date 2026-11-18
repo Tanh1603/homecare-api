@@ -6,7 +6,6 @@ import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -110,10 +109,11 @@ public class NotificationSecurityAndRabbitConfig {
 
     @Bean
     public GatewayOriginFilter gatewayOriginFilter(
-            @Value("${homecare.security.enforce-gateway:false}") boolean enforceGateway,
-            @Value("${homecare.security.internal-gateway-secret:homecare-internal-secret-2026}") String gatewaySecret,
-            @Value("${homecare.internal.workload-token:change_me_internal_workload_token}") String workloadToken) {
-        return new GatewayOriginFilter(enforceGateway, gatewaySecret, workloadToken);
+            com.homecare.common.config.HomecareSecurityProperties securityProperties) {
+        return new GatewayOriginFilter(
+                securityProperties.getSecurity().isEnforceGateway(),
+                securityProperties.getSecurity().getInternalGatewaySecret(),
+                securityProperties.getInternal().getWorkloadToken());
     }
 
     @Bean

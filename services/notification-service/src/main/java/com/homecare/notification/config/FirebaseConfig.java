@@ -7,7 +7,6 @@ import java.nio.charset.StandardCharsets;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.util.StringUtils;
@@ -22,9 +21,9 @@ public class FirebaseConfig {
     private static final Logger log = LoggerFactory.getLogger(FirebaseConfig.class);
 
     @Bean
-    public FirebaseApp firebaseApp(
-            @Value("${homecare.fcm.credentials-json:}") String credentialsJson,
-            @Value("${homecare.fcm.credentials-path:}") String credentialsPath) {
+    public FirebaseApp firebaseApp(FcmProperties fcmProperties) {
+        String credentialsJson = fcmProperties.getCredentialsJson();
+        String credentialsPath = fcmProperties.getCredentialsPath();
 
         if (!FirebaseApp.getApps().isEmpty()) {
             return FirebaseApp.getInstance();

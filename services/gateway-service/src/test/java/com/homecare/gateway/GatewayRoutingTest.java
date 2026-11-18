@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import static org.junit.jupiter.api.Assertions.*;
@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class GatewayRoutingTest {
     private static final AtomicInteger calls = new AtomicInteger();
     private static HttpServer upstream;
-    @Value("${local.server.port}") private int port;
+    @LocalServerPort private int port;
 
     @DynamicPropertySource
     static void upstream(DynamicPropertyRegistry properties) throws Exception {

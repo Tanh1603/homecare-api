@@ -1,5 +1,6 @@
 package com.homecare.booking.client;
 
+import com.homecare.common.config.HomecareSecurityProperties;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.security.OrganizationMembershipVerifier;
 import com.homecare.common.security.VerifiedMembership;
@@ -25,7 +26,6 @@ import java.util.UUID;
 import net.devh.boot.grpc.client.inject.GrpcClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
@@ -39,8 +39,11 @@ public class ProviderGrpcClientAdapter implements OrganizationMembershipVerifier
     @GrpcClient("providerService")
     private ProviderAllocationServiceGrpc.ProviderAllocationServiceBlockingStub providerStub;
 
-    @Value("${homecare.internal.workload-token}")
-    private String workloadToken;
+    private final String workloadToken;
+
+    public ProviderGrpcClientAdapter(HomecareSecurityProperties securityProperties) {
+        this.workloadToken = securityProperties.getInternal().getWorkloadToken();
+    }
 
     public VerifyOfferingResponse verifyOffering(UUID serviceId) {
         return withInternalMetadata(providerStub)
