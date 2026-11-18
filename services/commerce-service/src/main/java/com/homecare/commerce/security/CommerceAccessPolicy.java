@@ -1,5 +1,7 @@
 package com.homecare.commerce.security;
 
+import java.util.UUID;
+
 import org.springframework.stereotype.Component;
 
 import com.homecare.commerce.entity.MerchantEntity;
@@ -131,6 +133,22 @@ public class CommerceAccessPolicy {
         }
         if (actor.isGlobalAdmin() || actor.userId().equals(order.getBuyerProfileId())) {
             return;
+        }
+        throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+    }
+
+    public UUID resolveAuthorizedInactiveMerchant(ActorContext actor, UUID requestedMerchantId) {
+        if (actor == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        if (actor.isGlobalAdmin() && actor.mode() == AccessMode.PERSONAL) {
+            return requestedMerchantId;
+        }
+        if (actor.mode() == AccessMode.ORGANIZATION && actor.hasOrgPermission(RbacConstants.PERM_PRODUCT_MANAGE)) {
+            if (requestedMerchantId != null && !requestedMerchantId.equals(actor.organizationId())) {
+                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            }
+            return actor.organizationId();
         }
         throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
     }

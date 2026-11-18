@@ -6,14 +6,7 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.amqp.core.Binding;
-import org.springframework.amqp.core.BindingBuilder;
-import org.springframework.amqp.core.DirectExchange;
-import org.springframework.amqp.core.Queue;
-import org.springframework.amqp.core.QueueBuilder;
-import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,52 +30,6 @@ public class CommerceOrganizationConsumer {
     private final MerchantRepository merchantRepository;
     private final CommerceProcessedEventRepository processedEventRepository;
     private final ObjectMapper objectMapper;
-
-    @Bean
-    public DirectExchange commerceEventsDlx() {
-        return new DirectExchange(DomainEventContracts.DLX, true, false);
-    }
-
-    @Bean
-    public Queue commerceOrganizationQueue() {
-        return QueueBuilder.durable(QUEUE)
-                .withArgument("x-dead-letter-exchange", DomainEventContracts.DLX)
-                .withArgument("x-dead-letter-routing-key", DomainEventContracts.dlqName(QUEUE))
-                .build();
-    }
-
-    @Bean
-    public Queue commerceOrganizationDlq() {
-        return QueueBuilder.durable(DomainEventContracts.dlqName(QUEUE)).build();
-    }
-
-    @Bean
-    public Binding bindCommerceOrgDlq(Queue commerceOrganizationDlq, DirectExchange commerceEventsDlx) {
-        return BindingBuilder.bind(commerceOrganizationDlq)
-                .to(commerceEventsDlx)
-                .with(DomainEventContracts.dlqName(QUEUE));
-    }
-
-    @Bean
-    public Binding bindCommerceOrgApproved(Queue commerceOrganizationQueue, TopicExchange domainEventsExchange) {
-        return BindingBuilder.bind(commerceOrganizationQueue)
-                .to(domainEventsExchange)
-                .with(DomainEventContracts.ORG_APPROVED);
-    }
-
-    @Bean
-    public Binding bindCommerceOrgSuspended(Queue commerceOrganizationQueue, TopicExchange domainEventsExchange) {
-        return BindingBuilder.bind(commerceOrganizationQueue)
-                .to(domainEventsExchange)
-                .with(DomainEventContracts.ORG_SUSPENDED);
-    }
-
-    @Bean
-    public Binding bindCommerceOrgUpdated(Queue commerceOrganizationQueue, TopicExchange domainEventsExchange) {
-        return BindingBuilder.bind(commerceOrganizationQueue)
-                .to(domainEventsExchange)
-                .with(DomainEventContracts.ORG_UPDATED);
-    }
 
     @RabbitListener(queues = QUEUE)
     @Transactional
@@ -111,12 +58,12 @@ public class CommerceOrganizationConsumer {
             }
             UUID orgId = UUID.fromString(orgIdStr);
 
-            if (DomainEventContracts.ORG_APPROVED.equals(eventType)) {
-                handleApproved(orgId, data);
-            } else if (DomainEventContracts.ORG_UPDATED.equals(eventType)) {
-                handleUpdated(orgId, data);
-            } else if (DomainEventContracts.ORG_SUSPENDED.equals(eventType)) {
-                handleSuspended(orgId);
+            switch (eventType) {
+                case DomainEventContracts.ORG_APPROVED -> handleApproved(orgId, data);
+                case DomainEventContracts.ORG_UPDATED -> handleUpdated(orgId, data);
+                case DomainEventContracts.ORG_SUSPENDED -> handleSuspended(orgId);
+                default -> {
+                }
             }
 
             processedEventRepository.save(CommerceProcessedEventEntity.builder()

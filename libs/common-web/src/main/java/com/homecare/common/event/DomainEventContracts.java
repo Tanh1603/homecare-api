@@ -27,7 +27,22 @@ public final class DomainEventContracts {
     public static final String ORG_SUSPENDED = "organization.suspended.v1";
     public static final String ORG_MEMBER_CHANGED = "organization.member.changed.v1";
 
-    // Booking & Commerce lifecycle events
+    // Booking lifecycle events
+    public static final String BOOKING_REQUESTED = "booking.requested.v1";
+    public static final String BOOKING_ASSIGNED = "booking.assigned.v1";
     public static final String BOOKING_REASSIGNED = "booking.reassigned.v1";
+    public static final String BOOKING_CANCELLED = "booking.cancelled.v1";
+    public static final String BOOKING_COMPLETED = "booking.completed.v1";
+
+    // Commerce lifecycle events
+    public static final String ORDER_CREATED = "order.created.v1";
+    public static final String ORDER_CANCELLED = "order.cancelled.v1";
+    public static final String ORDER_PAYMENT_SUCCEEDED = "order.payment.succeeded.v1";
+    public static final String ORDER_PAYMENT_FAILED = "order.payment.failed.v1";
+    public static final String ORDER_LINE_DELIVERED = "order.line.delivered.v1";
+    public static final String ORDER_RETURN_APPROVED = "order.return.approved.v1";
     public static final String ORDER_REFUND_SUCCEEDED = "order.refund.succeeded.v1";
+
+    // Household lifecycle events
+    public static final String MAINTENANCE_REMINDER_DUE = "maintenance.reminder.due.v1";
 }

@@ -41,20 +41,20 @@ public class DomainEventConsumer {
                     : Map.of();
 
             switch (eventType) {
-                case "booking.cancelled.v1" -> {
+                case DomainEventContracts.BOOKING_CANCELLED -> {
                     for (String field : List.of("requesterProfileId", "technicianProfileId")) {
                         inboxService.recordIfAbsent(eventId, stringField(data, field), eventType,
                                 "Lịch hẹn đã hủy", "Lịch hẹn dịch vụ đã được hủy.", Map.of("bookingId", stringField(data, "bookingId")));
                     }
                 }
-                case "booking.requested.v1" -> inboxService.recordIfAbsent(
+                case DomainEventContracts.BOOKING_REQUESTED -> inboxService.recordIfAbsent(
                         eventId,
                         stringField(data, "requesterProfileId"),
                         eventType,
                         "Đã tiếp nhận yêu cầu dịch vụ",
                         "Yêu cầu dịch vụ " + stringField(data, "serviceName") + " của bạn đang chờ điều phối.",
                         Map.of("bookingId", stringField(data, "bookingId")));
-                case "booking.assigned.v1" -> {
+                case DomainEventContracts.BOOKING_ASSIGNED -> {
                     String bookingId = stringField(data, "bookingId");
                     inboxService.recordIfAbsent(
                             eventId,
@@ -103,35 +103,35 @@ public class DomainEventConsumer {
                         "Hoàn tiền thành công",
                         "Yêu cầu hoàn tiền cho đơn hàng " + stringField(data, "orderId") + " đã được hoàn tất.",
                         Map.of("orderId", stringField(data, "orderId")));
-                case "booking.completed.v1" -> inboxService.recordIfAbsent(
+                case DomainEventContracts.BOOKING_COMPLETED -> inboxService.recordIfAbsent(
                         eventId,
                         stringField(data, "requesterProfileId"),
                         eventType,
                         "Hoàn tất dịch vụ — Mời bạn đánh giá",
                         "Dịch vụ " + stringField(data, "serviceName") + " đã hoàn thành.",
                         Map.of("bookingId", stringField(data, "bookingId")));
-                case "order.created.v1" -> inboxService.recordIfAbsent(
+                case DomainEventContracts.ORDER_CREATED -> inboxService.recordIfAbsent(
                         eventId,
                         stringField(data, "buyerProfileId"),
                         eventType,
                         "Đơn hàng đã tạo thành công",
                         "Đơn hàng của bạn đang chờ thanh toán qua VNPAY Sandbox.",
                         Map.of("orderId", stringField(data, "orderId")));
-                case "order.payment.succeeded.v1" -> inboxService.recordIfAbsent(
+                case DomainEventContracts.ORDER_PAYMENT_SUCCEEDED -> inboxService.recordIfAbsent(
                         eventId,
                         stringField(data, "buyerProfileId"),
                         eventType,
                         "Thanh toán VNPAY thành công",
                         "Đơn hàng " + stringField(data, "orderId") + " đã được xác nhận thanh toán.",
                         Map.of("orderId", stringField(data, "orderId")));
-                case "order.payment.failed.v1" -> inboxService.recordIfAbsent(
+                case DomainEventContracts.ORDER_PAYMENT_FAILED -> inboxService.recordIfAbsent(
                         eventId,
                         stringField(data, "buyerProfileId"),
                         eventType,
                         "Thanh toán đơn hàng chưa thành công",
                         "Giao dịch VNPAY cho đơn hàng " + stringField(data, "orderId") + " không thành công.",
                         Map.of("orderId", stringField(data, "orderId")));
-                case "order.line.delivered.v1" -> {
+                case DomainEventContracts.ORDER_LINE_DELIVERED -> {
                     int warrantyMonths = intField(data, "warrantyMonths");
                     String productName = stringField(data, "productName");
                     String title = warrantyMonths > 0
@@ -148,14 +148,14 @@ public class DomainEventConsumer {
                             body,
                             Map.of("orderId", stringField(data, "orderId")));
                 }
-                case "order.return.approved.v1" -> inboxService.recordIfAbsent(
+                case DomainEventContracts.ORDER_RETURN_APPROVED -> inboxService.recordIfAbsent(
                         eventId,
                         stringField(data, "buyerProfileId"),
                         eventType,
                         "Yêu cầu đổi/trả hàng đã được Cửa hàng chấp thuận",
                         "Yêu cầu " + stringField(data, "returnType") + " cho sản phẩm " + stringField(data, "productName") + " đã được duyệt.",
                         Map.of("orderId", stringField(data, "orderId")));
-                case "maintenance.reminder.due.v1" -> inboxService.recordIfAbsent(
+                case DomainEventContracts.MAINTENANCE_REMINDER_DUE -> inboxService.recordIfAbsent(
                         eventId,
                         stringField(data, "ownerProfileId"),
                         eventType,

@@ -23,7 +23,6 @@ import io.grpc.stub.MetadataUtils;
 import net.devh.boot.grpc.client.inject.GrpcClient;
 import com.homecare.common.config.HomecareSecurityProperties;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
 
 @Component
 public class HouseholdVerificationClient {
@@ -66,8 +65,7 @@ public class HouseholdVerificationClient {
             throw e;
         } catch (StatusRuntimeException e) {
             log.warn("Household gRPC verification unavailable ({}: {})", e.getStatus().getCode(), e.getMessage());
-            throw new DomainException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "HOUSEHOLD_SERVICE_UNAVAILABLE", "Household verification unavailable");
+            throw new DomainException(BookingErrorCode.HOUSEHOLD_SERVICE_UNAVAILABLE);
         } catch (Exception e) {
             log.warn("Household gRPC verification unreachable ({})", e.getMessage());
             throw new DomainException(BookingErrorCode.DEVICE_REFERENCE_INVALID);
@@ -103,8 +101,7 @@ public class HouseholdVerificationClient {
             throw e;
         } catch (StatusRuntimeException e) {
             log.warn("Household warranty gRPC verification unavailable ({}: {})", e.getStatus().getCode(), e.getMessage());
-            throw new DomainException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "HOUSEHOLD_SERVICE_UNAVAILABLE", "Household verification unavailable");
+            throw new DomainException(BookingErrorCode.HOUSEHOLD_SERVICE_UNAVAILABLE);
         } catch (Exception e) {
             log.warn("Household warranty gRPC verification unreachable ({})", e.getMessage());
             throw new DomainException(BookingErrorCode.WARRANTY_INVALID);

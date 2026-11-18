@@ -1,9 +1,11 @@
 package com.homecare.booking.controller;
 
+import java.io.IOException;
 import java.util.UUID;
 
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.homecare.booking.client.ProviderGrpcClientAdapter;
 import com.homecare.booking.dto.BookingDtos.ApproveExtraCostRequest;
@@ -130,7 +133,7 @@ public class BookingController {
     }
 
     @PostMapping("/{bookingId}/assign")
-    public ResponseEntity<?> assign(@PathVariable UUID bookingId, @AuthenticationPrincipal Jwt jwt,
+    public ResponseEntity<ApiResponse<BookingResponse>> assign(@PathVariable UUID bookingId, @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @Valid @RequestBody AssignRequest input, HttpServletRequest request) {
@@ -157,13 +160,13 @@ public class BookingController {
                 .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
     }
 
-    @PostMapping(value = "/{bookingId}/work-evidence", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PostMapping(value = "/{bookingId}/work-evidence", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<WorkEvidenceResponse>> uploadWorkEvidence(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID bookingId,
-            @RequestParam("file") org.springframework.web.multipart.MultipartFile file,
-            HttpServletRequest httpRequest) throws java.io.IOException {
+            @RequestParam("file") MultipartFile file,
+            HttpServletRequest httpRequest) throws IOException {
         ActorContext actor = resolveActor(jwt, rawOrgId);
         WorkEvidenceResponse uploaded = service.uploadWorkEvidence(
                 actor, bookingId, file.getOriginalFilename(), file.getContentType(), file.getBytes());

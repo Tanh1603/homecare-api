@@ -20,6 +20,7 @@ public enum CommonErrorCode implements ApiErrorCodeContract {
     RESOURCE_VERSION_MISMATCH(HttpStatus.PRECONDITION_FAILED, "error.precondition.failed", "The resource version does not match the provided If-Match header."),
     PRECONDITION_REQUIRED(HttpStatus.PRECONDITION_REQUIRED, "error.precondition.required", "The If-Match header is required for this update."),
     DIRECT_ACCESS_FORBIDDEN(HttpStatus.FORBIDDEN, "error.direct-access.forbidden", "Direct access to downstream service is forbidden. Requests must go through API Gateway."),
+    MEMBERSHIP_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "error.membership.unavailable", "Membership verification unavailable"),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "error.internal", "An unexpected server error occurred. Please try again later.");
 
     private final HttpStatus status;

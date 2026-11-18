@@ -1,5 +1,7 @@
 package com.homecare.provider.controller;
 
+import com.homecare.common.error.CommonErrorCode;
+import com.homecare.common.error.DomainException;
 import com.homecare.common.security.ActorContext;
 import com.homecare.common.security.ActorContextResolver;
 import com.homecare.common.security.RbacConstants;
@@ -18,7 +20,6 @@ import com.homecare.provider.security.ProviderAccessPolicy;
 import com.homecare.provider.service.ProviderDomainService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -121,20 +122,10 @@ public class ProviderPublicAndTechController {
 
     private UUID resolveAuthorizedInactiveScope(Jwt jwt, String rawOrgId, UUID requestedProviderId, String orgPermission) {
         if (jwt == null) {
-            throw new com.homecare.common.error.DomainException(com.homecare.common.error.CommonErrorCode.RESOURCE_FORBIDDEN);
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
         ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId), accessPolicy);
-        if (actor.isGlobalAdmin() && actor.mode() == com.homecare.common.security.AccessMode.PERSONAL) {
-            return requestedProviderId;
-        }
-        if (actor.mode() == com.homecare.common.security.AccessMode.ORGANIZATION
-                && actor.hasOrgPermission(orgPermission)) {
-            if (requestedProviderId != null && !requestedProviderId.equals(actor.organizationId())) {
-                throw new com.homecare.common.error.DomainException(com.homecare.common.error.CommonErrorCode.RESOURCE_FORBIDDEN);
-            }
-            return actor.organizationId();
-        }
-        throw new com.homecare.common.error.DomainException(com.homecare.common.error.CommonErrorCode.RESOURCE_FORBIDDEN);
+        return accessPolicy.resolveAuthorizedInactiveScope(actor, requestedProviderId, orgPermission);
     }
 
     @GetMapping("/technicians/{technicianId}")

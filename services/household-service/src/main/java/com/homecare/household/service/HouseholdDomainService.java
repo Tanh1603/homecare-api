@@ -242,7 +242,7 @@ public class HouseholdDomainService {
     }
 
     private Pageable pageRequest(int page, int size, String field) {
-        if (page < 1 || size < 1 || size > 100) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        PageResponse.validate(page, size);
         return PageRequest.of(page - 1, size, Sort.by(field, "id"));
     }
 
@@ -703,7 +703,7 @@ public class HouseholdDomainService {
 
             Map<String, Object> envelope = new LinkedHashMap<>();
             envelope.put(DomainEventContracts.FIELD_EVENT_ID, eventId);
-            envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, "maintenance.reminder.due.v1");
+            envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, DomainEventContracts.MAINTENANCE_REMINDER_DUE);
             envelope.put(DomainEventContracts.FIELD_OCCURRED_AT, now.toString());
             envelope.put(DomainEventContracts.FIELD_PRODUCER, "household-service");
             envelope.put("correlationId", eventId);
@@ -720,8 +720,8 @@ public class HouseholdDomainService {
                     .id(eventId)
                     .aggregateType("MaintenanceSchedule")
                     .aggregateId(schedule.getId())
-                    .eventType("maintenance.reminder.due.v1")
-                    .routingKey("maintenance.reminder.due.v1")
+                    .eventType(DomainEventContracts.MAINTENANCE_REMINDER_DUE)
+                    .routingKey(DomainEventContracts.MAINTENANCE_REMINDER_DUE)
                     .payloadJson(payloadJson)
                     .status(EntityStatus.PENDING.name())
                     .retryCount(0)

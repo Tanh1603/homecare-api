@@ -20,13 +20,13 @@ public interface TechnicianRepository extends JpaRepository<Technician, UUID> {
         select t from Technician t where t.status = 'ACTIVE'
         and exists (select 1 from ProviderEntity p where p.id = t.providerId and p.status = 'ACTIVE')
         and (:providerId is null or t.providerId = :providerId)
-        and (:q is null or lower(t.fullName) like lower(concat('%', :q, '%')))
+        and (:q is null or lower(t.fullName) like lower(concat('%', cast(:q as string), '%')))
         """)
     Page<Technician> search(UUID providerId, String q, Pageable pageable);
 
     @Query("""
         select t from Technician t where (:providerId is null or t.providerId = :providerId)
-        and (:q is null or lower(t.fullName) like lower(concat('%', :q, '%')))
+        and (:q is null or lower(t.fullName) like lower(concat('%', cast(:q as string), '%')))
         """)
     Page<Technician> searchIncludingInactive(UUID providerId, String q, Pageable pageable);
     Optional<Technician> findByProfileId(String profileId);

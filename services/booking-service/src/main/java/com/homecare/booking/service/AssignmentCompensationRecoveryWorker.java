@@ -10,6 +10,7 @@ import com.homecare.booking.repository.BookingAllocationSagaRepository;
 import com.homecare.booking.repository.BookingHistoryRepository;
 import com.homecare.booking.repository.BookingOutboxEventRepository;
 import com.homecare.booking.repository.BookingRepository;
+import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.event.DomainEventContracts;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import java.time.Instant;
@@ -357,18 +358,18 @@ public class AssignmentCompensationRecoveryWorker {
             data.put("status", booking.getStatus());
             data.put("bookingType", booking.getBookingType());
             Map<String, Object> envelope = Map.of(
-                    "eventId", eventId.toString(),
-                    "eventType", "booking.assigned.v1",
-                    "occurredAt", now.toString(),
-                    "data", data);
+                    DomainEventContracts.FIELD_EVENT_ID, eventId.toString(),
+                    DomainEventContracts.FIELD_EVENT_TYPE, DomainEventContracts.BOOKING_ASSIGNED,
+                    DomainEventContracts.FIELD_OCCURRED_AT, now.toString(),
+                    DomainEventContracts.FIELD_DATA, data);
             outboxEventRepository.save(BookingOutboxEventEntity.builder()
                     .id(eventId)
                     .aggregateType("Booking")
                     .aggregateId(booking.getId())
-                    .eventType("booking.assigned.v1")
-                    .routingKey("booking.assigned.v1")
+                    .eventType(DomainEventContracts.BOOKING_ASSIGNED)
+                    .routingKey(DomainEventContracts.BOOKING_ASSIGNED)
                     .payloadJson(objectMapper.writeValueAsString(envelope))
-                    .status("PENDING")
+                    .status(EntityStatus.PENDING.name())
                     .retryCount(0)
                     .createdAt(now)
                     .build());

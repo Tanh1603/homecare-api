@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -282,7 +283,7 @@ public class BookingLifecycleService {
                     saga.setCompensationReason("Ambiguous gRPC timeout/error; queued for reconciliation");
                     saga.setUpdatedAt(finishTime);
                     sagaRepository.save(saga);
-                    publishDomainEvent("booking.requested.v1", booking);
+                    publishDomainEvent(DomainEventContracts.BOOKING_REQUESTED, booking);
                     return toBookingResponse(booking);
                 }
 
@@ -314,7 +315,7 @@ public class BookingLifecycleService {
 
                     recordHistory(bookingId, "REQUESTED", "ASSIGNED", "AI_DISPATCHER",
                             "AI Auto-Dispatch assigned technician " + finalAlloc.getTechnicianName());
-                    publishDomainEvent("booking.assigned.v1", booking);
+                    publishDomainEvent(DomainEventContracts.BOOKING_ASSIGNED, booking);
                     return toBookingResponse(booking);
                 }
 
@@ -333,7 +334,7 @@ public class BookingLifecycleService {
                 saga.setUpdatedAt(finishTime);
                 saga.setCompletedAt(finishTime);
                 sagaRepository.save(saga);
-                publishDomainEvent("booking.requested.v1", booking);
+                publishDomainEvent(DomainEventContracts.BOOKING_REQUESTED, booking);
                 return toBookingResponse(booking);
             });
         } catch (RuntimeException ex) {
@@ -347,8 +348,7 @@ public class BookingLifecycleService {
     @Transactional(readOnly = true)
     public PageResponse<BookingResponse> listBookingsPage(
             ActorContext actor, int page, int size, String status, String scope) {
-        if (page < 1 || size < 1 || size > 100)
-            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        PageResponse.validate(page, size);
         if (status != null) {
             try {
                 BookingStatus.valueOf(status);
@@ -365,9 +365,9 @@ public class BookingLifecycleService {
         }
         List<UUID> ids = content.stream().map(BookingEntity::getId).toList();
         var historyByBooking = historyRepository.findByBookingIdInOrderByOccurredAtAsc(ids).stream()
-                .collect(java.util.stream.Collectors.groupingBy(BookingHistoryEntry::getBookingId));
+                .collect(Collectors.groupingBy(BookingHistoryEntry::getBookingId));
         var updatesByBooking = workUpdateRepository.findByBookingIdInOrderByCreatedAtAsc(ids).stream()
-                .collect(java.util.stream.Collectors.groupingBy(WorkUpdateEntity::getBookingId));
+                .collect(Collectors.groupingBy(WorkUpdateEntity::getBookingId));
         var items = content.stream()
                 .map(b -> toBookingResponse(b,
                         historyByBooking.getOrDefault(b.getId(), List.of()),
@@ -409,7 +409,7 @@ public class BookingLifecycleService {
                 "CANCELLED",
                 actor.userId(),
                 request != null && request.reason() != null ? request.reason() : "Customer cancelled");
-        publishDomainEvent("booking.cancelled.v1", saved);
+        publishDomainEvent(DomainEventContracts.BOOKING_CANCELLED, saved);
         return toBookingResponse(saved);
     }
 
@@ -489,7 +489,7 @@ public class BookingLifecycleService {
         BookingEntity saved = bookingRepository.saveAndFlush(booking);
 
         if ("COMPLETED".equals(saved.getStatus())) {
-            publishDomainEvent("booking.completed.v1", saved);
+            publishDomainEvent(DomainEventContracts.BOOKING_COMPLETED, saved);
         }
         return toBookingResponse(saved);
     }
@@ -787,7 +787,7 @@ public class BookingLifecycleService {
                     sagaRepository.save(saga);
                 });
                 recordHistory(bookingId, "REQUESTED", "ASSIGNED", actor.userId(), "Manually assigned technician");
-                publishDomainEvent("booking.assigned.v1", saved);
+                publishDomainEvent(DomainEventContracts.BOOKING_ASSIGNED, saved);
                 return toBookingResponse(saved);
             });
             if (assigned == null) {
@@ -897,8 +897,7 @@ public class BookingLifecycleService {
                     });
                 }
             });
-            throw new DomainException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "REASSIGNMENT_UNAVAILABLE", "Technician reassignment timed out; reconciliation pending.");
+            throw new DomainException(BookingErrorCode.REASSIGNMENT_UNAVAILABLE);
         }
 
         if (result == null || !result.getAllocated()) {
@@ -970,11 +969,11 @@ public class BookingLifecycleService {
             payload.put("reason", reason == null ? "" : reason);
             try {
                 Map<String, Object> envelope = new LinkedHashMap<>();
-                envelope.put("eventId", UUID.randomUUID().toString());
-                envelope.put("eventType", DomainEventContracts.BOOKING_REASSIGNED);
-                envelope.put("occurredAt", now.toString());
-                envelope.put("producer", "booking-service");
-                envelope.put("data", payload);
+                envelope.put(DomainEventContracts.FIELD_EVENT_ID, UUID.randomUUID().toString());
+                envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, DomainEventContracts.BOOKING_REASSIGNED);
+                envelope.put(DomainEventContracts.FIELD_OCCURRED_AT, now.toString());
+                envelope.put(DomainEventContracts.FIELD_PRODUCER, "booking-service");
+                envelope.put(DomainEventContracts.FIELD_DATA, payload);
                 outboxEventRepository.save(BookingOutboxEventEntity.builder()
                         .id(UUID.randomUUID())
                         .aggregateType("Booking")
@@ -982,7 +981,7 @@ public class BookingLifecycleService {
                         .eventType(DomainEventContracts.BOOKING_REASSIGNED)
                         .routingKey(DomainEventContracts.BOOKING_REASSIGNED)
                         .payloadJson(objectMapper.writeValueAsString(envelope))
-                        .status("PENDING")
+                        .status(EntityStatus.PENDING.name())
                         .createdAt(now)
                         .build());
             } catch (Exception e) {
@@ -1125,9 +1124,9 @@ public class BookingLifecycleService {
         if (includeSignedEvidenceUrls && !updateEntities.isEmpty()) {
             List<UUID> updateIds = updateEntities.stream().map(WorkUpdateEntity::getId).toList();
             evidenceByUpdate = workEvidenceRepository.findByWorkUpdateIdIn(updateIds).stream()
-                    .collect(java.util.stream.Collectors.groupingBy(
+                    .collect(Collectors.groupingBy(
                             WorkEvidenceEntity::getWorkUpdateId,
-                            java.util.stream.Collectors.mapping(
+                            Collectors.mapping(
                                     ev -> new WorkEvidenceResponse(
                                             ev.getId(),
                                             ev.getBookingId(),
@@ -1135,7 +1134,7 @@ public class BookingLifecycleService {
                                             ev.getSizeBytes(),
                                             ev.getCreatedAt(),
                                             workEvidenceStorage.createSignedUrl(ev.getBucket(), ev.getObjectKey(), 300)),
-                                    java.util.stream.Collectors.toList())));
+                                    Collectors.toList())));
         }
         Map<UUID, List<WorkEvidenceResponse>> finalEvidenceByUpdate = evidenceByUpdate;
         List<WorkUpdateResponse> updates = updateEntities

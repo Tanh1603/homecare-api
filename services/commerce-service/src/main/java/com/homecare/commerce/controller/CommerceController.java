@@ -1,6 +1,5 @@
 package com.homecare.commerce.controller;
 
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -29,6 +28,7 @@ import com.homecare.commerce.dto.CommerceDtos.OrderReturnResponse;
 import com.homecare.commerce.dto.CommerceDtos.PaymentAttemptResponse;
 import com.homecare.commerce.dto.CommerceDtos.ProductResponse;
 import com.homecare.commerce.dto.CommerceDtos.ResolveOrderReturnRequest;
+import com.homecare.commerce.security.CommerceAccessPolicy;
 import com.homecare.commerce.service.CommerceDomainService;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
@@ -55,6 +55,7 @@ public class CommerceController {
 
     private final CommerceDomainService service;
     private final ProviderOrgClient providerOrgClient;
+    private final CommerceAccessPolicy accessPolicy;
     private final IdempotencyService idempotencyService;
     private final ServletApiResponseFactory responseFactory;
 
@@ -87,17 +88,7 @@ public class CommerceController {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
         ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId), providerOrgClient);
-        if (actor.isGlobalAdmin() && actor.mode() == com.homecare.common.security.AccessMode.PERSONAL) {
-            return requestedMerchantId;
-        }
-        if (actor.mode() == com.homecare.common.security.AccessMode.ORGANIZATION
-                && actor.hasOrgPermission(RbacConstants.PERM_PRODUCT_MANAGE)) {
-            if (requestedMerchantId != null && !requestedMerchantId.equals(actor.organizationId())) {
-                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-            }
-            return actor.organizationId();
-        }
-        throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        return accessPolicy.resolveAuthorizedInactiveMerchant(actor, requestedMerchantId);
     }
 
     @GetMapping("/products/{productId}")

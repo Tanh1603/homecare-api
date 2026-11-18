@@ -12,8 +12,8 @@ import org.springframework.data.jpa.repository.Query;
 public interface ProviderRepository extends JpaRepository<ProviderEntity, UUID> {
     @Query("""
         select p from ProviderEntity p where p.status = 'ACTIVE'
-        and (:city is null or lower(p.city) = lower(:city))
-        and (:q is null or lower(p.name) like lower(concat('%', :q, '%')))
+        and (:city is null or lower(p.city) = lower(cast(:city as string)))
+        and (:q is null or lower(p.name) like lower(concat('%', cast(:q as string), '%')))
         """)
     Page<ProviderEntity> search(String city, String q, Pageable pageable);
 

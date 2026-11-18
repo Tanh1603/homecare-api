@@ -7,6 +7,7 @@ import static com.homecare.common.error.CommonErrorCode.VALIDATION_FAILED;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.web.PageResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.AdminUserResponse;
+import java.net.http.HttpClient;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -16,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
@@ -49,7 +51,7 @@ public class SupabaseRoleClient {
         this.supabaseUrl = supabaseUrl;
         this.secretKey = secretKey;
         this.organizationRoleId = organizationRoleId;
-        java.net.http.HttpClient httpClient = java.net.http.HttpClient.newBuilder()
+        HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(3))
                 .build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
@@ -102,7 +104,7 @@ public class SupabaseRoleClient {
         String joined = userIds.stream()
                 .filter(id -> id != null && !id.isBlank())
                 .distinct()
-                .collect(java.util.stream.Collectors.joining(","));
+                .collect(Collectors.joining(","));
         if (joined.isBlank()) {
             return Map.of();
         }

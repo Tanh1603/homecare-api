@@ -46,7 +46,7 @@ public class ReviewController {
     private final ServletApiResponseFactory responseFactory;
 
     @PatchMapping("/products/{productId}/reviews/{reviewId}")
-    public ResponseEntity<?> updateProductReview(
+    public ResponseEntity<ApiResponse<ReviewResponse>> updateProductReview(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID productId,
@@ -58,7 +58,7 @@ public class ReviewController {
     }
 
     @DeleteMapping("/products/{productId}/reviews/{reviewId}")
-    public ResponseEntity<?> deleteProductReview(
+    public ResponseEntity<Void> deleteProductReview(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID productId,

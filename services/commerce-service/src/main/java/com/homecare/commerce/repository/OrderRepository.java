@@ -1,9 +1,8 @@
 package com.homecare.commerce.repository;
 
-import static jakarta.persistence.LockModeType.*;
+import static jakarta.persistence.LockModeType.PESSIMISTIC_WRITE;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -21,7 +20,7 @@ public interface OrderRepository extends JpaRepository<OrderEntity, UUID>, JpaSp
             select o from OrderEntity o where (:buyer is null or o.buyerProfileId = :buyer)
             and (:merchant is null or o.merchantId = :merchant)
             and (:status is null or o.status = :status)
-            and (:q is null or lower(o.shippingAddress) like lower(concat('%', :q, '%')))
+            and (:q is null or lower(o.shippingAddress) like lower(concat('%', cast(:q as string), '%')))
             """)
     Page<OrderEntity> search(String buyer, UUID merchant, String status, String q, Pageable pageable);
 
@@ -30,10 +29,4 @@ public interface OrderRepository extends JpaRepository<OrderEntity, UUID>, JpaSp
     Optional<OrderEntity> lockById(UUID id);
 
     Page<OrderEntity> findByStatusAndQuoteExpiresAtBefore(String status, Instant now, Pageable pageable);
-
-    List<OrderEntity> findByBuyerProfileIdOrderByCreatedAtDesc(String buyerProfileId);
-
-    List<OrderEntity> findByMerchantIdOrderByCreatedAtDesc(UUID merchantId);
-
-    List<OrderEntity> findAllByOrderByCreatedAtDesc();
 }

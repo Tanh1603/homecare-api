@@ -104,7 +104,7 @@ public class ProviderDomainService {
 
     private String blankToNull(String value) { return value == null || value.isBlank() ? null : value.trim(); }
     private Pageable pageRequest(int page, int size) {
-        if (page < 1 || size < 1 || size > 100) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        PageResponse.validate(page, size);
         return PageRequest.of(page - 1, size, Sort.by("createdAt").descending().and(Sort.by("id")));
     }
 

@@ -13,9 +13,11 @@ import com.homecare.booking.v1.VerifyBookingEligibilityResponse;
 import com.homecare.commerce.v1.CommerceVerificationServiceGrpc;
 import com.homecare.commerce.v1.VerifyOrderLineEligibilityRequest;
 import com.homecare.commerce.v1.VerifyOrderLineEligibilityResponse;
+import com.homecare.common.config.HomecareSecurityProperties;
 import com.homecare.grpc.interceptor.WorkloadAuthClientInterceptor;
 
 import io.grpc.Metadata;
+import io.grpc.stub.AbstractStub;
 import io.grpc.stub.MetadataUtils;
 import net.devh.boot.grpc.client.inject.GrpcClient;
 
@@ -34,7 +36,7 @@ public class EvidenceVerificationClient {
 
     private final String workloadToken;
 
-    public EvidenceVerificationClient(com.homecare.common.config.HomecareSecurityProperties securityProperties) {
+    public EvidenceVerificationClient(HomecareSecurityProperties securityProperties) {
         this.workloadToken = securityProperties.getInternal().getWorkloadToken();
     }
 
@@ -88,7 +90,7 @@ public class EvidenceVerificationClient {
         }
     }
 
-    private <T extends io.grpc.stub.AbstractStub<T>> T withInternalMetadata(T stub) {
+    private <T extends AbstractStub<T>> T withInternalMetadata(T stub) {
         Metadata metadata = new Metadata();
         metadata.put(WORKLOAD_TOKEN_KEY, workloadToken);
         return stub.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));

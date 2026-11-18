@@ -13,6 +13,9 @@ spring:
       resourceserver:
         jwt:
           jwk-set-uri: ${SUPABASE_JWKS_URI:https://placeholder.supabase.co/auth/v1/.well-known/jwks.json}
+          jws-algorithms:
+            - ES256
+            - RS256
 
   cloud:
     gateway:

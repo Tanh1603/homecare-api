@@ -68,10 +68,10 @@ class ReviewDomainServiceTest {
 
         UUID provider = UUID.randomUUID();
         UUID b1 = UUID.randomUUID(), b2 = UUID.randomUUID();
-        when(verificationClient.verifyBookingEligible(b1, "u1")).thenReturn(new com.homecare.review.client.EvidenceVerificationClient.BookingEligibility(true, provider));
-        when(verificationClient.verifyBookingEligible(b2, "u2")).thenReturn(new com.homecare.review.client.EvidenceVerificationClient.BookingEligibility(true, provider));
-        service.createServiceReview("u1", new com.homecare.review.dto.ReviewDtos.CreateServiceReviewRequest(b1, provider, 5, "S1"));
-        service.createServiceReview("u2", new com.homecare.review.dto.ReviewDtos.CreateServiceReviewRequest(b2, provider, 4, "S2"));
+        when(verificationClient.verifyBookingEligible(b1, "u1")).thenReturn(new BookingEligibility(true, provider));
+        when(verificationClient.verifyBookingEligible(b2, "u2")).thenReturn(new BookingEligibility(true, provider));
+        service.createServiceReview("u1", new CreateServiceReviewRequest(b1, provider, 5, "S1"));
+        service.createServiceReview("u2", new CreateServiceReviewRequest(b2, provider, 4, "S2"));
         var provPage = service.providerReviewsPage(provider, 1, 1);
         assertThat(provPage.items()).hasSize(1);
         assertThat(provPage.pagination().totalItems()).isEqualTo(2);

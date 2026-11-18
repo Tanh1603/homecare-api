@@ -15,14 +15,13 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.Valid;
-import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 import com.homecare.provider.config.ProviderAuthProperties;
-import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -51,7 +50,7 @@ public class AdminUserController {
     private final ObjectProvider<StringRedisTemplate> redisTemplateProvider;
     private final ProviderAuthProperties authProperties;
 
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     public AdminUserController(
             SupabaseRoleClient supabaseRoleClient,
             ServletApiResponseFactory responseFactory,
@@ -74,7 +73,7 @@ public class AdminUserController {
 
     @PatchMapping("/{userId}/status")
     @PreAuthorize("hasRole('ADMIN') or hasAuthority('admin:all')")
-    public ResponseEntity<?> updateStatus(@PathVariable UUID userId,
+    public ResponseEntity<ApiResponse<Map<String, Object>>> updateStatus(@PathVariable UUID userId,
             @Valid @RequestBody StatusRequest input,
             @AuthenticationPrincipal Jwt jwt,
             HttpServletRequest request) {
@@ -83,7 +82,7 @@ public class AdminUserController {
         }
         supabaseRoleClient.updateUserStatus(userId, input.status());
         syncUserBlacklist(userId, input.status());
-        return ResponseEntity.ok(responseFactory.ok("Updated", Map.of("id", userId, "status", input.status()), request));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.UPDATED, Map.of("id", userId, "status", input.status()), request));
     }
 
     private void syncUserBlacklist(UUID userId, String status) {

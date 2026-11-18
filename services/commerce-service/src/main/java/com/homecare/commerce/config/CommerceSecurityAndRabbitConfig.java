@@ -1,5 +1,10 @@
 package com.homecare.commerce.config;
 
+import org.springframework.amqp.core.Binding;
+import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.DirectExchange;
+import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -13,8 +18,10 @@ import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.homecare.commerce.service.CommerceDomainService;
-import com.homecare.common.idempotency.IdempotencyService;
+import com.homecare.commerce.service.CommerceOrganizationConsumer;
 import com.homecare.common.config.HomecareSecurityProperties;
+import com.homecare.common.event.DomainEventContracts;
+import com.homecare.common.idempotency.IdempotencyService;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.servlet.BaseApiExceptionHandler;
 import com.homecare.common.web.servlet.GatewayOriginFilter;
@@ -31,6 +38,52 @@ public class CommerceSecurityAndRabbitConfig {
     @Bean
     public TopicExchange domainEventsExchange() {
         return new TopicExchange(CommerceDomainService.EXCHANGE, true, false);
+    }
+
+    @Bean
+    public DirectExchange commerceEventsDlx() {
+        return new DirectExchange(DomainEventContracts.DLX, true, false);
+    }
+
+    @Bean
+    public Queue commerceOrganizationQueue() {
+        return QueueBuilder.durable(CommerceOrganizationConsumer.QUEUE)
+                .withArgument("x-dead-letter-exchange", DomainEventContracts.DLX)
+                .withArgument("x-dead-letter-routing-key", DomainEventContracts.dlqName(CommerceOrganizationConsumer.QUEUE))
+                .build();
+    }
+
+    @Bean
+    public Queue commerceOrganizationDlq() {
+        return QueueBuilder.durable(DomainEventContracts.dlqName(CommerceOrganizationConsumer.QUEUE)).build();
+    }
+
+    @Bean
+    public Binding bindCommerceOrgDlq(Queue commerceOrganizationDlq, DirectExchange commerceEventsDlx) {
+        return BindingBuilder.bind(commerceOrganizationDlq)
+                .to(commerceEventsDlx)
+                .with(DomainEventContracts.dlqName(CommerceOrganizationConsumer.QUEUE));
+    }
+
+    @Bean
+    public Binding bindCommerceOrgApproved(Queue commerceOrganizationQueue, TopicExchange domainEventsExchange) {
+        return BindingBuilder.bind(commerceOrganizationQueue)
+                .to(domainEventsExchange)
+                .with(DomainEventContracts.ORG_APPROVED);
+    }
+
+    @Bean
+    public Binding bindCommerceOrgSuspended(Queue commerceOrganizationQueue, TopicExchange domainEventsExchange) {
+        return BindingBuilder.bind(commerceOrganizationQueue)
+                .to(domainEventsExchange)
+                .with(DomainEventContracts.ORG_SUSPENDED);
+    }
+
+    @Bean
+    public Binding bindCommerceOrgUpdated(Queue commerceOrganizationQueue, TopicExchange domainEventsExchange) {
+        return BindingBuilder.bind(commerceOrganizationQueue)
+                .to(domainEventsExchange)
+                .with(DomainEventContracts.ORG_UPDATED);
     }
 
     @Bean

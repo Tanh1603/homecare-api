@@ -1,11 +1,16 @@
 package com.homecare.gateway.filter;
 
+import java.time.Duration;
+import java.util.Optional;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
@@ -30,7 +35,7 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
     private final GatewayErrorHandlers errorHandlers;
     private final boolean blacklistFailClosed;
 
-    @org.springframework.beans.factory.annotation.Autowired
+    @Autowired
     public TokenBlacklistFilter(
             ReactiveStringRedisTemplate redisTemplate,
             GatewayErrorHandlers errorHandlers,
@@ -61,8 +66,8 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
         return ReactiveSecurityContextHolder.getContext()
                 .filter(securityContext -> securityContext.getAuthentication() instanceof JwtAuthenticationToken)
                 .map(securityContext -> (JwtAuthenticationToken) securityContext.getAuthentication())
-                .map(java.util.Optional::of)
-                .defaultIfEmpty(java.util.Optional.empty())
+                .map(Optional::of)
+                .defaultIfEmpty(Optional.empty())
                 .flatMap(optionalAuth -> {
                     if (optionalAuth.isEmpty()) {
                         return chain.filter(exchange);
@@ -73,8 +78,8 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
                         return errorHandlers.writeError(exchange, CommonErrorCode.ACCESS_DENIED);
                     }
                     String sub = jwt.getSubject();
-                    boolean isMutation = exchange.getRequest().getMethod() != org.springframework.http.HttpMethod.GET
-                            && exchange.getRequest().getMethod() != org.springframework.http.HttpMethod.HEAD;
+                    boolean isMutation = exchange.getRequest().getMethod() != HttpMethod.GET
+                            && exchange.getRequest().getMethod() != HttpMethod.HEAD;
                     Mono<Boolean> userBlacklisted = (sub == null || sub.isBlank())
                             ? Mono.just(false)
                             : hasBlacklistedKey(BLACKLIST_USER_KEY_PREFIX + sub, isMutation);
@@ -107,7 +112,7 @@ public class TokenBlacklistFilter implements GlobalFilter, Ordered {
         }
         return lookup
                 .defaultIfEmpty(false)
-                .timeout(java.time.Duration.ofMillis(500))
+                .timeout(Duration.ofMillis(500))
                 .onErrorResume(exception -> {
                     if (blacklistFailClosed && isMutation) {
                         log.warn("Redis blacklist lookup failed (fail-closed) for key={}: {}", key, exception.getMessage());

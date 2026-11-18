@@ -1,5 +1,11 @@
 package com.homecare.provider.config;
 
+import org.springframework.amqp.core.Binding;
+import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.DirectExchange;
+import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
+import org.springframework.amqp.core.TopicExchange;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -13,12 +19,15 @@ import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.homecare.common.config.HomecareSecurityProperties;
+import com.homecare.common.event.DomainEventContracts;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.servlet.BaseApiExceptionHandler;
 import com.homecare.common.web.servlet.GatewayOriginFilter;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import com.homecare.common.web.servlet.ServletCorrelationIdFilter;
 import com.homecare.grpc.interceptor.WorkloadAuthServerInterceptor;
+import com.homecare.provider.organization.service.SupabaseRoleSyncConsumer;
+import com.homecare.provider.service.ProviderBookingConsumer;
 
 import io.grpc.ServerInterceptor;
 import net.devh.boot.grpc.server.interceptor.GrpcGlobalServerInterceptor;
@@ -50,6 +59,97 @@ public class ProviderSecurityAndGrpcConfig {
     @GrpcGlobalServerInterceptor
     public ServerInterceptor internalWorkloadGrpcInterceptor(HomecareSecurityProperties securityProperties) {
         return new WorkloadAuthServerInterceptor(securityProperties.getInternal().getWorkloadToken());
+    }
+
+    @Bean
+    public TopicExchange organizationDomainExchange() {
+        return new TopicExchange(DomainEventContracts.EXCHANGE, true, false);
+    }
+
+    @Bean
+    public DirectExchange providerEventsDlx() {
+        return new DirectExchange(DomainEventContracts.DLX, true, false);
+    }
+
+    @Bean
+    public Queue supabaseRoleSyncQueue() {
+        return QueueBuilder.durable(SupabaseRoleSyncConsumer.QUEUE)
+                .withArgument("x-dead-letter-exchange", DomainEventContracts.DLX)
+                .withArgument("x-dead-letter-routing-key", DomainEventContracts.dlqName(SupabaseRoleSyncConsumer.QUEUE))
+                .build();
+    }
+
+    @Bean
+    public Queue supabaseRoleSyncDlq() {
+        return QueueBuilder.durable(DomainEventContracts.dlqName(SupabaseRoleSyncConsumer.QUEUE)).build();
+    }
+
+    @Bean
+    public Binding bindSupabaseRoleSyncDlq(Queue supabaseRoleSyncDlq, DirectExchange providerEventsDlx) {
+        return BindingBuilder.bind(supabaseRoleSyncDlq)
+                .to(providerEventsDlx)
+                .with(DomainEventContracts.dlqName(SupabaseRoleSyncConsumer.QUEUE));
+    }
+
+    @Bean
+    public Binding bindOrgApprovedForRoleSync(Queue supabaseRoleSyncQueue, TopicExchange organizationDomainExchange) {
+        return BindingBuilder.bind(supabaseRoleSyncQueue)
+                .to(organizationDomainExchange)
+                .with(DomainEventContracts.ORG_APPROVED);
+    }
+
+    @Bean
+    public Binding bindOrgSuspendedForRoleSync(Queue supabaseRoleSyncQueue, TopicExchange organizationDomainExchange) {
+        return BindingBuilder.bind(supabaseRoleSyncQueue)
+                .to(organizationDomainExchange)
+                .with(DomainEventContracts.ORG_SUSPENDED);
+    }
+
+    @Bean
+    public Binding bindOrgMemberChangedForRoleSync(Queue supabaseRoleSyncQueue, TopicExchange organizationDomainExchange) {
+        return BindingBuilder.bind(supabaseRoleSyncQueue)
+                .to(organizationDomainExchange)
+                .with(DomainEventContracts.ORG_MEMBER_CHANGED);
+    }
+
+    @Bean
+    public Queue providerBookingQueue() {
+        return QueueBuilder.durable(ProviderBookingConsumer.QUEUE)
+                .withArgument("x-dead-letter-exchange", DomainEventContracts.DLX)
+                .withArgument("x-dead-letter-routing-key", DomainEventContracts.dlqName(ProviderBookingConsumer.QUEUE))
+                .build();
+    }
+
+    @Bean
+    public Queue providerBookingDlq() {
+        return QueueBuilder.durable(DomainEventContracts.dlqName(ProviderBookingConsumer.QUEUE)).build();
+    }
+
+    @Bean
+    public Binding bindProviderBookingDlq(Queue providerBookingDlq, DirectExchange providerEventsDlx) {
+        return BindingBuilder.bind(providerBookingDlq)
+                .to(providerEventsDlx)
+                .with(DomainEventContracts.dlqName(ProviderBookingConsumer.QUEUE));
+    }
+
+    @Bean
+    public Binding providerBookingCompleted() {
+        return new Binding(
+                ProviderBookingConsumer.QUEUE,
+                Binding.DestinationType.QUEUE,
+                DomainEventContracts.EXCHANGE,
+                DomainEventContracts.BOOKING_COMPLETED,
+                null);
+    }
+
+    @Bean
+    public Binding providerBookingCancelled() {
+        return new Binding(
+                ProviderBookingConsumer.QUEUE,
+                Binding.DestinationType.QUEUE,
+                DomainEventContracts.EXCHANGE,
+                DomainEventContracts.BOOKING_CANCELLED,
+                null);
     }
 
     @Bean

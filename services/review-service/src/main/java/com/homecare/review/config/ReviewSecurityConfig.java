@@ -11,6 +11,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import com.homecare.common.config.HomecareSecurityProperties;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.servlet.BaseApiExceptionHandler;
 import com.homecare.common.web.servlet.GatewayOriginFilter;
@@ -32,8 +33,7 @@ public class ReviewSecurityConfig {
     }
 
     @Bean
-    public GatewayOriginFilter gatewayOriginFilter(
-            com.homecare.common.config.HomecareSecurityProperties securityProperties) {
+    public GatewayOriginFilter gatewayOriginFilter(HomecareSecurityProperties securityProperties) {
         return new GatewayOriginFilter(
                 securityProperties.getSecurity().isEnforceGateway(),
                 securityProperties.getSecurity().getInternalGatewaySecret(),

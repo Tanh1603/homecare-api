@@ -5,9 +5,9 @@ import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
+import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.security.OrganizationMembershipVerifier;
 import com.homecare.common.security.VerifiedMembership;
@@ -56,8 +56,7 @@ public class ProviderOrgClient implements OrganizationMembershipVerifier {
                             .build());
             return VerifiedMembership.of(organizationId, userId, response.getRole(), response.getValid());
         } catch (StatusRuntimeException e) {
-            throw new DomainException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "MEMBERSHIP_UNAVAILABLE", "Membership verification unavailable");
+            throw new DomainException(CommonErrorCode.MEMBERSHIP_UNAVAILABLE);
         } catch (Exception e) {
             log.warn("Provider org membership gRPC verification failed for org {} user {}: {}",
                     organizationId, userId, e.getMessage());

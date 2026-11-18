@@ -5,14 +5,7 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.amqp.core.Binding;
-import org.springframework.amqp.core.BindingBuilder;
-import org.springframework.amqp.core.DirectExchange;
-import org.springframework.amqp.core.Queue;
-import org.springframework.amqp.core.QueueBuilder;
-import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
 
 import com.homecare.common.event.DomainEventContracts;
@@ -31,46 +24,6 @@ public class HouseholdEventConsumer {
     private final HouseholdDomainService domainService;
     private final ObjectMapper objectMapper;
 
-    @Bean
-    public TopicExchange householdDomainExchange() {
-        return new TopicExchange(EXCHANGE, true, false);
-    }
-
-    @Bean
-    public DirectExchange householdEventsDlx() {
-        return new DirectExchange(DomainEventContracts.DLX, true, false);
-    }
-
-    @Bean
-    public Queue householdEventsQueue() {
-        return QueueBuilder.durable(QUEUE)
-                .withArgument("x-dead-letter-exchange", DomainEventContracts.DLX)
-                .withArgument("x-dead-letter-routing-key", DomainEventContracts.dlqName(QUEUE))
-                .build();
-    }
-
-    @Bean
-    public Queue householdEventsDlq() {
-        return QueueBuilder.durable(DomainEventContracts.dlqName(QUEUE)).build();
-    }
-
-    @Bean
-    public Binding bindHouseholdEventsDlq(Queue householdEventsDlq, DirectExchange householdEventsDlx) {
-        return BindingBuilder.bind(householdEventsDlq)
-                .to(householdEventsDlx)
-                .with(DomainEventContracts.dlqName(QUEUE));
-    }
-
-    @Bean
-    public Binding bindOrderLineDelivered(Queue householdEventsQueue, TopicExchange householdDomainExchange) {
-        return BindingBuilder.bind(householdEventsQueue).to(householdDomainExchange).with("order.line.delivered.v1");
-    }
-
-    @Bean
-    public Binding bindBookingCompleted(Queue householdEventsQueue, TopicExchange householdDomainExchange) {
-        return BindingBuilder.bind(householdEventsQueue).to(householdDomainExchange).with("booking.completed.v1");
-    }
-
     @RabbitListener(queues = QUEUE)
     @SuppressWarnings("unchecked")
     public void onDomainEvent(String payloadJson) {
@@ -82,7 +35,7 @@ public class HouseholdEventConsumer {
                     : Map.of();
 
             switch (eventType) {
-                case "order.line.delivered.v1" -> {
+                case DomainEventContracts.ORDER_LINE_DELIVERED -> {
                     int warrantyMonths = intField(data, "warrantyMonths");
                     if (warrantyMonths > 0) {
                         domainService.autoActivateWarrantyFromOrderLineDelivered(
@@ -100,7 +53,7 @@ public class HouseholdEventConsumer {
                                 warrantyMonths);
                     }
                 }
-                case "booking.completed.v1" -> {
+                case DomainEventContracts.BOOKING_COMPLETED -> {
                     UUID deviceId = uuidField(data, "deviceId");
                     if (deviceId != null) {
                         domainService.recordCareHistoryFromBookingCompleted(

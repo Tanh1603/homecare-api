@@ -7,6 +7,7 @@ import java.util.UUID;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PositiveOrZero;
 
 public final class BookingDtos {
 
@@ -44,7 +45,7 @@ public final class BookingDtos {
     public record CreateWorkUpdateRequest(
             @JsonAlias({"kind", "status"}) @NotBlank String kind,
             @JsonAlias({"note", "notes"}) String note,
-            @jakarta.validation.constraints.PositiveOrZero Long extraCost,
+            @PositiveOrZero Long extraCost,
             List<UUID> evidenceIds) {
         public CreateWorkUpdateRequest(String kind, String note) {
             this(kind, note, null, List.of());

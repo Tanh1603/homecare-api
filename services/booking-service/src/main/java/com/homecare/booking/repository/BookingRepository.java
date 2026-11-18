@@ -4,6 +4,7 @@ import com.homecare.booking.entity.BookingEntity;
 
 import static jakarta.persistence.LockModeType.PESSIMISTIC_WRITE;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -26,7 +27,7 @@ public interface BookingRepository extends JpaRepository<BookingEntity, UUID>, J
           and b.status = 'REQUESTED'
           and b.allocationStatus = 'UNALLOCATED'
         """)
-    int tryClaimForAllocation(@Param("bookingId") UUID bookingId, @Param("now") java.time.Instant now);
+    int tryClaimForAllocation(@Param("bookingId") UUID bookingId, @Param("now") Instant now);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
@@ -36,5 +37,5 @@ public interface BookingRepository extends JpaRepository<BookingEntity, UUID>, J
           and b.status = 'ASSIGNED'
           and b.allocationStatus = 'ALLOCATED'
         """)
-    int tryClaimForReassignment(@Param("bookingId") UUID bookingId, @Param("now") java.time.Instant now);
+    int tryClaimForReassignment(@Param("bookingId") UUID bookingId, @Param("now") Instant now);
 }

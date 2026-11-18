@@ -62,6 +62,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Pageable;
@@ -97,14 +98,14 @@ public class CommerceDomainService {
 
     private MerchantEntity requireMerchant(UUID merchantId, UUID organizationId, String user, boolean admin) {
         var merchant = merchantRepository.findById(merchantId).orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_NOT_FOUND));
-        if (!"ACTIVE".equals(merchant.getStatus())) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        if (!EntityStatus.ACTIVE.name().equals(merchant.getStatus())) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         if (!admin && (organizationId == null || !organizationId.equals(merchant.getOrganizationId())
                 || !providerOrgClient.canOperate(organizationId, user))) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         return merchant;
     }
 
     private Pageable pageRequest(int page, int size, String sort, boolean products) {
-        if (page < 1 || size < 1 || size > 100) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        PageResponse.validate(page, size);
         String[] parts = (sort == null ? "createdAt,desc" : sort).split(",");
         var allowed = products ? Set.of("createdAt", "name", "unitPrice", "id") : Set.of("createdAt", "totalAmount", "id");
         if (parts.length > 2 || !allowed.contains(parts[0])) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
@@ -133,10 +134,10 @@ public class CommerceDomainService {
         if (content.isEmpty()) {
             return PageResponse.of(List.of(), page, size, result.getTotalElements());
         }
-        var merchantNames = merchantRepository.findAllById(content.stream().map(ProductEntity::getMerchantId).collect(java.util.stream.Collectors.toSet()))
-                .stream().collect(java.util.stream.Collectors.toMap(MerchantEntity::getId, MerchantEntity::getName));
+        var merchantNames = merchantRepository.findAllById(content.stream().map(ProductEntity::getMerchantId).collect(Collectors.toSet()))
+                .stream().collect(Collectors.toMap(MerchantEntity::getId, MerchantEntity::getName));
         var invByProduct = inventoryRepository.findByProductIdIn(content.stream().map(ProductEntity::getId).toList())
-                .stream().collect(java.util.stream.Collectors.toMap(InventoryEntity::getProductId, i -> i));
+                .stream().collect(Collectors.toMap(InventoryEntity::getProductId, i -> i));
         var items = content.stream()
                 .map(p -> toProductResponse(p, merchantNames.getOrDefault(p.getMerchantId(), "HomeCare Mall"), invByProduct.get(p.getId())))
                 .toList();
@@ -160,9 +161,9 @@ public class CommerceDomainService {
         }
         List<UUID> orderIds = content.stream().map(OrderEntity::getId).toList();
         var linesByOrder = orderLineRepository.findByOrderIdIn(orderIds).stream()
-                .collect(java.util.stream.Collectors.groupingBy(OrderLineEntity::getOrderId));
+                .collect(Collectors.groupingBy(OrderLineEntity::getOrderId));
         var attemptsByOrder = paymentAttemptRepository.findByOrderIdInOrderByCreatedAtDesc(orderIds).stream()
-                .collect(java.util.stream.Collectors.groupingBy(PaymentAttemptEntity::getOrderId));
+                .collect(Collectors.groupingBy(PaymentAttemptEntity::getOrderId));
         var items = content.stream()
                 .map(o -> toOrderResponse(o,
                         linesByOrder.getOrDefault(o.getId(), List.of()),
@@ -201,22 +202,15 @@ public class CommerceDomainService {
         }
         List<UUID> orderIds = content.stream().map(OrderEntity::getId).toList();
         var linesByOrder = orderLineRepository.findByOrderIdIn(orderIds).stream()
-                .collect(java.util.stream.Collectors.groupingBy(OrderLineEntity::getOrderId));
+                .collect(Collectors.groupingBy(OrderLineEntity::getOrderId));
         var attemptsByOrder = paymentAttemptRepository.findByOrderIdInOrderByCreatedAtDesc(orderIds).stream()
-                .collect(java.util.stream.Collectors.groupingBy(PaymentAttemptEntity::getOrderId));
+                .collect(Collectors.groupingBy(PaymentAttemptEntity::getOrderId));
         var items = content.stream()
                 .map(o -> toOrderResponse(o,
                         linesByOrder.getOrDefault(o.getId(), List.of()),
                         attemptsByOrder.getOrDefault(o.getId(), List.of())))
                 .toList();
         return PageResponse.of(items, page, size, result.getTotalElements());
-    }
-
-    @Transactional(readOnly = true)
-    public OrderResponse getOrderForPortal(String user, UUID id, UUID org, boolean admin) {
-        var order = orderRepository.findById(id).orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
-        if (!user.equals(order.getBuyerProfileId())) requireMerchant(order.getMerchantId(), org, user, admin);
-        return toOrderResponse(order);
     }
 
     @Transactional
@@ -230,21 +224,12 @@ public class CommerceDomainService {
         return saveProductInternal(id, item, merchantId, input);
     }
 
-    @Transactional
-    public ProductResponse saveProduct(UUID id, ProductInput input, UUID org, String user, boolean admin) {
-        var item = id == null ? new ProductEntity() : productRepository.findById(id).orElseThrow(() -> new DomainException(CommerceErrorCode.PRODUCT_NOT_FOUND));
-        UUID merchant = id == null ? input.merchantId() : item.getMerchantId();
-        if (merchant == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
-        requireMerchant(merchant, org, user, admin);
-        return saveProductInternal(id, item, merchant, input);
-    }
-
     private ProductResponse saveProductInternal(UUID id, ProductEntity item, UUID merchant, ProductInput input) {
         if (input.merchantId() != null && !merchant.equals(input.merchantId())) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         if (id == null) {
             if (input.sku() == null || input.name() == null || input.category() == null || input.brand() == null || input.unitPrice() == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
             item.setId(UUID.randomUUID()); item.setMerchantId(merchant); item.setCreatedAt(Instant.now());
-            item.setStatus("ACTIVE"); item.setProductType(ProductType.SMALL_PART.name()); item.setReturnWindowDays(7);
+            item.setStatus(EntityStatus.ACTIVE.name()); item.setProductType(ProductType.SMALL_PART.name()); item.setReturnWindowDays(7);
         }
         if (input.sku() != null) item.setSku(input.sku());
         if (input.name() != null) item.setName(input.name());
@@ -268,13 +253,7 @@ public class CommerceDomainService {
         MerchantEntity merchant = merchantRepository.findById(item.getMerchantId())
                 .orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_NOT_FOUND));
         accessPolicy.assertCanManageCatalog(actor, merchant);
-        item.setStatus("INACTIVE"); productRepository.save(item);
-    }
-
-    @Transactional
-    public void deleteProduct(UUID id, UUID org, String user, boolean admin) {
-        var item = productRepository.findById(id).orElseThrow(() -> new DomainException(CommerceErrorCode.PRODUCT_NOT_FOUND));
-        requireMerchant(item.getMerchantId(), org, user, admin); item.setStatus("INACTIVE"); productRepository.save(item);
+        item.setStatus(EntityStatus.INACTIVE.name()); productRepository.save(item);
     }
 
     @Transactional
@@ -290,27 +269,10 @@ public class CommerceDomainService {
     }
 
     @Transactional
-    public ProductResponse updateInventory(UUID id, int quantity, UUID org, String user, boolean admin) {
-        if (quantity < 0) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
-        var item = productRepository.findById(id).orElseThrow(() -> new DomainException(CommerceErrorCode.PRODUCT_NOT_FOUND));
-        requireMerchant(item.getMerchantId(), org, user, admin);
-        var inventory = inventoryRepository.lockByProductId(id).orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_NOT_FOUND));
-        inventory.setAvailableQty(quantity); inventory.setUpdatedAt(Instant.now()); inventoryRepository.save(inventory);
-        return toProductResponse(item);
-    }
-
-    @Transactional
     public OrderResponse cancelOrder(UUID id, ActorContext actor) {
         var order = orderRepository.lockById(id).orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
         MerchantEntity merchant = merchantRepository.findById(order.getMerchantId()).orElse(null);
         accessPolicy.assertCanCancelOrder(actor, order, merchant);
-        return cancelOrderInternal(order);
-    }
-
-    @Transactional
-    public OrderResponse cancelOrder(UUID id, String user, UUID org, boolean admin) {
-        var order = orderRepository.lockById(id).orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
-        if (!user.equals(order.getBuyerProfileId())) requireMerchant(order.getMerchantId(), org, user, admin);
         return cancelOrderInternal(order);
     }
 
@@ -319,7 +281,7 @@ public class CommerceDomainService {
         if (!OrderStatus.AWAITING_PAYMENT.name().equals(order.getStatus())) throw new DomainException(CommerceErrorCode.ORDER_INVALID_STATE);
         releaseReservations(order);
         order.setStatus(OrderStatus.CANCELLED.name()); order.setUpdatedAt(Instant.now()); orderRepository.save(order);
-        publishDomainEvent("order.cancelled.v1", order);
+        publishDomainEvent(DomainEventContracts.ORDER_CANCELLED, order);
         return toOrderResponse(order);
     }
 
@@ -329,7 +291,7 @@ public class CommerceDomainService {
         if (order == null || !OrderStatus.AWAITING_PAYMENT.name().equals(order.getStatus()) || order.getQuoteExpiresAt().isAfter(now)) return;
         releaseReservations(order);
         order.setStatus(OrderStatus.CANCELLED.name()); order.setUpdatedAt(now); orderRepository.save(order);
-        publishDomainEvent("order.cancelled.v1", order);
+        publishDomainEvent(DomainEventContracts.ORDER_CANCELLED, order);
     }
 
     private void releaseReservations(OrderEntity order) {
@@ -338,7 +300,7 @@ public class CommerceDomainService {
                 .sorted(Comparator.comparing(InventoryReservationEntity::getProductId))
                 .toList();
         for (var reservation : reservations) {
-            if (!"ACTIVE".equals(reservation.getStatus())) continue;
+            if (!EntityStatus.ACTIVE.name().equals(reservation.getStatus())) continue;
             var inventory = inventoryRepository.lockByProductId(reservation.getProductId()).orElseThrow();
             inventory.setAvailableQty(Math.addExact(inventory.getAvailableQty(), reservation.getQuantity()));
             inventory.setReservedQty(inventory.getReservedQty() - reservation.getQuantity());
@@ -380,7 +342,7 @@ public class CommerceDomainService {
             ProductEntity product = productRepository.findById(productId)
                     .orElseThrow(() -> new DomainException(
                             CommerceErrorCode.PRODUCT_NOT_FOUND, "Product not found: " + productId));
-            if (!"ACTIVE".equals(product.getStatus())) throw new DomainException(CommerceErrorCode.PRODUCT_NOT_FOUND);
+            if (!EntityStatus.ACTIVE.name().equals(product.getStatus())) throw new DomainException(CommerceErrorCode.PRODUCT_NOT_FOUND);
             merchantIds.add(product.getMerchantId());
             if (merchantIds.size() > 1) {
                 throw new DomainException(CommerceErrorCode.MIXED_MERCHANT_ORDER);
@@ -439,7 +401,7 @@ public class CommerceDomainService {
 
         orderLineRepository.saveAll(linesToSave);
         reservationRepository.saveAll(reservationsToSave);
-        publishDomainEvent("order.created.v1", savedOrder);
+        publishDomainEvent(DomainEventContracts.ORDER_CREATED, savedOrder);
         return toOrderResponse(savedOrder);
     }
 
@@ -544,11 +506,11 @@ public class CommerceDomainService {
                 res.setResolvedAt(now);
                 reservationRepository.save(res);
             }
-            publishDomainEvent("order.payment.succeeded.v1", order);
+            publishDomainEvent(DomainEventContracts.ORDER_PAYMENT_SUCCEEDED, order);
         } else {
             attempt.setStatus(PaymentAttemptStatus.FAILED.name());
             paymentAttemptRepository.save(attempt);
-            publishDomainEvent("order.payment.failed.v1", order);
+            publishDomainEvent(DomainEventContracts.ORDER_PAYMENT_FAILED, order);
         }
         return Map.of("RspCode", "00", "Message", "Confirm Success");
     }
@@ -913,31 +875,18 @@ public class CommerceDomainService {
     }
 
     private void publishRefundSucceededEvent(OrderEntity order, OrderReturnRequestEntity ret, Instant now) {
-        try {
-            Map<String, Object> data = new LinkedHashMap<>();
-            data.put("orderId", order.getId().toString());
-            data.put("returnId", ret.getId().toString());
-            data.put("buyerProfileId", order.getBuyerProfileId());
-            data.put("productId", ret.getProductId().toString());
-            Map<String, Object> envelope = new LinkedHashMap<>();
-            envelope.put("eventId", UUID.randomUUID().toString());
-            envelope.put("eventType", DomainEventContracts.ORDER_REFUND_SUCCEEDED);
-            envelope.put("occurredAt", now.toString());
-            envelope.put("producer", "commerce-service");
-            envelope.put("data", data);
-            outboxEventRepository.save(CommerceOutboxEventEntity.builder()
-                    .id(UUID.randomUUID())
-                    .aggregateType("Order")
-                    .aggregateId(order.getId())
-                    .eventType(DomainEventContracts.ORDER_REFUND_SUCCEEDED)
-                    .routingKey(DomainEventContracts.ORDER_REFUND_SUCCEEDED)
-                    .payloadJson(objectMapper.writeValueAsString(envelope))
-                    .status("PENDING")
-                    .createdAt(now)
-                    .build());
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to serialize order.refund.succeeded.v1 event", e);
-        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("orderId", order.getId().toString());
+        data.put("returnId", ret.getId().toString());
+        data.put("buyerProfileId", order.getBuyerProfileId());
+        data.put("productId", ret.getProductId().toString());
+        saveOutbox(
+                UUID.randomUUID(),
+                "CustomerOrder",
+                order.getId(),
+                DomainEventContracts.ORDER_REFUND_SUCCEEDED,
+                data,
+                now);
     }
 
     @Transactional(readOnly = true)
@@ -970,20 +919,6 @@ public class CommerceDomainService {
         Pageable pageable = PageRequest.of(page - 1, size, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by("id")));
         var result = returnRequestRepository.findByOrderId(orderId, pageable);
         return PageResponse.of(result.map(this::toOrderReturnResponse).getContent(), page, size, result.getTotalElements());
-    }
-
-    @Transactional(readOnly = true)
-    public List<OrderReturnResponse> listOrderReturns(ActorContext actor, UUID orderId) {
-        OrderEntity order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new DomainException(CommerceErrorCode.ORDER_NOT_FOUND));
-        MerchantEntity merchant = merchantRepository.findById(order.getMerchantId()).orElse(null);
-        if (!accessPolicy.canListOrderReturns(actor, order, merchant)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
-        return returnRequestRepository.findByOrderIdOrderByCreatedAtDesc(orderId)
-                .stream()
-                .map(this::toOrderReturnResponse)
-                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -1051,7 +986,7 @@ public class CommerceDomainService {
             String merchantName,
             Instant now) {
         UUID eventId = UUID.randomUUID();
-        String eventType = "order.line.delivered.v1";
+        String eventType = DomainEventContracts.ORDER_LINE_DELIVERED;
         String category = product != null ? product.getCategory() : "AC";
         String brand = product != null ? product.getBrand() : "HomeCare";
         String productType = product != null ? product.getProductType() : "SMALL_PART";
@@ -1078,7 +1013,7 @@ public class CommerceDomainService {
 
     private void publishReturnApprovedEvent(OrderEntity order, OrderReturnRequestEntity ret, Instant now) {
         UUID eventId = UUID.randomUUID();
-        String eventType = "order.return.approved.v1";
+        String eventType = DomainEventContracts.ORDER_RETURN_APPROVED;
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("returnId", ret.getId());
         data.put("orderId", order.getId());

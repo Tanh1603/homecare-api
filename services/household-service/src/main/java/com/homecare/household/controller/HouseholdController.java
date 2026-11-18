@@ -28,7 +28,6 @@ import com.homecare.household.dto.HouseholdDtos.WarrantyResponse;
 import com.homecare.household.service.HouseholdDomainService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -244,11 +243,11 @@ public class HouseholdController {
     }
 
     @GetMapping("/maintenance-schedules")
-    public ResponseEntity<?> allSchedules(
+    public ResponseEntity<ApiResponse<PageResponse<MaintenanceScheduleResponse>>> allSchedules(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest request) {
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
