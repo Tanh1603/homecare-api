@@ -3,6 +3,7 @@ package com.homecare.household.controller;
 import com.homecare.common.security.ActorContext;
 import com.homecare.common.security.ActorContextResolver;
 import com.homecare.common.security.RbacConstants;
+import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
@@ -27,7 +28,6 @@ import com.homecare.household.dto.HouseholdDtos.WarrantyResponse;
 import com.homecare.household.service.HouseholdDomainService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -195,19 +195,23 @@ public class HouseholdController {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(
                         ApiMessages.CREATED,
-                        service.createWarranty(resolvePersonal(jwt, rawOrgId).userId(), deviceId, request),
+                        service.createWarranty(resolvePersonal(jwt, rawOrgId).userId(),
+                                SupabaseJwtConverterSupport.extractDisplayName(jwt), deviceId, request),
                         httpRequest));
     }
 
     @GetMapping("/devices/{deviceId}/warranties")
-    public ResponseEntity<ApiResponse<List<WarrantyResponse>>> listWarranties(
+    public ResponseEntity<ApiResponse<PageResponse<WarrantyResponse>>> listWarranties(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID deviceId,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
+        PageResponse.validate(page, size);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.listWarranties(resolvePersonal(jwt, rawOrgId).userId(), deviceId),
+                service.listWarrantiesPage(resolvePersonal(jwt, rawOrgId).userId(), deviceId, page, size),
                 httpRequest));
     }
 
@@ -239,11 +243,11 @@ public class HouseholdController {
     }
 
     @GetMapping("/maintenance-schedules")
-    public ResponseEntity<?> allSchedules(
+    public ResponseEntity<ApiResponse<PageResponse<MaintenanceScheduleResponse>>> allSchedules(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest request) {
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
@@ -275,14 +279,17 @@ public class HouseholdController {
     }
 
     @GetMapping("/devices/{deviceId}/maintenance-schedules")
-    public ResponseEntity<ApiResponse<List<MaintenanceScheduleResponse>>> listSchedules(
+    public ResponseEntity<ApiResponse<PageResponse<MaintenanceScheduleResponse>>> listSchedules(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID deviceId,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
+        PageResponse.validate(page, size);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.listSchedules(resolvePersonal(jwt, rawOrgId).userId(), deviceId),
+                service.listSchedulesPage(resolvePersonal(jwt, rawOrgId).userId(), deviceId, page, size),
                 httpRequest));
     }
 
@@ -324,14 +331,17 @@ public class HouseholdController {
     }
 
     @GetMapping("/devices/{deviceId}/care-history")
-    public ResponseEntity<ApiResponse<List<CareRecordResponse>>> listCareRecords(
+    public ResponseEntity<ApiResponse<PageResponse<CareRecordResponse>>> listCareRecords(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID deviceId,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
+        PageResponse.validate(page, size);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.listCareRecords(resolvePersonal(jwt, rawOrgId).userId(), deviceId),
+                service.listCareRecordsPage(resolvePersonal(jwt, rawOrgId).userId(), deviceId, page, size),
                 httpRequest));
     }
 

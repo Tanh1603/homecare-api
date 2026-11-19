@@ -6,7 +6,6 @@ import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -17,12 +16,15 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import com.homecare.common.config.HomecareSecurityProperties;
+import com.homecare.common.event.DomainEventContracts;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.servlet.BaseApiExceptionHandler;
 import com.homecare.common.web.servlet.GatewayOriginFilter;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import com.homecare.common.web.servlet.ServletCorrelationIdFilter;
 import com.homecare.notification.service.DomainEventConsumer;
+import com.homecare.notification.service.FcmPushConsumer;
 
 @Configuration
 @EnableMethodSecurity
@@ -35,27 +37,27 @@ public class NotificationSecurityAndRabbitConfig {
 
     @Bean
     public DirectExchange domainEventsDlx() {
-        return new DirectExchange(com.homecare.common.event.DomainEventContracts.DLX, true, false);
+        return new DirectExchange(DomainEventContracts.DLX, true, false);
     }
 
     @Bean
     public Queue notificationInboxQueue() {
         return QueueBuilder.durable(DomainEventConsumer.QUEUE)
-                .withArgument("x-dead-letter-exchange", com.homecare.common.event.DomainEventContracts.DLX)
-                .withArgument("x-dead-letter-routing-key", com.homecare.common.event.DomainEventContracts.dlqName(DomainEventConsumer.QUEUE))
+                .withArgument("x-dead-letter-exchange", DomainEventContracts.DLX)
+                .withArgument("x-dead-letter-routing-key", DomainEventContracts.dlqName(DomainEventConsumer.QUEUE))
                 .build();
     }
 
     @Bean
     public Queue notificationInboxDlq() {
-        return QueueBuilder.durable(com.homecare.common.event.DomainEventContracts.dlqName(DomainEventConsumer.QUEUE)).build();
+        return QueueBuilder.durable(DomainEventContracts.dlqName(DomainEventConsumer.QUEUE)).build();
     }
 
     @Bean
     public Binding notificationInboxDlqBinding(Queue notificationInboxDlq, DirectExchange domainEventsDlx) {
         return BindingBuilder.bind(notificationInboxDlq)
                 .to(domainEventsDlx)
-                .with(com.homecare.common.event.DomainEventContracts.dlqName(DomainEventConsumer.QUEUE));
+                .with(DomainEventContracts.dlqName(DomainEventConsumer.QUEUE));
     }
 
     @Bean
@@ -75,22 +77,22 @@ public class NotificationSecurityAndRabbitConfig {
 
     @Bean
     public Queue notificationPushDispatchQueue() {
-        return QueueBuilder.durable(com.homecare.notification.service.FcmPushConsumer.QUEUE)
-                .withArgument("x-dead-letter-exchange", com.homecare.common.event.DomainEventContracts.DLX)
-                .withArgument("x-dead-letter-routing-key", com.homecare.common.event.DomainEventContracts.dlqName(com.homecare.notification.service.FcmPushConsumer.QUEUE))
+        return QueueBuilder.durable(FcmPushConsumer.QUEUE)
+                .withArgument("x-dead-letter-exchange", DomainEventContracts.DLX)
+                .withArgument("x-dead-letter-routing-key", DomainEventContracts.dlqName(FcmPushConsumer.QUEUE))
                 .build();
     }
 
     @Bean
     public Queue notificationPushDispatchDlq() {
-        return QueueBuilder.durable(com.homecare.common.event.DomainEventContracts.dlqName(com.homecare.notification.service.FcmPushConsumer.QUEUE)).build();
+        return QueueBuilder.durable(DomainEventContracts.dlqName(FcmPushConsumer.QUEUE)).build();
     }
 
     @Bean
     public Binding notificationPushDispatchDlqBinding(Queue notificationPushDispatchDlq, DirectExchange domainEventsDlx) {
         return BindingBuilder.bind(notificationPushDispatchDlq)
                 .to(domainEventsDlx)
-                .with(com.homecare.common.event.DomainEventContracts.dlqName(com.homecare.notification.service.FcmPushConsumer.QUEUE));
+                .with(DomainEventContracts.dlqName(FcmPushConsumer.QUEUE));
     }
 
     @Bean
@@ -109,11 +111,11 @@ public class NotificationSecurityAndRabbitConfig {
     }
 
     @Bean
-    public GatewayOriginFilter gatewayOriginFilter(
-            @Value("${homecare.security.enforce-gateway:false}") boolean enforceGateway,
-            @Value("${homecare.security.internal-gateway-secret:homecare-internal-secret-2026}") String gatewaySecret,
-            @Value("${homecare.internal.workload-token:change_me_internal_workload_token}") String workloadToken) {
-        return new GatewayOriginFilter(enforceGateway, gatewaySecret, workloadToken);
+    public GatewayOriginFilter gatewayOriginFilter(HomecareSecurityProperties securityProperties) {
+        return new GatewayOriginFilter(
+                securityProperties.getSecurity().isEnforceGateway(),
+                securityProperties.getSecurity().getInternalGatewaySecret(),
+                securityProperties.getInternal().getWorkloadToken());
     }
 
     @Bean

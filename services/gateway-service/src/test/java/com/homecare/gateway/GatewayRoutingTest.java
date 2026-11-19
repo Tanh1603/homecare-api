@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import static org.junit.jupiter.api.Assertions.*;
@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class GatewayRoutingTest {
     private static final AtomicInteger calls = new AtomicInteger();
     private static HttpServer upstream;
-    @Value("${local.server.port}") private int port;
+    @LocalServerPort private int port;
 
     @DynamicPropertySource
     static void upstream(DynamicPropertyRegistry properties) throws Exception {
@@ -37,6 +37,7 @@ class GatewayRoutingTest {
             String corrId = exchange.getRequestHeaders().getFirst("X-Correlation-Id");
             if (corrId != null) {
                 exchange.getResponseHeaders().add("X-Upstream-Correlation-Id", corrId);
+                exchange.getResponseHeaders().add("X-Correlation-Id", corrId);
             }
             String gwSecret = exchange.getRequestHeaders().getFirst("X-Internal-Gateway-Secret");
             if (gwSecret != null) {
@@ -69,6 +70,7 @@ class GatewayRoutingTest {
         assertEquals("identity", response.headers().firstValue("X-Upstream-Fixture").orElseThrow());
         assertEquals("GET /api/v1/services?test=1 ", response.body());
         assertTrue(response.headers().firstValue("X-Correlation-Id").isPresent());
+        assertEquals(1, response.headers().allValues("X-Correlation-Id").size());
         assertTrue(response.headers().firstValue("X-Upstream-Correlation-Id").isPresent());
     }
 

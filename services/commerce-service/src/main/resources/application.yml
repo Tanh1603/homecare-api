@@ -45,6 +45,9 @@ spring:
             resourceserver:
                 jwt:
                     jwk-set-uri: ${SUPABASE_JWKS_URI:https://placeholder.supabase.co/auth/v1/.well-known/jwks.json}
+                    jws-algorithms:
+                        - ES256
+                        - RS256
 
 homecare:
     internal:
@@ -57,6 +60,12 @@ homecare:
         hash-secret: ${VNPAY_HASH_SECRET:HOMECARE_VNPAY_SANDBOX_SECRET_KEY_2026}
         pay-url: ${VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
         return-url: ${VNPAY_RETURN_URL:http://localhost:3000/orders/payment-result}
+
+app:
+    vnpay:
+        refund-enabled: ${VNPAY_REFUND_ENABLED:false}
+    commerce:
+        allow-exchange-returns: ${COMMERCE_ALLOW_EXCHANGE_RETURNS:false}
 
 springdoc:
     api-docs:

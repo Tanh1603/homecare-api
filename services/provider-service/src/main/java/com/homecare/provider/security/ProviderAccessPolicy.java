@@ -89,4 +89,20 @@ public class ProviderAccessPolicy implements OrganizationMembershipVerifier {
                 && actor.organizationId().equals(technician.getProviderId())
                 && actor.hasOrgRole(OrgRole.ORG_OWNER.name(), OrgRole.ORG_ADMIN.name(), OrgRole.ORG_STAFF.name());
     }
+
+    public UUID resolveAuthorizedInactiveScope(ActorContext actor, UUID requestedProviderId, String orgPermission) {
+        if (actor == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        if (actor.isGlobalAdmin() && actor.mode() == AccessMode.PERSONAL) {
+            return requestedProviderId;
+        }
+        if (actor.mode() == AccessMode.ORGANIZATION && actor.hasOrgPermission(orgPermission)) {
+            if (requestedProviderId != null && !requestedProviderId.equals(actor.organizationId())) {
+                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            }
+            return actor.organizationId();
+        }
+        throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+    }
 }

@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import com.homecare.common.security.ActorContext;
 import com.homecare.common.security.ActorContextResolver;
 import com.homecare.common.security.RbacConstants;
+import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.PageResponse;
@@ -45,7 +46,7 @@ public class ReviewController {
     private final ServletApiResponseFactory responseFactory;
 
     @PatchMapping("/products/{productId}/reviews/{reviewId}")
-    public ResponseEntity<?> updateProductReview(
+    public ResponseEntity<ApiResponse<ReviewResponse>> updateProductReview(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID productId,
@@ -57,7 +58,7 @@ public class ReviewController {
     }
 
     @DeleteMapping("/products/{productId}/reviews/{reviewId}")
-    public ResponseEntity<?> deleteProductReview(
+    public ResponseEntity<Void> deleteProductReview(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID productId,
@@ -74,10 +75,11 @@ public class ReviewController {
             @Valid @RequestBody CreateServiceReviewRequest request,
             HttpServletRequest httpRequest) {
         ActorContext actor = resolvePersonal(jwt, rawOrgId);
+        String authorName = SupabaseJwtConverterSupport.extractDisplayName(jwt);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(
                         ApiMessages.CREATED,
-                        service.createServiceReview(actor.userId(), request),
+                        service.createServiceReview(actor.userId(), authorName, request),
                         httpRequest));
     }
 
@@ -92,6 +94,29 @@ public class ReviewController {
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.UPDATED,
                 service.updateServiceReview(actor.userId(), reviewId, request),
+                httpRequest));
+    }
+
+    @DeleteMapping("/service-reviews/{reviewId}")
+    public ResponseEntity<Void> deleteServiceReview(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID reviewId) {
+        ActorContext actor = resolvePersonal(jwt, rawOrgId);
+        service.deleteServiceReview(actor.userId(), reviewId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/service-reviews/by-booking/{bookingId}")
+    public ResponseEntity<ApiResponse<ReviewResponse>> getServiceReviewByBooking(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID bookingId,
+            HttpServletRequest httpRequest) {
+        ActorContext actor = resolvePersonal(jwt, rawOrgId);
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.RETRIEVED,
+                service.getServiceReviewByBooking(actor.userId(), bookingId),
                 httpRequest));
     }
 
@@ -115,10 +140,11 @@ public class ReviewController {
             @Valid @RequestBody CreateProductReviewRequest request,
             HttpServletRequest httpRequest) {
         ActorContext actor = resolvePersonal(jwt, rawOrgId);
+        String authorName = SupabaseJwtConverterSupport.extractDisplayName(jwt);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(
                         ApiMessages.CREATED,
-                        service.createProductReview(actor.userId(), productId, request),
+                        service.createProductReview(actor.userId(), authorName, productId, request),
                         httpRequest));
     }
 

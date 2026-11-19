@@ -1,6 +1,5 @@
 package com.homecare.review.config;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -12,6 +11,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import com.homecare.common.config.HomecareSecurityProperties;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.servlet.BaseApiExceptionHandler;
 import com.homecare.common.web.servlet.GatewayOriginFilter;
@@ -33,11 +33,11 @@ public class ReviewSecurityConfig {
     }
 
     @Bean
-    public GatewayOriginFilter gatewayOriginFilter(
-            @Value("${homecare.security.enforce-gateway:false}") boolean enforceGateway,
-            @Value("${homecare.security.internal-gateway-secret:homecare-internal-secret-2026}") String gatewaySecret,
-            @Value("${homecare.internal.workload-token:change_me_internal_workload_token}") String workloadToken) {
-        return new GatewayOriginFilter(enforceGateway, gatewaySecret, workloadToken);
+    public GatewayOriginFilter gatewayOriginFilter(HomecareSecurityProperties securityProperties) {
+        return new GatewayOriginFilter(
+                securityProperties.getSecurity().isEnforceGateway(),
+                securityProperties.getSecurity().getInternalGatewaySecret(),
+                securityProperties.getInternal().getWorkloadToken());
     }
 
     @Bean

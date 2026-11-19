@@ -68,10 +68,10 @@ class ReviewDomainServiceTest {
 
         UUID provider = UUID.randomUUID();
         UUID b1 = UUID.randomUUID(), b2 = UUID.randomUUID();
-        when(verificationClient.verifyBookingEligible(b1, "u1")).thenReturn(new com.homecare.review.client.EvidenceVerificationClient.BookingEligibility(true, provider));
-        when(verificationClient.verifyBookingEligible(b2, "u2")).thenReturn(new com.homecare.review.client.EvidenceVerificationClient.BookingEligibility(true, provider));
-        service.createServiceReview("u1", new com.homecare.review.dto.ReviewDtos.CreateServiceReviewRequest(b1, provider, 5, "S1"));
-        service.createServiceReview("u2", new com.homecare.review.dto.ReviewDtos.CreateServiceReviewRequest(b2, provider, 4, "S2"));
+        when(verificationClient.verifyBookingEligible(b1, "u1")).thenReturn(new BookingEligibility(true, provider));
+        when(verificationClient.verifyBookingEligible(b2, "u2")).thenReturn(new BookingEligibility(true, provider));
+        service.createServiceReview("u1", new CreateServiceReviewRequest(b1, provider, 5, "S1"));
+        service.createServiceReview("u2", new CreateServiceReviewRequest(b2, provider, 4, "S2"));
         var provPage = service.providerReviewsPage(provider, 1, 1);
         assertThat(provPage.items()).hasSize(1);
         assertThat(provPage.pagination().totalItems()).isEqualTo(2);
@@ -173,5 +173,37 @@ class ReviewDomainServiceTest {
                         .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject("user-2")))
                         .contentType("application/json").content("{\"rating\":4}"))
                 .andExpect(MockMvcResultMatchers.status().isForbidden());
+
+        // Service review delete parity: soft-delete, by-booking lookup, cross-user 403, re-create reuse
+        UUID svcBookingId = UUID.randomUUID();
+        UUID providerId = UUID.randomUUID();
+        when(verificationClient.verifyBookingEligible(svcBookingId, "user-1"))
+                .thenReturn(new BookingEligibility(true, providerId));
+        ReviewResponse createdSvc = service.createServiceReview(
+                "user-1", new CreateServiceReviewRequest(svcBookingId, providerId, 5, "Tot"));
+        assertThat(service.getServiceReviewByBooking("user-1", svcBookingId).id()).isEqualTo(createdSvc.id());
+
+        assertThatThrownBy(() -> service.deleteServiceReview("other-user", createdSvc.id()))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
+
+        mvc.perform(MockMvcRequestBuilders.delete("/api/v1/service-reviews/" + createdSvc.id())
+                        .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject("user-1"))))
+                .andExpect(MockMvcResultMatchers.status().isNoContent());
+
+        assertThatThrownBy(() -> service.getServiceReviewByBooking("user-1", svcBookingId))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("REVIEW_NOT_FOUND");
+        assertThatThrownBy(() -> service.updateServiceReview("user-1", createdSvc.id(), new UpdateReviewRequest(3, "Edit")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("REVIEW_NOT_FOUND");
+
+        ReviewResponse recreatedSvc = service.createServiceReview(
+                "user-1", new CreateServiceReviewRequest(svcBookingId, providerId, 4, "Danh gia lai"));
+        assertThat(recreatedSvc.id()).isEqualTo(createdSvc.id());
+        assertThat(recreatedSvc.status()).isEqualTo("PUBLISHED");
     }
 }

@@ -46,7 +46,7 @@ class AdminOrganizationControllerSecurityTest {
                 "sub", "reviewer-1",
                 "permissions", List.of(RbacConstants.PERM_ORGANIZATION_REVIEW)));
 
-        var response = adminOrganizationController.listOrganizations(null, request);
+        var response = adminOrganizationController.listOrganizations(null, 1, 20, request);
         assertThat(response.getStatusCode().value()).isEqualTo(200);
     }
 
@@ -59,7 +59,7 @@ class AdminOrganizationControllerSecurityTest {
                 "sub", "admin-1",
                 "user_roles", List.of(RbacConstants.ROLE_ADMIN)));
 
-        var response = adminOrganizationController.listOrganizations(null, request);
+        var response = adminOrganizationController.listOrganizations(null, 1, 20, request);
         assertThat(response.getStatusCode().value()).isEqualTo(200);
     }
 
@@ -69,7 +69,7 @@ class AdminOrganizationControllerSecurityTest {
                 "sub", "customer-1",
                 "user_roles", List.of(RbacConstants.ROLE_CUSTOMER)));
 
-        assertThatThrownBy(() -> adminOrganizationController.listOrganizations(null, new MockHttpServletRequest()))
+        assertThatThrownBy(() -> adminOrganizationController.listOrganizations(null, 1, 20, new MockHttpServletRequest()))
                 .isInstanceOf(AccessDeniedException.class);
     }
 

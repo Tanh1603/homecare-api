@@ -18,10 +18,13 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @RequiredArgsConstructor
@@ -29,9 +32,16 @@ public class ReviewDomainService {
 
     private final ReviewRepository reviewRepository;
     private final EvidenceVerificationClient verificationClient;
+    private final PlatformTransactionManager transactionManager;
 
     public ReviewResponse createServiceReview(String authorProfileId, CreateServiceReviewRequest request) {
-        if (reviewRepository.findBySourceId(request.bookingId()).isPresent()) {
+        return createServiceReview(authorProfileId, null, request);
+    }
+
+    public ReviewResponse createServiceReview(
+            String authorProfileId, String authorName, CreateServiceReviewRequest request) {
+        var preExisting = reviewRepository.findBySourceId(request.bookingId());
+        if (preExisting.isPresent() && !"DELETED".equals(preExisting.get().getStatus())) {
             throw new DomainException(ReviewErrorCode.REVIEW_ALREADY_EXISTS);
         }
         BookingEligibility eligibility = verificationClient.verifyBookingEligible(
@@ -44,28 +54,30 @@ public class ReviewDomainService {
                     "providerId does not match booking provider.");
         }
         UUID providerId = eligibility.providerId();
-        Instant now = Instant.now();
-        ReviewEntity saved = reviewRepository.save(ReviewEntity.builder()
-                .id(UUID.randomUUID())
-                .authorProfileId(authorProfileId)
-                .targetType("SERVICE_BOOKING")
-                .sourceId(request.bookingId())
-                .targetId(providerId)
-                .rating(request.rating())
-                .comment(request.comment().trim())
-                .status(EntityStatus.PUBLISHED.name())
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-        return toResponse(saved);
+        return saveOrReuseReviewInTx(
+                request.bookingId(),
+                "SERVICE_BOOKING",
+                providerId,
+                authorProfileId,
+                authorName,
+                request.rating(),
+                request.comment());
     }
 
     public ReviewResponse createProductReview(
             String authorProfileId,
             UUID productId,
             CreateProductReviewRequest request) {
-        var existing = reviewRepository.findBySourceId(request.orderLineId());
-        if (existing.isPresent() && !"DELETED".equals(existing.get().getStatus())) {
+        return createProductReview(authorProfileId, null, productId, request);
+    }
+
+    public ReviewResponse createProductReview(
+            String authorProfileId,
+            String authorName,
+            UUID productId,
+            CreateProductReviewRequest request) {
+        var preExisting = reviewRepository.findBySourceId(request.orderLineId());
+        if (preExisting.isPresent() && !"DELETED".equals(preExisting.get().getStatus())) {
             throw new DomainException(ReviewErrorCode.REVIEW_ALREADY_EXISTS);
         }
         OrderLineEligibility eligibility = verificationClient.verifyOrderLineEligibility(
@@ -77,21 +89,66 @@ public class ReviewDomainService {
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
                     "productId does not match order line product.");
         }
-        Instant now = Instant.now();
-        // source_id is unique, so a soft-deleted review row is reused instead of inserting a new one.
-        ReviewEntity review = existing.orElseGet(() -> ReviewEntity.builder()
-                .id(UUID.randomUUID())
-                .targetType("PRODUCT_ORDER_LINE")
-                .sourceId(request.orderLineId())
-                .createdAt(now)
-                .build());
-        review.setAuthorProfileId(authorProfileId);
-        review.setTargetId(productId);
-        review.setRating(request.rating());
-        review.setComment(request.comment().trim());
-        review.setStatus(EntityStatus.PUBLISHED.name());
-        review.setUpdatedAt(now);
-        return toResponse(reviewRepository.save(review));
+        return saveOrReuseReviewInTx(
+                request.orderLineId(),
+                "PRODUCT_ORDER_LINE",
+                productId,
+                authorProfileId,
+                authorName,
+                request.rating(),
+                request.comment());
+    }
+
+    private ReviewResponse saveOrReuseReviewInTx(
+            UUID sourceId,
+            String targetType,
+            UUID targetId,
+            String authorProfileId,
+            String authorName,
+            int rating,
+            String comment) {
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        try {
+            return tx.execute(status -> {
+                var existing = reviewRepository.findBySourceId(sourceId);
+                if (existing.isPresent() && !"DELETED".equals(existing.get().getStatus())) {
+                    throw new DomainException(ReviewErrorCode.REVIEW_ALREADY_EXISTS);
+                }
+                Instant now = Instant.now();
+                ReviewEntity review = existing.orElseGet(() -> ReviewEntity.builder()
+                        .id(UUID.randomUUID())
+                        .targetType(targetType)
+                        .sourceId(sourceId)
+                        .createdAt(now)
+                        .build());
+                review.setAuthorProfileId(authorProfileId);
+                review.setAuthorName(authorName);
+                review.setTargetId(targetId);
+                review.setRating(rating);
+                review.setComment(comment.trim());
+                review.setStatus(EntityStatus.PUBLISHED.name());
+                review.setUpdatedAt(now);
+                return toResponse(reviewRepository.saveAndFlush(review));
+            });
+        } catch (DataIntegrityViolationException ex) {
+            throw new DomainException(ReviewErrorCode.REVIEW_ALREADY_EXISTS);
+        }
+    }
+
+    private ReviewEntity requireServiceReview(String authorProfileId, UUID reviewId) {
+        ReviewEntity r = reviewRepository.findById(reviewId)
+                .orElseThrow(() -> new DomainException(ReviewErrorCode.REVIEW_NOT_FOUND));
+        if (!"SERVICE_BOOKING".equalsIgnoreCase(r.getTargetType())) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Cannot update non-service review via service review endpoint.");
+        }
+        if (!"PUBLISHED".equals(r.getStatus())) {
+            throw new DomainException(ReviewErrorCode.REVIEW_NOT_FOUND);
+        }
+        if (!r.getAuthorProfileId().equals(authorProfileId)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        return r;
     }
 
     @Transactional
@@ -99,15 +156,7 @@ public class ReviewDomainService {
             String authorProfileId,
             UUID reviewId,
             UpdateReviewRequest request) {
-        ReviewEntity r = reviewRepository.findById(reviewId)
-                .orElseThrow(() -> new DomainException(ReviewErrorCode.REVIEW_NOT_FOUND));
-        if (!"SERVICE_BOOKING".equalsIgnoreCase(r.getTargetType())) {
-            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
-                    "Cannot update non-service review via service review endpoint.");
-        }
-        if (!r.getAuthorProfileId().equals(authorProfileId)) {
-            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
-        }
+        ReviewEntity r = requireServiceReview(authorProfileId, reviewId);
         if (request.rating() != null) {
             r.setRating(request.rating());
         }
@@ -116,6 +165,24 @@ public class ReviewDomainService {
         }
         r.setUpdatedAt(Instant.now());
         return toResponse(reviewRepository.save(r));
+    }
+
+    @Transactional
+    public void deleteServiceReview(String authorProfileId, UUID reviewId) {
+        ReviewEntity r = requireServiceReview(authorProfileId, reviewId);
+        r.setStatus("DELETED");
+        r.setUpdatedAt(Instant.now());
+        reviewRepository.save(r);
+    }
+
+    @Transactional(readOnly = true)
+    public ReviewResponse getServiceReviewByBooking(String authorProfileId, UUID bookingId) {
+        return reviewRepository.findBySourceId(bookingId)
+                .filter(r -> "SERVICE_BOOKING".equalsIgnoreCase(r.getTargetType())
+                        && "PUBLISHED".equals(r.getStatus())
+                        && authorProfileId.equals(r.getAuthorProfileId()))
+                .map(this::toResponse)
+                .orElseThrow(() -> new DomainException(ReviewErrorCode.REVIEW_NOT_FOUND));
     }
 
     @Transactional(readOnly = true)
@@ -129,9 +196,7 @@ public class ReviewDomainService {
     }
 
     private PageResponse<ReviewResponse> reviewsPage(String targetType, UUID targetId, int page, int size) {
-        if (page < 1 || size < 1 || size > 100) {
-            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
-        }
+        PageResponse.validate(page, size);
         var pageable = PageRequest.of(page - 1, size, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by("id")));
         var result = reviewRepository.findByTargetTypeAndTargetIdAndStatusOrderByCreatedAtDesc(
                 targetType, targetId, EntityStatus.PUBLISHED.name(), pageable);
@@ -142,6 +207,7 @@ public class ReviewDomainService {
         return new ReviewResponse(
                 r.getId(),
                 r.getAuthorProfileId(),
+                r.getAuthorName(),
                 r.getTargetType(),
                 r.getSourceId(),
                 r.getTargetId(),

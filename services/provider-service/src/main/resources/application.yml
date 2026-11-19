@@ -43,6 +43,9 @@ spring:
             resourceserver:
                 jwt:
                     jwk-set-uri: ${SUPABASE_JWKS_URI:https://placeholder.supabase.co/auth/v1/.well-known/jwks.json}
+                    jws-algorithms:
+                        - ES256
+                        - RS256
 
 homecare:
     internal:
@@ -57,6 +60,10 @@ supabase:
     url: ${SUPABASE_URL:https://placeholder.supabase.co}
     secret-key: ${SUPABASE_SECRET_KEY:placeholder-secret-key}
     organization-role-id: ${SUPABASE_ORGANIZATION_ROLE_ID:00000000-0000-0000-0001-000000000002}
+
+app:
+    auth:
+        user-blacklist-ttl: ${USER_BLACKLIST_TTL:PT24H}
 
 springdoc:
     api-docs:

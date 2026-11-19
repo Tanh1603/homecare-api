@@ -13,11 +13,18 @@ public interface ServiceOfferingRepository extends JpaRepository<ServiceOffering
     @Query("""
         select s from ServiceOffering s where s.active = true
         and exists (select 1 from ProviderEntity p where p.id = s.providerId and p.status = 'ACTIVE')
-        and (:category is null or lower(s.category) = lower(:category))
+        and (:category is null or lower(s.category) = lower(cast(:category as string)))
         and (:providerId is null or s.providerId = :providerId)
-        and (:q is null or lower(s.name) like lower(concat('%', :q, '%')))
+        and (:q is null or lower(s.name) like lower(concat('%', cast(:q as string), '%')))
         """)
     Page<ServiceOffering> search(String category, UUID providerId, String q, Pageable pageable);
+
+    @Query("""
+        select s from ServiceOffering s where (:category is null or lower(s.category) = lower(cast(:category as string)))
+        and (:providerId is null or s.providerId = :providerId)
+        and (:q is null or lower(s.name) like lower(concat('%', cast(:q as string), '%')))
+        """)
+    Page<ServiceOffering> searchIncludingInactive(String category, UUID providerId, String q, Pageable pageable);
     List<ServiceOffering> findByActiveTrueOrderByCreatedAtDesc();
     List<ServiceOffering> findByProviderIdAndActiveTrue(UUID providerId);
 }

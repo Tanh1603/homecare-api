@@ -188,14 +188,14 @@ class ProviderPortalTest {
             mvc.perform(get("/api/v1/technicians/" + ProviderDataInitializer.DEMO_TECH_ID + "/schedules")
                     .with(jwt().jwt(j -> j.subject("other-customer"))))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.data[?(@.id=='" + booked.getId() + "')].allocatedBookingId")
+                    .andExpect(jsonPath("$.data.items[?(@.id=='" + booked.getId() + "')].allocatedBookingId")
                             .value(Matchers.hasItem(Matchers.nullValue())));
 
             // Admin sees allocatedBookingId
             mvc.perform(get("/api/v1/technicians/" + ProviderDataInitializer.DEMO_TECH_ID + "/schedules")
                     .with(adminAuth))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.data[?(@.id=='" + booked.getId() + "')].allocatedBookingId")
+                    .andExpect(jsonPath("$.data.items[?(@.id=='" + booked.getId() + "')].allocatedBookingId")
                             .value(Matchers.hasItem(allocatedBookingId.toString())));
         } finally {
             scheduleWindowRepository.deleteById(booked.getId());

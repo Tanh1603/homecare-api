@@ -150,9 +150,7 @@ public class NotificationInboxService {
 
     @Transactional(readOnly = true)
     public PageResponse<NotificationResponse> inboxPage(String recipientId, int page, int size) {
-        if (page < 1 || size < 1 || size > 100) {
-            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
-        }
+        PageResponse.validate(page, size);
         var pageable = PageRequest.of(page - 1, size, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by("id")));
         var result = notificationRepository.findByRecipientIdOrderByCreatedAtDesc(recipientId, pageable);
         return PageResponse.of(result.map(this::toResponse).getContent(), page, size, result.getTotalElements());

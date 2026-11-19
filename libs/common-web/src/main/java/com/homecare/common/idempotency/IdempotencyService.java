@@ -5,8 +5,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,7 +31,7 @@ public class IdempotencyService {
     }
 
     public IdempotencyService(Duration ttl, int maxEntries) {
-        this.ttl = java.util.Objects.requireNonNull(ttl, "ttl must not be null");
+        this.ttl = Objects.requireNonNull(ttl, "ttl must not be null");
         this.maxEntries = Math.max(1, maxEntries);
     }
 
@@ -112,7 +114,7 @@ public class IdempotencyService {
         }
         store.entrySet().stream()
                 .filter(e -> !e.getKey().equals(protectedKey))
-                .sorted(java.util.Comparator.comparing(e -> e.getValue().expiresAt()))
+                .sorted(Comparator.comparing(e -> e.getValue().expiresAt()))
                 .limit(excess)
                 .toList()
                 .forEach(e -> store.remove(e.getKey(), e.getValue()));

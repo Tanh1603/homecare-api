@@ -29,6 +29,9 @@ public class OrderEntity {
     @Column(name = "buyer_profile_id", nullable = false, length = 255)
     private String buyerProfileId;
 
+    @Column(name = "buyer_name", length = 255)
+    private String buyerName;
+
     @Column(name = "merchant_id", nullable = false)
     private UUID merchantId;
 

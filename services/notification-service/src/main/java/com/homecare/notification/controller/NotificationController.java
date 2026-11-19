@@ -44,7 +44,7 @@ public class NotificationController {
     private final ServletApiResponseFactory responseFactory;
 
     @GetMapping("/notifications/unread-count")
-    public ResponseEntity<?> unreadCount(
+    public ResponseEntity<ApiResponse<Map<String, Long>>> unreadCount(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             HttpServletRequest request) {
@@ -53,7 +53,7 @@ public class NotificationController {
     }
 
     @PostMapping("/notifications/read-all")
-    public ResponseEntity<?> readAll(
+    public ResponseEntity<ApiResponse<Map<String, Integer>>> readAll(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             HttpServletRequest request) {

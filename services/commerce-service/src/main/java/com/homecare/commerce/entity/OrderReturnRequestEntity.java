@@ -6,6 +6,7 @@ import java.util.UUID;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import lombok.AllArgsConstructor;
@@ -15,7 +16,11 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "order_return_requests")
+@Table(
+        name = "order_return_requests",
+        indexes = @Index(
+                name = "idx_order_return_org_status_created",
+                columnList = "organization_id, status, created_at"))
 @Getter
 @Setter
 @Builder
@@ -41,6 +46,9 @@ public class OrderReturnRequestEntity {
     @Column(name = "buyer_profile_id", nullable = false)
     private String buyerProfileId;
 
+    @Column(name = "buyer_name", length = 255)
+    private String buyerName;
+
     @Column(name = "organization_id", nullable = false)
     private UUID organizationId;
 
@@ -64,6 +72,10 @@ public class OrderReturnRequestEntity {
 
     @Column(name = "resolved_at")
     private Instant resolvedAt;
+
+    @Builder.Default
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean restocked = false;
 
     @Version
     @Builder.Default

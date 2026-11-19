@@ -15,12 +15,15 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.homecare.common.security.RbacConstants;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
+import com.homecare.common.web.EtagSupport;
+import com.homecare.common.web.PageResponse;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import com.homecare.provider.organization.dto.OrganizationDtos.AddMemberRequest;
 import com.homecare.provider.organization.dto.OrganizationDtos.MyOrganizationMembershipResponse;
@@ -28,6 +31,9 @@ import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationMembe
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.RegisterOrganizationRequest;
 import com.homecare.provider.organization.dto.OrganizationDtos.UpdateMemberRoleRequest;
+import com.homecare.provider.organization.dto.OrganizationDtos.UpdateOrganizationRequest;
+import org.springframework.http.HttpHeaders;
+import org.springframework.web.bind.annotation.RequestHeader;
 import com.homecare.provider.organization.entity.OrgRole;
 import com.homecare.provider.organization.security.OrgContext;
 import com.homecare.provider.organization.security.RequireOrgRole;
@@ -57,11 +63,16 @@ public class OrganizationController {
     }
 
     @GetMapping("/my")
-    public ResponseEntity<ApiResponse<List<MyOrganizationMembershipResponse>>> listMyOrganizations(
+    public ResponseEntity<ApiResponse<PageResponse<MyOrganizationMembershipResponse>>> listMyOrganizations(
             @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
-        List<MyOrganizationMembershipResponse> list = organizationService.listMyOrganizations(jwt.getSubject());
-        return ResponseEntity.ok(responseFactory.ok(ApiMessages.RETRIEVED, list, httpRequest));
+        PageResponse.validate(page, size);
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.RETRIEVED,
+                organizationService.listMyOrganizationsPage(jwt.getSubject(), page, size),
+                httpRequest));
     }
 
     @GetMapping("/{id}")
@@ -75,12 +86,31 @@ public class OrganizationController {
         return ResponseEntity.ok(responseFactory.ok(ApiMessages.RETRIEVED, detail, httpRequest));
     }
 
-    @GetMapping("/current/members")
-    @RequireOrgRole({ OrgRole.ORG_OWNER, OrgRole.ORG_ADMIN, OrgRole.ORG_STAFF })
-    public ResponseEntity<ApiResponse<List<OrganizationMemberResponse>>> listCurrentOrgMembers(
+    @PatchMapping("/current")
+    @RequireOrgRole({ OrgRole.ORG_OWNER, OrgRole.ORG_ADMIN })
+    public ResponseEntity<ApiResponse<OrganizationResponse>> updateCurrentOrganization(
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @Valid @RequestBody UpdateOrganizationRequest request,
             HttpServletRequest httpRequest) {
         UUID orgId = OrgContext.get().organizationId();
-        return ResponseEntity.ok(responseFactory.ok(ApiMessages.RETRIEVED, organizationService.listMembers(orgId), httpRequest));
+        OrganizationResponse updated = organizationService.updateCurrentOrganization(orgId, ifMatch, request);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    @GetMapping("/current/members")
+    @RequireOrgRole({ OrgRole.ORG_OWNER, OrgRole.ORG_ADMIN, OrgRole.ORG_STAFF })
+    public ResponseEntity<ApiResponse<PageResponse<OrganizationMemberResponse>>> listCurrentOrgMembers(
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
+            HttpServletRequest httpRequest) {
+        PageResponse.validate(page, size);
+        UUID orgId = OrgContext.get().organizationId();
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.RETRIEVED,
+                organizationService.listMembersPage(orgId, page, size),
+                httpRequest));
     }
 
     @PostMapping("/current/members")

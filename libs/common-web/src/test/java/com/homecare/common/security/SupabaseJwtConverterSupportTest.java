@@ -140,5 +140,17 @@ class SupabaseJwtConverterSupportTest {
         assertThat(SupabaseJwtConverterSupport.extractRoles(bannedJwt)).isEmpty();
         assertThatThrownBy(() -> converter.convert(bannedJwt))
                 .isInstanceOf(InvalidBearerTokenException.class);
+
+        Jwt dualClaimJwt = new Jwt(
+                "dual-claim",
+                Instant.now(),
+                Instant.now().plusSeconds(3600),
+                Map.of("alg", "HS256"),
+                Map.of("sub", "u-dual", "user_status", "ACTIVE",
+                        "app_metadata", Map.of("user_status", "SUSPENDED"),
+                        "user_roles", List.of("CUSTOMER")));
+        assertThat(SupabaseJwtConverterSupport.isUserStatusBlocked(dualClaimJwt)).isTrue();
+        assertThatThrownBy(() -> converter.convert(dualClaimJwt))
+                .isInstanceOf(InvalidBearerTokenException.class);
     }
 }

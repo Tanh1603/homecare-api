@@ -36,15 +36,25 @@ public final class SupabaseJwtConverterSupport {
         if (jwt == null) {
             return false;
         }
-        String status = jwt.getClaimAsString("user_status");
-        if (status == null || status.isBlank()) {
-            Object appMetadata = jwt.getClaim("app_metadata");
-            if (appMetadata instanceof Map<?, ?> map && map.get("user_status") != null) {
-                status = map.get("user_status").toString();
-            }
+        if (isBlockedStatusValue(jwt.getClaimAsString("user_status"))) {
+            return true;
         }
-        return status != null
-                && ("SUSPENDED".equalsIgnoreCase(status.trim()) || "BANNED".equalsIgnoreCase(status.trim()));
+        Object appMetadata = jwt.getClaim("app_metadata");
+        if (appMetadata instanceof Map<?, ?> map && map.get("user_status") != null) {
+            return isBlockedStatusValue(map.get("user_status").toString());
+        }
+        return false;
+    }
+
+    private static boolean isBlockedStatusValue(String status) {
+        if (status == null || status.isBlank()) {
+            return false;
+        }
+        String normalized = status.trim().toUpperCase();
+        return "SUSPENDED".equals(normalized)
+                || "BANNED".equals(normalized)
+                || "DISABLED".equals(normalized)
+                || "INACTIVE".equals(normalized);
     }
 
     public static List<GrantedAuthority> extractAuthorities(Jwt jwt) {
@@ -125,6 +135,28 @@ public final class SupabaseJwtConverterSupport {
 
     public static boolean hasAnyRoleOrPermission(Jwt jwt, String[] targetRoles, String... targetPermissions) {
         return hasAnyRole(jwt, targetRoles) || hasAnyPermission(jwt, targetPermissions);
+    }
+
+    public static String extractDisplayName(Jwt jwt) {
+        if (jwt == null) {
+            return null;
+        }
+        Object userMeta = jwt.getClaim("user_metadata");
+        if (userMeta instanceof Map<?, ?> map) {
+            for (String key : List.of("full_name", "name")) {
+                Object val = map.get(key);
+                if (val != null && !val.toString().isBlank()) {
+                    return val.toString().trim();
+                }
+            }
+        }
+        for (String claim : List.of("name", "email")) {
+            String val = jwt.getClaimAsString(claim);
+            if (val != null && !val.isBlank()) {
+                return val.trim();
+            }
+        }
+        return null;
     }
 
     private static void extractStringsFromClaim(Object claim, Set<String> accumulator) {

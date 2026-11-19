@@ -2,12 +2,12 @@ package com.homecare.household.grpc;
 
 import java.util.UUID;
 
-import com.homecare.household.dto.HouseholdDtos.VerifyDeviceReferenceResponse;
-import com.homecare.household.dto.HouseholdDtos.VerifyWarrantyResponse;
 import com.homecare.household.service.HouseholdDomainService;
 import com.homecare.household.v1.HouseholdVerificationServiceGrpc;
 import com.homecare.household.v1.VerifyDeviceReferenceRequest;
+import com.homecare.household.v1.VerifyDeviceReferenceResponse;
 import com.homecare.household.v1.VerifyWarrantyRequest;
+import com.homecare.household.v1.VerifyWarrantyResponse;
 
 import io.grpc.stub.StreamObserver;
 import lombok.RequiredArgsConstructor;
@@ -22,14 +22,13 @@ public class HouseholdVerificationGrpcService extends HouseholdVerificationServi
     @Override
     public void verifyDeviceReference(
             VerifyDeviceReferenceRequest request,
-            StreamObserver<com.homecare.household.v1.VerifyDeviceReferenceResponse> responseObserver) {
+            StreamObserver<VerifyDeviceReferenceResponse> responseObserver) {
         try {
             UUID deviceId = UUID.fromString(request.getDeviceId());
-            VerifyDeviceReferenceResponse res = domainService.verifyDeviceReference(
-                    deviceId, request.getRequesterProfileId());
+            var res = domainService.verifyDeviceReference(deviceId, request.getRequesterProfileId());
 
-            com.homecare.household.v1.VerifyDeviceReferenceResponse response =
-                    com.homecare.household.v1.VerifyDeviceReferenceResponse.newBuilder()
+            VerifyDeviceReferenceResponse response =
+                    VerifyDeviceReferenceResponse.newBuilder()
                             .setValid(res.valid())
                             .setDeviceId(res.deviceId() != null ? res.deviceId().toString() : request.getDeviceId())
                             .setHouseholdId(res.householdId() != null ? res.householdId().toString() : "")
@@ -41,8 +40,8 @@ public class HouseholdVerificationGrpcService extends HouseholdVerificationServi
             responseObserver.onNext(response);
             responseObserver.onCompleted();
         } catch (Exception e) {
-            com.homecare.household.v1.VerifyDeviceReferenceResponse response =
-                    com.homecare.household.v1.VerifyDeviceReferenceResponse.newBuilder()
+            VerifyDeviceReferenceResponse response =
+                    VerifyDeviceReferenceResponse.newBuilder()
                             .setValid(false)
                             .setDeviceId(request.getDeviceId())
                             .setStatus("INVALID_OR_NOT_FOUND")
@@ -55,14 +54,13 @@ public class HouseholdVerificationGrpcService extends HouseholdVerificationServi
     @Override
     public void verifyWarranty(
             VerifyWarrantyRequest request,
-            StreamObserver<com.homecare.household.v1.VerifyWarrantyResponse> responseObserver) {
+            StreamObserver<VerifyWarrantyResponse> responseObserver) {
         try {
             UUID warrantyId = UUID.fromString(request.getWarrantyId());
-            VerifyWarrantyResponse res = domainService.verifyWarrantyEligibility(
-                    warrantyId, request.getRequesterProfileId());
+            var res = domainService.verifyWarrantyEligibility(warrantyId, request.getRequesterProfileId());
 
-            com.homecare.household.v1.VerifyWarrantyResponse response =
-                    com.homecare.household.v1.VerifyWarrantyResponse.newBuilder()
+            VerifyWarrantyResponse response =
+                    VerifyWarrantyResponse.newBuilder()
                             .setValid(res.valid())
                             .setExpired(res.expired())
                             .setWarrantyId(res.warrantyId() != null ? res.warrantyId().toString() : request.getWarrantyId())
@@ -77,8 +75,8 @@ public class HouseholdVerificationGrpcService extends HouseholdVerificationServi
             responseObserver.onNext(response);
             responseObserver.onCompleted();
         } catch (Exception e) {
-            com.homecare.household.v1.VerifyWarrantyResponse response =
-                    com.homecare.household.v1.VerifyWarrantyResponse.newBuilder()
+            VerifyWarrantyResponse response =
+                    VerifyWarrantyResponse.newBuilder()
                             .setValid(false)
                             .setExpired(false)
                             .setWarrantyId(request.getWarrantyId())

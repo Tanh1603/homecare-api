@@ -28,6 +28,9 @@ public class ReviewEntity {
     @Column(name = "author_profile_id", nullable = false, length = 255)
     private String authorProfileId;
 
+    @Column(name = "author_name", length = 255)
+    private String authorName;
+
     @Column(name = "target_type", nullable = false)
     private String targetType;
 

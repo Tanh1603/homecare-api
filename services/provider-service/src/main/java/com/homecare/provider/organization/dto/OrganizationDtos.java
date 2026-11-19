@@ -9,6 +9,8 @@ import com.homecare.provider.organization.entity.OrganizationType;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 public final class OrganizationDtos {
 
@@ -23,6 +25,14 @@ public final class OrganizationDtos {
             @NotBlank String city,
             String address,
             String description) {
+    }
+
+    public record UpdateOrganizationRequest(
+            @Pattern(regexp = ".*\\S.*", message = "name must not be blank") @Size(max = 255) String name,
+            @Pattern(regexp = ".*\\S.*", message = "phone must not be blank") @Size(max = 50) String phone,
+            @Pattern(regexp = ".*\\S.*", message = "city must not be blank") @Size(max = 120) String city,
+            @Size(max = 500) String address,
+            @Size(max = 1500) String description) {
     }
 
     public record OrganizationResponse(
@@ -66,9 +76,14 @@ public final class OrganizationDtos {
             UUID id,
             UUID organizationId,
             String userId,
+            String fullName,
+            String email,
             OrgRole role,
             String status,
             Instant joinedAt) {
+        public OrganizationMemberResponse(UUID id, UUID organizationId, String userId, OrgRole role, String status, Instant joinedAt) {
+            this(id, organizationId, userId, null, null, role, status, joinedAt);
+        }
     }
 
     public record RejectOrganizationRequest(

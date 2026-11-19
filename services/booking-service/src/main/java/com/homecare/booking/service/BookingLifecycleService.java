@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,12 +24,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 import com.homecare.booking.client.HouseholdVerificationClient;
 import com.homecare.booking.client.HouseholdVerificationClient.WarrantyVerificationResult;
 import com.homecare.booking.client.ProviderGrpcClientAdapter;
+import com.homecare.booking.dto.BookingDtos.ApproveExtraCostRequest;
 import com.homecare.booking.dto.BookingDtos.BookingHistoryResponse;
 import com.homecare.booking.dto.BookingDtos.BookingResponse;
 import com.homecare.booking.dto.BookingDtos.CancelBookingRequest;
 import com.homecare.booking.dto.BookingDtos.CreateBookingRequest;
 import com.homecare.booking.dto.BookingDtos.CreateWorkUpdateRequest;
 import com.homecare.booking.dto.BookingDtos.VerifyBookingReviewEligibilityResponse;
+import com.homecare.booking.dto.BookingDtos.WorkEvidenceResponse;
 import com.homecare.booking.dto.BookingDtos.WorkUpdateResponse;
 import com.homecare.booking.entity.AssignmentAttemptEntity;
 import com.homecare.booking.entity.BookingAllocationSagaEntity;
@@ -36,6 +39,7 @@ import com.homecare.booking.entity.BookingEntity;
 import com.homecare.booking.entity.BookingStatus;
 import com.homecare.booking.entity.BookingHistoryEntry;
 import com.homecare.booking.entity.BookingOutboxEventEntity;
+import com.homecare.booking.entity.WorkEvidenceEntity;
 import com.homecare.booking.entity.WorkUpdateEntity;
 import com.homecare.booking.exception.BookingErrorCode;
 import com.homecare.booking.repository.AssignmentAttemptRepository;
@@ -43,6 +47,7 @@ import com.homecare.booking.repository.BookingAllocationSagaRepository;
 import com.homecare.booking.repository.BookingHistoryRepository;
 import com.homecare.booking.repository.BookingOutboxEventRepository;
 import com.homecare.booking.repository.BookingRepository;
+import com.homecare.booking.repository.WorkEvidenceRepository;
 import com.homecare.booking.repository.WorkUpdateRepository;
 import com.homecare.booking.security.BookingAccessPolicy;
 import com.homecare.booking.security.BookingReadScope;
@@ -71,6 +76,8 @@ public class BookingLifecycleService {
     private final BookingRepository bookingRepository;
     private final BookingHistoryRepository historyRepository;
     private final WorkUpdateRepository workUpdateRepository;
+    private final WorkEvidenceRepository workEvidenceRepository;
+    private final WorkEvidenceStoragePort workEvidenceStorage;
     private final BookingAllocationSagaRepository sagaRepository;
     private final AssignmentAttemptRepository attemptRepository;
     private final BookingOutboxEventRepository outboxEventRepository;
@@ -82,6 +89,10 @@ public class BookingLifecycleService {
 
     // Never add @Transactional here: DB locks and connections must NOT be held across gRPC calls.
     public BookingResponse createBooking(String requesterProfileId, CreateBookingRequest request) {
+        return createBooking(requesterProfileId, null, request);
+    }
+
+    public BookingResponse createBooking(String requesterProfileId, String requesterName, CreateBookingRequest request) {
         Instant now = Instant.now();
         Instant preferredStart = request.preferredStart() != null
                 ? request.preferredStart()
@@ -189,6 +200,7 @@ public class BookingLifecycleService {
             bookingRepository.saveAndFlush(BookingEntity.builder()
                     .id(bookingId)
                     .requesterProfileId(requesterProfileId)
+                    .requesterName(requesterName)
                     .serviceId(request.serviceId())
                     .serviceName(serviceName)
                     .providerId(providerId)
@@ -271,7 +283,7 @@ public class BookingLifecycleService {
                     saga.setCompensationReason("Ambiguous gRPC timeout/error; queued for reconciliation");
                     saga.setUpdatedAt(finishTime);
                     sagaRepository.save(saga);
-                    publishDomainEvent("booking.requested.v1", booking);
+                    publishDomainEvent(DomainEventContracts.BOOKING_REQUESTED, booking);
                     return toBookingResponse(booking);
                 }
 
@@ -285,6 +297,7 @@ public class BookingLifecycleService {
                     UUID actualProviderId = parseUuidOrNull(finalAlloc.getProviderId());
                     booking.setStatus("ASSIGNED");
                     booking.setAllocationStatus("ALLOCATED");
+                    booking.setActiveAllocationOperationId(operationId);
                     booking.setProviderId(actualProviderId);
                     booking.setAssignedTechnicianId(assignedTechId);
                     booking.setAssignedTechnicianProfileId(finalAlloc.getTechnicianProfileId());
@@ -302,7 +315,7 @@ public class BookingLifecycleService {
 
                     recordHistory(bookingId, "REQUESTED", "ASSIGNED", "AI_DISPATCHER",
                             "AI Auto-Dispatch assigned technician " + finalAlloc.getTechnicianName());
-                    publishDomainEvent("booking.assigned.v1", booking);
+                    publishDomainEvent(DomainEventContracts.BOOKING_ASSIGNED, booking);
                     return toBookingResponse(booking);
                 }
 
@@ -321,7 +334,7 @@ public class BookingLifecycleService {
                 saga.setUpdatedAt(finishTime);
                 saga.setCompletedAt(finishTime);
                 sagaRepository.save(saga);
-                publishDomainEvent("booking.requested.v1", booking);
+                publishDomainEvent(DomainEventContracts.BOOKING_REQUESTED, booking);
                 return toBookingResponse(booking);
             });
         } catch (RuntimeException ex) {
@@ -335,8 +348,7 @@ public class BookingLifecycleService {
     @Transactional(readOnly = true)
     public PageResponse<BookingResponse> listBookingsPage(
             ActorContext actor, int page, int size, String status, String scope) {
-        if (page < 1 || size < 1 || size > 100)
-            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        PageResponse.validate(page, size);
         if (status != null) {
             try {
                 BookingStatus.valueOf(status);
@@ -353,9 +365,9 @@ public class BookingLifecycleService {
         }
         List<UUID> ids = content.stream().map(BookingEntity::getId).toList();
         var historyByBooking = historyRepository.findByBookingIdInOrderByOccurredAtAsc(ids).stream()
-                .collect(java.util.stream.Collectors.groupingBy(BookingHistoryEntry::getBookingId));
+                .collect(Collectors.groupingBy(BookingHistoryEntry::getBookingId));
         var updatesByBooking = workUpdateRepository.findByBookingIdInOrderByCreatedAtAsc(ids).stream()
-                .collect(java.util.stream.Collectors.groupingBy(WorkUpdateEntity::getBookingId));
+                .collect(Collectors.groupingBy(WorkUpdateEntity::getBookingId));
         var items = content.stream()
                 .map(b -> toBookingResponse(b,
                         historyByBooking.getOrDefault(b.getId(), List.of()),
@@ -397,7 +409,7 @@ public class BookingLifecycleService {
                 "CANCELLED",
                 actor.userId(),
                 request != null && request.reason() != null ? request.reason() : "Customer cancelled");
-        publishDomainEvent("booking.cancelled.v1", saved);
+        publishDomainEvent(DomainEventContracts.BOOKING_CANCELLED, saved);
         return toBookingResponse(saved);
     }
 
@@ -431,27 +443,135 @@ public class BookingLifecycleService {
                 if (!"IN_PROGRESS".equals(previous)) {
                     throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
                 }
+                if (workUpdateRepository.existsByBookingIdAndExtraCostStatus(bookingId, "PENDING_APPROVAL")) {
+                    throw new DomainException(CommonErrorCode.CONFLICT);
+                }
                 booking.setStatus("COMPLETED");
                 recordHistory(bookingId, previous, "COMPLETED", actor.userId(), request.note());
             }
             default -> throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         }
 
-        workUpdateRepository.save(WorkUpdateEntity.builder()
+        Long extraCost = request.extraCost();
+        boolean hasExtraCost = extraCost != null && extraCost > 0;
+        if (hasExtraCost && !"DIAGNOSED".equals(kind) && !"NOTE".equals(kind)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        }
+
+        WorkUpdateEntity savedUpdate = workUpdateRepository.save(WorkUpdateEntity.builder()
                 .id(UUID.randomUUID())
                 .bookingId(bookingId)
                 .technicianProfileId(actor.userId())
                 .kind(kind)
                 .note(request.note())
+                .extraCost(hasExtraCost ? extraCost : null)
+                .extraCostStatus(hasExtraCost ? "PENDING_APPROVAL" : "NONE")
                 .createdAt(Instant.now())
                 .build());
+
+        List<UUID> evidenceIds = request.evidenceIds();
+        if (evidenceIds != null && !evidenceIds.isEmpty()) {
+            List<WorkEvidenceEntity> evidenceList = workEvidenceRepository.findByIdInAndBookingId(evidenceIds, bookingId);
+            if (evidenceList.size() != evidenceIds.size()) {
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+            }
+            for (WorkEvidenceEntity ev : evidenceList) {
+                if (!actor.userId().equals(ev.getUploaderProfileId())) {
+                    throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+                }
+                ev.setWorkUpdateId(savedUpdate.getId());
+                ev.setStatus("ATTACHED");
+            }
+            workEvidenceRepository.saveAll(evidenceList);
+        }
 
         booking.setUpdatedAt(Instant.now());
         BookingEntity saved = bookingRepository.saveAndFlush(booking);
 
         if ("COMPLETED".equals(saved.getStatus())) {
-            publishDomainEvent("booking.completed.v1", saved);
+            publishDomainEvent(DomainEventContracts.BOOKING_COMPLETED, saved);
         }
+        return toBookingResponse(saved);
+    }
+
+    private static final long MAX_EVIDENCE_BYTES = 5L * 1024L * 1024L;
+    private static final Set<String> ALLOWED_EVIDENCE_TYPES = Set.of(
+            "image/jpeg", "image/jpg", "image/png", "image/webp");
+
+    @Transactional
+    public WorkEvidenceResponse uploadWorkEvidence(
+            ActorContext actor,
+            UUID bookingId,
+            String originalFilename,
+            String contentType,
+            byte[] bytes) {
+        if (bytes == null || bytes.length == 0 || bytes.length > MAX_EVIDENCE_BYTES) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        }
+        String normalizedType = contentType == null ? "" : contentType.trim().toLowerCase();
+        if (!ALLOWED_EVIDENCE_TYPES.contains(normalizedType)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        }
+        BookingEntity booking = bookingRepository.lockById(bookingId)
+                .orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
+        accessPolicy.assertCanAppendWorkUpdate(actor, booking);
+        if (!"ASSIGNED".equals(booking.getStatus()) && !"IN_PROGRESS".equals(booking.getStatus())) {
+            throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
+        }
+        WorkEvidenceStoragePort.StoredObject stored = workEvidenceStorage.upload(
+                bookingId, originalFilename, normalizedType, bytes);
+        Instant now = Instant.now();
+        WorkEvidenceEntity saved = workEvidenceRepository.save(WorkEvidenceEntity.builder()
+                .id(UUID.randomUUID())
+                .bookingId(bookingId)
+                .uploaderProfileId(actor.userId())
+                .bucket(stored.bucket())
+                .objectKey(stored.objectKey())
+                .contentType(normalizedType)
+                .sizeBytes(bytes.length)
+                .status("UPLOADED")
+                .createdAt(now)
+                .build());
+        return new WorkEvidenceResponse(
+                saved.getId(), saved.getBookingId(), saved.getContentType(), saved.getSizeBytes(), saved.getCreatedAt(), null);
+    }
+
+    @Transactional
+    public BookingResponse approveExtraCost(
+            ActorContext actor,
+            UUID bookingId,
+            UUID updateId,
+            ApproveExtraCostRequest request,
+            String ifMatch) {
+        BookingEntity booking = bookingRepository.lockById(bookingId)
+                .orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
+        if (!booking.getRequesterProfileId().equals(actor.userId())) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        EtagSupport.verifyIfMatch(ifMatch, booking.getVersion());
+        WorkUpdateEntity update = workUpdateRepository.findById(updateId)
+                .orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_NOT_FOUND));
+        if (!bookingId.equals(update.getBookingId()) || !"PENDING_APPROVAL".equals(update.getExtraCostStatus())) {
+            throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
+        }
+        Instant now = Instant.now();
+        update.setExtraCostStatus(request.approved() ? "APPROVED" : "REJECTED");
+        update.setExtraCostApprovedAt(now);
+        update.setExtraCostApprovedBy(actor.userId());
+        workUpdateRepository.save(update);
+        if (request.approved() && update.getExtraCost() != null && update.getExtraCost() > 0) {
+            booking.setQuotedPrice(booking.getQuotedPrice() + update.getExtraCost());
+        }
+        booking.setUpdatedAt(now);
+        BookingEntity saved = bookingRepository.saveAndFlush(booking);
+        recordHistory(
+                bookingId,
+                booking.getStatus(),
+                booking.getStatus(),
+                actor.userId(),
+                request.approved()
+                        ? "Approved extra cost " + update.getExtraCost()
+                        : "Rejected extra cost: " + (request.note() != null ? request.note() : ""));
         return toBookingResponse(saved);
     }
 
@@ -499,8 +619,41 @@ public class BookingLifecycleService {
 
     // Never add @Transactional here: DB locks must NOT be held across gRPC calls.
     public BookingResponse assignTechnician(ActorContext actor, UUID bookingId, UUID technicianId, String ifMatch) {
+        return assignTechnician(actor, null, bookingId, technicianId, null, ifMatch);
+    }
+
+    // Never add @Transactional here: DB locks must NOT be held across gRPC calls.
+    public BookingResponse assignTechnician(
+            ActorContext actor,
+            String actorName,
+            UUID bookingId,
+            UUID technicianId,
+            String reason,
+            String ifMatch) {
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+
+        var initialState = tx.execute(status -> {
+            var booking = bookingRepository.findById(bookingId)
+                    .orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
+            accessPolicy.assertCanAssign(actor, booking);
+            EtagSupport.verifyIfMatch(ifMatch, booking.getVersion());
+            boolean isInitial = "REQUESTED".equals(booking.getStatus())
+                    && "UNALLOCATED".equals(booking.getAllocationStatus());
+            boolean isReassign = "ASSIGNED".equals(booking.getStatus())
+                    && "ALLOCATED".equals(booking.getAllocationStatus());
+            if (!isInitial && !isReassign) {
+                throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
+            }
+            if (isReassign && technicianId.equals(booking.getAssignedTechnicianId())) {
+                throw new DomainException(CommonErrorCode.CONFLICT);
+            }
+            return isReassign;
+        });
+
+        if (Boolean.TRUE.equals(initialState)) {
+            return reassignTechnician(tx, actor, actorName, bookingId, technicianId, reason, ifMatch);
+        }
 
         ClaimedAssignment claim = tx.execute(status -> {
             var booking = bookingRepository.findById(bookingId)
@@ -530,6 +683,8 @@ public class BookingLifecycleService {
                     .providerId(targetProviderId)
                     .strictProviderMatch(targetProviderId != null)
                     .technicianId(technicianId)
+                    .attemptType("ALLOCATE")
+                    .reason(reason)
                     .status("ALLOCATING")
                     .claimToken(claimToken)
                     .leaseUntil(now.plusSeconds(15))
@@ -570,9 +725,9 @@ public class BookingLifecycleService {
         if (result == null || !result.getAllocated()) {
             tx.executeWithoutResult(status -> {
                 Instant now = Instant.now();
-                String reason = result != null ? result.getFailureReason() : "ALLOCATION_FAILED";
+                String failReason = result != null ? result.getFailureReason() : "ALLOCATION_FAILED";
                 int fenced = attemptRepository.transitionWithFence(
-                        claim.operationId(), claim.claimToken(), "ALLOCATING", "FAILED", reason, now);
+                        claim.operationId(), claim.claimToken(), "ALLOCATING", "FAILED", failReason, now);
                 if (fenced == 1) {
                     bookingRepository.findById(bookingId).ifPresent(b -> {
                         if ("ALLOCATING".equals(b.getAllocationStatus())) {
@@ -619,6 +774,7 @@ public class BookingLifecycleService {
                 booking.setAssignedTechnicianName(result.getTechnicianName());
                 booking.setStatus("ASSIGNED");
                 booking.setAllocationStatus("ALLOCATED");
+                booking.setActiveAllocationOperationId(claim.operationId());
                 booking.setUpdatedAt(now);
                 var saved = bookingRepository.saveAndFlush(booking);
                 sagaRepository.findByBookingId(bookingId).ifPresent(saga -> {
@@ -631,7 +787,7 @@ public class BookingLifecycleService {
                     sagaRepository.save(saga);
                 });
                 recordHistory(bookingId, "REQUESTED", "ASSIGNED", actor.userId(), "Manually assigned technician");
-                publishDomainEvent("booking.assigned.v1", saved);
+                publishDomainEvent(DomainEventContracts.BOOKING_ASSIGNED, saved);
                 return toBookingResponse(saved);
             });
             if (assigned == null) {
@@ -650,6 +806,189 @@ public class BookingLifecycleService {
             compensateAllocation(tx, bookingId, claim.operationId(), claim.claimToken(), "ALLOCATING", ex.getMessage());
             throw ex;
         }
+    }
+
+    private BookingResponse reassignTechnician(
+            TransactionTemplate tx,
+            ActorContext actor,
+            String actorName,
+            UUID bookingId,
+            UUID newTechnicianId,
+            String reason,
+            String ifMatch) {
+        record ClaimedReassign(
+                UUID operationId,
+                UUID claimToken,
+                UUID targetProviderId,
+                UUID previousTechnicianId,
+                String previousTechnicianProfileId,
+                String previousTechnicianName) {}
+
+        ClaimedReassign claim = tx.execute(status -> {
+            var booking = bookingRepository.findById(bookingId)
+                    .orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
+            accessPolicy.assertCanAssign(actor, booking);
+            EtagSupport.verifyIfMatch(ifMatch, booking.getVersion());
+            if (!"ASSIGNED".equals(booking.getStatus()) || !"ALLOCATED".equals(booking.getAllocationStatus())) {
+                throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
+            }
+            if (newTechnicianId.equals(booking.getAssignedTechnicianId())) {
+                throw new DomainException(CommonErrorCode.CONFLICT);
+            }
+            Instant now = Instant.now();
+            int claimed = bookingRepository.tryClaimForReassignment(bookingId, now);
+            if (claimed == 0) {
+                throw new DomainException(CommonErrorCode.CONFLICT);
+            }
+            UUID targetProviderId = booking.getProviderId() != null
+                    ? booking.getProviderId()
+                    : (actor.mode() == AccessMode.ORGANIZATION ? actor.organizationId() : null);
+            UUID operationId = UUID.randomUUID();
+            UUID claimToken = UUID.randomUUID();
+            attemptRepository.saveAndFlush(AssignmentAttemptEntity.builder()
+                    .operationId(operationId)
+                    .bookingId(bookingId)
+                    .serviceId(booking.getServiceId())
+                    .deviceType(booking.getDeviceType())
+                    .preferredStart(booking.getPreferredStart())
+                    .preferredEnd(booking.getPreferredEnd())
+                    .providerId(targetProviderId)
+                    .strictProviderMatch(targetProviderId != null)
+                    .technicianId(newTechnicianId)
+                    .attemptType("REASSIGN")
+                    .previousTechnicianId(booking.getAssignedTechnicianId())
+                    .previousTechnicianProfileId(booking.getAssignedTechnicianProfileId())
+                    .previousTechnicianName(booking.getAssignedTechnicianName())
+                    .previousOperationId(booking.getActiveAllocationOperationId())
+                    .reason(reason)
+                    .status("ALLOCATING")
+                    .claimToken(claimToken)
+                    .leaseUntil(now.plusSeconds(15))
+                    .retryCount(0)
+                    .createdAt(now)
+                    .updatedAt(now)
+                    .build());
+            return new ClaimedReassign(
+                    operationId,
+                    claimToken,
+                    targetProviderId,
+                    booking.getAssignedTechnicianId(),
+                    booking.getAssignedTechnicianProfileId(),
+                    booking.getAssignedTechnicianName());
+        });
+
+        AllocateTechnicianResponse result;
+        try {
+            result = providerGrpcClient.reassignTechnician(
+                    claim.operationId(), bookingId, newTechnicianId, claim.targetProviderId(), reason);
+        } catch (Exception ex) {
+            tx.executeWithoutResult(status -> {
+                Instant now = Instant.now();
+                int fenced = attemptRepository.scheduleRetryWithFence(
+                        claim.operationId(), claim.claimToken(), "ALLOCATING", "RECONCILIATION_PENDING",
+                        now.plusSeconds(5), ex.getMessage(), now);
+                if (fenced == 1) {
+                    bookingRepository.findById(bookingId).ifPresent(b -> {
+                        if ("REASSIGNING".equals(b.getAllocationStatus())) {
+                            b.setAllocationStatus("RECONCILIATION_PENDING");
+                            b.setUpdatedAt(now);
+                            bookingRepository.save(b);
+                        }
+                    });
+                }
+            });
+            throw new DomainException(BookingErrorCode.REASSIGNMENT_UNAVAILABLE);
+        }
+
+        if (result == null || !result.getAllocated()) {
+            tx.executeWithoutResult(status -> {
+                Instant now = Instant.now();
+                String failReason = result != null ? result.getFailureReason() : "REASSIGNMENT_FAILED";
+                int fenced = attemptRepository.transitionWithFence(
+                        claim.operationId(), claim.claimToken(), "ALLOCATING", "FAILED", failReason, now);
+                if (fenced == 1) {
+                    bookingRepository.findById(bookingId).ifPresent(b -> {
+                        if ("REASSIGNING".equals(b.getAllocationStatus())) {
+                            b.setAllocationStatus("ALLOCATED");
+                            b.setUpdatedAt(now);
+                            bookingRepository.save(b);
+                        }
+                    });
+                }
+            });
+            throw new DomainException(CommonErrorCode.CONFLICT);
+        }
+
+        return tx.execute(status -> {
+            Instant now = Instant.now();
+            var booking = bookingRepository.lockById(bookingId)
+                    .orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
+            if (!"ASSIGNED".equals(booking.getStatus())) {
+                throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
+            }
+            int fenced = attemptRepository.transitionWithFence(
+                    claim.operationId(), claim.claimToken(), "ALLOCATING", "ALLOCATED", null, now);
+            if (fenced == 0) {
+                throw new DomainException(CommonErrorCode.CONFLICT);
+            }
+            booking.setAssignedTechnicianId(newTechnicianId);
+            booking.setAssignedTechnicianProfileId(result.getTechnicianProfileId());
+            booking.setAssignedTechnicianName(result.getTechnicianName());
+            booking.setAllocationStatus("ALLOCATED");
+            booking.setActiveAllocationOperationId(claim.operationId());
+            booking.setUpdatedAt(now);
+            var saved = bookingRepository.saveAndFlush(booking);
+            sagaRepository.findByBookingId(bookingId).ifPresent(saga -> {
+                saga.setAssignedTechnicianId(newTechnicianId);
+                saga.setUpdatedAt(now);
+                sagaRepository.save(saga);
+            });
+            historyRepository.save(BookingHistoryEntry.builder()
+                    .id(UUID.randomUUID())
+                    .bookingId(bookingId)
+                    .fromStatus("ASSIGNED")
+                    .toStatus("ASSIGNED")
+                    .actorId(actor.userId())
+                    .actorName(actorName)
+                    .oldTechnicianId(claim.previousTechnicianId())
+                    .newTechnicianId(newTechnicianId)
+                    .reason(reason != null && !reason.isBlank() ? reason : "Reassigned technician")
+                    .occurredAt(now)
+                    .build());
+
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("bookingId", saved.getId().toString());
+            payload.put("serviceName", saved.getServiceName());
+            payload.put("requesterProfileId", saved.getRequesterProfileId());
+            payload.put("oldTechnicianId", claim.previousTechnicianId() != null ? claim.previousTechnicianId().toString() : "");
+            payload.put("oldTechnicianProfileId", claim.previousTechnicianProfileId() == null ? "" : claim.previousTechnicianProfileId());
+            payload.put("oldTechnicianName", claim.previousTechnicianName() == null ? "" : claim.previousTechnicianName());
+            payload.put("newTechnicianId", newTechnicianId.toString());
+            payload.put("newTechnicianProfileId", saved.getAssignedTechnicianProfileId() == null ? "" : saved.getAssignedTechnicianProfileId());
+            payload.put("newTechnicianName", saved.getAssignedTechnicianName() == null ? "" : saved.getAssignedTechnicianName());
+            payload.put("reason", reason == null ? "" : reason);
+            try {
+                Map<String, Object> envelope = new LinkedHashMap<>();
+                envelope.put(DomainEventContracts.FIELD_EVENT_ID, UUID.randomUUID().toString());
+                envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, DomainEventContracts.BOOKING_REASSIGNED);
+                envelope.put(DomainEventContracts.FIELD_OCCURRED_AT, now.toString());
+                envelope.put(DomainEventContracts.FIELD_PRODUCER, "booking-service");
+                envelope.put(DomainEventContracts.FIELD_DATA, payload);
+                outboxEventRepository.save(BookingOutboxEventEntity.builder()
+                        .id(UUID.randomUUID())
+                        .aggregateType("Booking")
+                        .aggregateId(saved.getId())
+                        .eventType(DomainEventContracts.BOOKING_REASSIGNED)
+                        .routingKey(DomainEventContracts.BOOKING_REASSIGNED)
+                        .payloadJson(objectMapper.writeValueAsString(envelope))
+                        .status(EntityStatus.PENDING.name())
+                        .createdAt(now)
+                        .build());
+            } catch (Exception e) {
+                throw new IllegalStateException("Failed to serialize booking.reassigned.v1 event", e);
+            }
+            return toBookingResponse(saved);
+        });
     }
 
     private void compensateAllocation(
@@ -759,28 +1098,62 @@ public class BookingLifecycleService {
         return toBookingResponse(
                 b,
                 historyRepository.findByBookingIdOrderByOccurredAtAsc(b.getId()),
-                workUpdateRepository.findByBookingIdOrderByCreatedAtAsc(b.getId()));
+                workUpdateRepository.findByBookingIdOrderByCreatedAtAsc(b.getId()),
+                true);
     }
 
     private BookingResponse toBookingResponse(
             BookingEntity b,
             List<BookingHistoryEntry> historyEntities,
             List<WorkUpdateEntity> updateEntities) {
+        return toBookingResponse(b, historyEntities, updateEntities, false);
+    }
+
+    private BookingResponse toBookingResponse(
+            BookingEntity b,
+            List<BookingHistoryEntry> historyEntities,
+            List<WorkUpdateEntity> updateEntities,
+            boolean includeSignedEvidenceUrls) {
         List<BookingHistoryResponse> history = historyEntities
                 .stream()
                 .map(h -> new BookingHistoryResponse(
-                        h.getId(), h.getFromStatus(), h.getToStatus(), h.getActorId(), h.getReason(),
-                        h.getOccurredAt()))
+                        h.getId(), h.getFromStatus(), h.getToStatus(), h.getActorId(), h.getActorName(),
+                        h.getReason(), h.getOccurredAt()))
                 .toList();
+        Map<UUID, List<WorkEvidenceResponse>> evidenceByUpdate = Map.of();
+        if (includeSignedEvidenceUrls && !updateEntities.isEmpty()) {
+            List<UUID> updateIds = updateEntities.stream().map(WorkUpdateEntity::getId).toList();
+            evidenceByUpdate = workEvidenceRepository.findByWorkUpdateIdIn(updateIds).stream()
+                    .collect(Collectors.groupingBy(
+                            WorkEvidenceEntity::getWorkUpdateId,
+                            Collectors.mapping(
+                                    ev -> new WorkEvidenceResponse(
+                                            ev.getId(),
+                                            ev.getBookingId(),
+                                            ev.getContentType(),
+                                            ev.getSizeBytes(),
+                                            ev.getCreatedAt(),
+                                            workEvidenceStorage.createSignedUrl(ev.getBucket(), ev.getObjectKey(), 300)),
+                                    Collectors.toList())));
+        }
+        Map<UUID, List<WorkEvidenceResponse>> finalEvidenceByUpdate = evidenceByUpdate;
         List<WorkUpdateResponse> updates = updateEntities
                 .stream()
                 .map(u -> new WorkUpdateResponse(
-                        u.getId(), u.getBookingId(), u.getTechnicianProfileId(), u.getKind(), u.getNote(),
+                        u.getId(),
+                        u.getBookingId(),
+                        u.getTechnicianProfileId(),
+                        u.getKind(),
+                        u.getNote(),
+                        u.getExtraCost(),
+                        u.getExtraCostStatus() != null ? u.getExtraCostStatus() : "NONE",
+                        finalEvidenceByUpdate.getOrDefault(u.getId(), List.of()),
                         u.getCreatedAt()))
                 .toList();
         return new BookingResponse(
                 b.getId(),
                 b.getRequesterProfileId(),
+                b.getRequesterName(),
                 b.getServiceId(),
                 b.getServiceName(),
                 b.getProviderId(),

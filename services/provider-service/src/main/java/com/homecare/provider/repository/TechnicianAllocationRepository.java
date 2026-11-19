@@ -23,6 +23,8 @@ public interface TechnicianAllocationRepository extends JpaRepository<Technician
     @Query("select a from TechnicianAllocation a where a.bookingId = :bookingId and a.status = 'ALLOCATED'")
     Optional<TechnicianAllocation> lockByBookingId(UUID bookingId);
 
+    Optional<TechnicianAllocation> findByBookingIdAndStatus(UUID bookingId, String status);
+
     @Query("""
             select a from TechnicianAllocation a
             where a.technicianId = :techId

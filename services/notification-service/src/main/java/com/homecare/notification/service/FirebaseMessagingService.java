@@ -66,7 +66,7 @@ public class FirebaseMessagingService {
 
         if (FirebaseApp.getApps().isEmpty()) {
             log.debug("FirebaseApp not initialized (no credentials). Skipping push dispatch to token={}",
-                    fcmToken.length() > 10 ? fcmToken.substring(0, 10) + "***" : fcmToken);
+                    maskToken(fcmToken));
             return false;
         }
 
@@ -95,17 +95,17 @@ public class FirebaseMessagingService {
 
             String response = FirebaseMessaging.getInstance().send(messageBuilder.build());
             log.info("[FCM-REAL] Dispatched push to token={}, messageId={}",
-                    fcmToken.length() > 10 ? fcmToken.substring(0, 10) + "***" : fcmToken, response);
+                    maskToken(fcmToken), response);
             return true;
         } catch (FirebaseMessagingException e) {
             log.error("[FCM-ERROR] Failed to send push to token={}: {} (code: {})",
-                    fcmToken.length() > 10 ? fcmToken.substring(0, 10) + "***" : fcmToken,
+                    maskToken(fcmToken),
                     e.getMessage(), e.getMessagingErrorCode());
 
             if (e.getMessagingErrorCode() != null) {
                 String code = e.getMessagingErrorCode().name();
                 if ("UNREGISTERED".equals(code) || "INVALID_ARGUMENT".equals(code)) {
-                    log.warn("Deactivating dead FCM device token={}", fcmToken);
+                    log.warn("Deactivating dead FCM device token={}", maskToken(fcmToken));
                     deviceRegistrationRepository.findByPushToken(fcmToken).ifPresent(dev -> {
                         dev.setActive(false);
                         deviceRegistrationRepository.save(dev);
@@ -117,5 +117,12 @@ public class FirebaseMessagingService {
             log.error("[FCM-ERROR] Unexpected error sending FCM push: {}", e.getMessage(), e);
             return false;
         }
+    }
+
+    private static String maskToken(String token) {
+        if (token == null) {
+            return "";
+        }
+        return token.length() > 10 ? token.substring(0, 10) + "***" : token;
     }
 }

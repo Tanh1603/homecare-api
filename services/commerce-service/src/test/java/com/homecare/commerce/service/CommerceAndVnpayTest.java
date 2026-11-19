@@ -193,10 +193,20 @@ class CommerceAndVnpayTest {
                 order.id(),
                 createdReturn.id(),
                 new ResolveOrderReturnRequest("APPROVE", "Cửa hàng đồng ý hoàn tiền 100% và nhận lại bộ ốc vít"));
-        assertThat(approved.status()).isEqualTo("APPROVED");
+        assertThat(approved.status()).isEqualTo("APPROVED_PENDING_MANUAL_REFUND");
 
         ProductResponse afterRefund = service.getProduct(CommerceDataInitializer.PRODUCT_WRENCH_SCREW_KIT_ID);
         assertThat(afterRefund.availableQty()).isEqualTo(initialStock);
+        assertThatThrownBy(() -> service.resolveOrderReturnRequest(
+                "demo-organization",
+                order.id(),
+                createdReturn.id(),
+                new ResolveOrderReturnRequest("APPROVE", "Retry must not restock twice")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RETURN_ALREADY_RESOLVED");
+        assertThat(service.getProduct(CommerceDataInitializer.PRODUCT_WRENCH_SCREW_KIT_ID).availableQty())
+                .isEqualTo(initialStock);
 
         OrderResponse updatedOrder = service.getOrder("buyer-return-1", order.id());
         assertThat(updatedOrder.lines().getFirst().fulfillmentStatus()).isEqualTo("RETURNED");

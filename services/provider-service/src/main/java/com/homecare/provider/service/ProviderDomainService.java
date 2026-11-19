@@ -64,7 +64,15 @@ public class ProviderDomainService {
 
     @Transactional(readOnly = true)
     public PageResponse<ServiceOfferingResponse> offeringsPage(String category, UUID providerId, String q, int page, int size) {
-        var result = offeringRepository.search(blankToNull(category), providerId, blankToNull(q), pageRequest(page, size));
+        return offeringsPage(category, providerId, q, false, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<ServiceOfferingResponse> offeringsPage(
+            String category, UUID providerId, String q, boolean includeInactive, int page, int size) {
+        var result = includeInactive
+                ? offeringRepository.searchIncludingInactive(blankToNull(category), providerId, blankToNull(q), pageRequest(page, size))
+                : offeringRepository.search(blankToNull(category), providerId, blankToNull(q), pageRequest(page, size));
         Set<UUID> providerIds = result.getContent().stream().map(ServiceOffering::getProviderId).collect(Collectors.toSet());
         Map<UUID, String> providerNames = providerIds.isEmpty() ? Map.of() : providerRepository.findAllById(providerIds).stream()
                 .collect(Collectors.toMap(ProviderEntity::getId, ProviderEntity::getName));
@@ -82,13 +90,21 @@ public class ProviderDomainService {
 
     @Transactional(readOnly = true)
     public PageResponse<TechnicianResponse> techniciansPage(UUID providerId, String q, int page, int size) {
-        var result = technicianRepository.search(providerId, blankToNull(q), pageRequest(page, size));
+        return techniciansPage(providerId, q, false, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<TechnicianResponse> techniciansPage(
+            UUID providerId, String q, boolean includeInactive, int page, int size) {
+        var result = includeInactive
+                ? technicianRepository.searchIncludingInactive(providerId, blankToNull(q), pageRequest(page, size))
+                : technicianRepository.search(providerId, blankToNull(q), pageRequest(page, size));
         return PageResponse.of(result.map(this::toTechnicianResponse).getContent(), page, size, result.getTotalElements());
     }
 
     private String blankToNull(String value) { return value == null || value.isBlank() ? null : value.trim(); }
     private Pageable pageRequest(int page, int size) {
-        if (page < 1 || size < 1 || size > 100) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        PageResponse.validate(page, size);
         return PageRequest.of(page - 1, size, Sort.by("createdAt").descending().and(Sort.by("id")));
     }
 
@@ -265,6 +281,16 @@ public class ProviderDomainService {
                 .orElse(false)
                 && isProviderActive(orgId);
         return isActiveTech ? Optional.of(OrgRole.ORG_TECHNICIAN.name()) : Optional.empty();
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<ScheduleWindowResponse> listScheduleWindowsPage(
+            String technicianIdOrMe, ActorContext actor, int page, int size) {
+        PageResponse.validate(page, size);
+        List<ScheduleWindowResponse> all = listScheduleWindows(technicianIdOrMe, actor);
+        int from = Math.min((page - 1) * size, all.size());
+        int to = Math.min(from + size, all.size());
+        return PageResponse.of(all.subList(from, to), page, size, all.size());
     }
 
     @Transactional(readOnly = true)
@@ -735,6 +761,176 @@ public class ProviderDomainService {
         }
         allocation.setStatus("RELEASED");
         allocationRepository.save(allocation);
+    }
+
+    public record BookingAllocationSnapshot(
+            boolean found,
+            UUID bookingId,
+            UUID technicianId,
+            String technicianProfileId,
+            String technicianName,
+            UUID providerId,
+            UUID allocationId,
+            UUID operationId,
+            String status) {}
+
+    @Transactional(readOnly = true)
+    public BookingAllocationSnapshot getBookingAllocation(UUID bookingId) {
+        return allocationRepository.findByBookingIdAndStatus(bookingId, "ALLOCATED")
+                .map(alloc -> {
+                    Technician tech = technicianRepository.findById(alloc.getTechnicianId()).orElse(null);
+                    return new BookingAllocationSnapshot(
+                            true,
+                            alloc.getBookingId(),
+                            alloc.getTechnicianId(),
+                            tech != null ? tech.getProfileId() : "",
+                            tech != null ? tech.getFullName() : "",
+                            alloc.getProviderId(),
+                            alloc.getId(),
+                            alloc.getOperationId(),
+                            alloc.getStatus());
+                })
+                .orElseGet(() -> new BookingAllocationSnapshot(
+                        false, bookingId, null, "", "", null, null, null, "UNALLOCATED"));
+    }
+
+    public AllocationOutcome reassignTechnicianForBooking(
+            UUID operationId,
+            UUID bookingId,
+            UUID newTechnicianId,
+            UUID providerId,
+            String reason) {
+        if (operationId != null) {
+            AllocationOutcome precheck = prepareAllocationOperation(operationId, bookingId);
+            if (precheck != null) {
+                return precheck;
+            }
+        }
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        try {
+            AllocationOutcome outcome = tx.execute(status ->
+                    reassignInternal(operationId, bookingId, newTechnicianId, providerId, reason));
+            if (outcome != null && !outcome.allocated()) {
+                return finishOperationFailure(operationId, providerId, outcome.failureReason());
+            }
+            return outcome;
+        } catch (DataIntegrityViolationException conflictEx) {
+            return finishOperationFailure(operationId, providerId, "REASSIGNMENT_CONFLICT");
+        }
+    }
+
+    private AllocationOutcome reassignInternal(
+            UUID operationId,
+            UUID bookingId,
+            UUID newTechnicianId,
+            UUID providerId,
+            String reason) {
+        var oldAllocOpt = allocationRepository.lockByBookingId(bookingId);
+        if (oldAllocOpt.isEmpty()) {
+            return new AllocationOutcome(false, null, "", "", providerId, null, "NO_ACTIVE_ALLOCATION");
+        }
+        TechnicianAllocation oldAlloc = oldAllocOpt.get();
+        UUID oldTechId = oldAlloc.getTechnicianId();
+        if (oldTechId.equals(newTechnicianId)) {
+            return new AllocationOutcome(false, null, "", "", providerId, null, "SAME_TECHNICIAN");
+        }
+
+        // Deterministic lock ordering by UUID prevents deadlocks on concurrent reassignments.
+        Technician newTech;
+        if (oldTechId.compareTo(newTechnicianId) < 0) {
+            technicianRepository.lockById(oldTechId);
+            newTech = technicianRepository.lockById(newTechnicianId).orElse(null);
+        } else {
+            newTech = technicianRepository.lockById(newTechnicianId).orElse(null);
+            technicianRepository.lockById(oldTechId);
+        }
+
+        if (newTech == null || !EntityStatus.ACTIVE.name().equals(newTech.getStatus())) {
+            return new AllocationOutcome(false, null, "", "", providerId, null, "TECHNICIAN_NOT_AVAILABLE");
+        }
+        if (providerId != null && !providerId.equals(newTech.getProviderId())) {
+            return new AllocationOutcome(false, null, "", "", providerId, null, "TECHNICIAN_PROVIDER_MISMATCH");
+        }
+        if (!isProviderActive(newTech.getProviderId())) {
+            return new AllocationOutcome(false, null, "", "", newTech.getProviderId(), null, "PROVIDER_NOT_ACTIVE");
+        }
+        Instant startsAt = oldAlloc.getStartsAt();
+        Instant endsAt = oldAlloc.getEndsAt();
+        if (!allocationRepository.findActiveOverlapping(newTechnicianId, startsAt, endsAt).isEmpty()) {
+            return new AllocationOutcome(false, null, "", "", newTech.getProviderId(), null, "TECHNICIAN_SCHEDULE_CONFLICT");
+        }
+        var availableWindows = scheduleWindowRepository.findAvailableCovering(newTechnicianId, startsAt, endsAt);
+        if (availableWindows.isEmpty()) {
+            return new AllocationOutcome(false, null, "", "", newTech.getProviderId(), null, "NO_AVAILABLE_SCHEDULE");
+        }
+
+        releaseAllocationInternal(oldAlloc);
+        allocationRepository.flush();
+        if (oldAlloc.getOperationId() != null) {
+            operationRepository.lockByOperationId(oldAlloc.getOperationId()).ifPresent(oldOp -> {
+                oldOp.setStatus("RELEASED");
+                oldOp.setFailureReason(reason != null && !reason.isBlank() ? reason : "REASSIGNED");
+                oldOp.setUpdatedAt(Instant.now());
+                operationRepository.save(oldOp);
+            });
+        }
+
+        ScheduleWindow window = availableWindows.getFirst();
+        if (window.getStartsAt().isBefore(startsAt)) {
+            scheduleWindowRepository.save(ScheduleWindow.builder().id(UUID.randomUUID()).technicianId(newTech.getId())
+                    .startsAt(window.getStartsAt()).endsAt(startsAt).status("AVAILABLE").createdAt(Instant.now()).build());
+        }
+        if (window.getEndsAt().isAfter(endsAt)) {
+            scheduleWindowRepository.save(ScheduleWindow.builder().id(UUID.randomUUID()).technicianId(newTech.getId())
+                    .startsAt(endsAt).endsAt(window.getEndsAt()).status("AVAILABLE").createdAt(Instant.now()).build());
+        }
+        window.setStartsAt(startsAt);
+        window.setEndsAt(endsAt);
+        window.setAllocatedBookingId(bookingId);
+        window.setStatus("BOOKED");
+        scheduleWindowRepository.save(window);
+
+        newTech.setActiveAllocations(newTech.getActiveAllocations() + 1);
+        technicianRepository.save(newTech);
+
+        Instant now = Instant.now();
+        String intentId = operationId != null ? "reassign:" + operationId : "reassign:" + UUID.randomUUID();
+        TechnicianAllocation savedAlloc = allocationRepository.saveAndFlush(TechnicianAllocation.builder()
+                .id(UUID.randomUUID())
+                .intentId(intentId)
+                .operationId(operationId)
+                .bookingId(bookingId)
+                .technicianId(newTech.getId())
+                .providerId(newTech.getProviderId())
+                .startsAt(startsAt)
+                .endsAt(endsAt)
+                .status("ALLOCATED")
+                .createdAt(now)
+                .build());
+
+        if (operationId != null) {
+            operationRepository.lockByOperationId(operationId).ifPresent(op -> {
+                op.setStatus("ALLOCATED");
+                op.setTechnicianId(newTech.getId());
+                op.setTechnicianProfileId(newTech.getProfileId());
+                op.setTechnicianName(newTech.getFullName());
+                op.setProviderId(newTech.getProviderId());
+                op.setAllocationId(savedAlloc.getId());
+                op.setFailureReason(null);
+                op.setUpdatedAt(now);
+                operationRepository.save(op);
+            });
+        }
+
+        return new AllocationOutcome(
+                true,
+                newTech.getId(),
+                newTech.getProfileId(),
+                newTech.getFullName(),
+                newTech.getProviderId(),
+                savedAlloc.getId(),
+                "");
     }
 
     public double aiRankScoreWithStoreAffinity(Technician t, UUID targetProviderId) {

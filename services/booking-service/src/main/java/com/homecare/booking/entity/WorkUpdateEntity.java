@@ -37,6 +37,19 @@ public class WorkUpdateEntity {
     @Column(length = 1500)
     private String note;
 
+    @Column(name = "extra_cost")
+    private Long extraCost;
+
+    @Column(name = "extra_cost_status", nullable = false, length = 32, columnDefinition = "varchar(32) default 'NONE'")
+    @Builder.Default
+    private String extraCostStatus = "NONE";
+
+    @Column(name = "extra_cost_approved_at")
+    private Instant extraCostApprovedAt;
+
+    @Column(name = "extra_cost_approved_by", length = 255)
+    private String extraCostApprovedBy;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 }

@@ -29,6 +29,9 @@ public class BookingEntity {
     @Column(name = "requester_profile_id", nullable = false, length = 255)
     private String requesterProfileId;
 
+    @Column(name = "requester_name", length = 255)
+    private String requesterName;
+
     @Column(name = "service_id", nullable = false)
     private UUID serviceId;
 
@@ -80,6 +83,9 @@ public class BookingEntity {
 
     @Column(name = "allocation_status", nullable = false)
     private String allocationStatus;
+
+    @Column(name = "active_allocation_operation_id")
+    private UUID activeAllocationOperationId;
 
     @Column(name = "quoted_price", nullable = false)
     private long quotedPrice;

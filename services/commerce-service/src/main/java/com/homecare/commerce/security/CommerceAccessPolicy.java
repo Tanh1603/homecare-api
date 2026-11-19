@@ -1,5 +1,7 @@
 package com.homecare.commerce.security;
 
+import java.util.UUID;
+
 import org.springframework.stereotype.Component;
 
 import com.homecare.commerce.entity.MerchantEntity;
@@ -79,6 +81,32 @@ public class CommerceAccessPolicy {
         return actor.isGlobalAdmin() || actor.userId().equals(order.getBuyerProfileId());
     }
 
+    public void assertCanReadMerchantReturns(ActorContext actor, MerchantEntity merchant) {
+        if (actor.mode() == AccessMode.ORGANIZATION
+                && (actor.hasOrgPermission(RbacConstants.PERM_ORDER_READ)
+                        || actor.hasOrgPermission(RbacConstants.PERM_ORDER_RETURN_RESOLVE))
+                && merchant != null
+                && EntityStatus.ACTIVE.name().equalsIgnoreCase(merchant.getStatus())
+                && actor.organizationId().equals(merchant.getOrganizationId())) {
+            return;
+        }
+        throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+    }
+
+    public void assertCanConfirmManualRefund(ActorContext actor, MerchantEntity merchant) {
+        if (actor.mode() == AccessMode.PERSONAL && actor.isGlobalAdmin()) {
+            return;
+        }
+        if (actor.mode() == AccessMode.ORGANIZATION
+                && actor.hasOrgRole(RbacConstants.ORG_ROLE_OWNER)
+                && merchant != null
+                && EntityStatus.ACTIVE.name().equalsIgnoreCase(merchant.getStatus())
+                && actor.organizationId().equals(merchant.getOrganizationId())) {
+            return;
+        }
+        throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+    }
+
     public void assertCanManageCatalog(ActorContext actor, MerchantEntity merchant) {
         if (actor.mode() == AccessMode.PERSONAL && actor.isGlobalAdmin()) {
             return;
@@ -105,6 +133,22 @@ public class CommerceAccessPolicy {
         }
         if (actor.isGlobalAdmin() || actor.userId().equals(order.getBuyerProfileId())) {
             return;
+        }
+        throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+    }
+
+    public UUID resolveAuthorizedInactiveMerchant(ActorContext actor, UUID requestedMerchantId) {
+        if (actor == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        if (actor.isGlobalAdmin() && actor.mode() == AccessMode.PERSONAL) {
+            return requestedMerchantId;
+        }
+        if (actor.mode() == AccessMode.ORGANIZATION && actor.hasOrgPermission(RbacConstants.PERM_PRODUCT_MANAGE)) {
+            if (requestedMerchantId != null && !requestedMerchantId.equals(actor.organizationId())) {
+                throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+            }
+            return actor.organizationId();
         }
         throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
     }

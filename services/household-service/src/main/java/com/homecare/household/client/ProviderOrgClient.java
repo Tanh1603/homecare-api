@@ -5,10 +5,9 @@ import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
+import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.security.OrganizationMembershipVerifier;
 import com.homecare.common.security.VerifiedMembership;
@@ -22,6 +21,8 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.stub.MetadataUtils;
 import net.devh.boot.grpc.client.inject.GrpcClient;
 
+import com.homecare.common.config.HomecareSecurityProperties;
+
 @Component
 public class ProviderOrgClient implements OrganizationMembershipVerifier {
 
@@ -32,8 +33,11 @@ public class ProviderOrgClient implements OrganizationMembershipVerifier {
     @GrpcClient("providerService")
     private ProviderAllocationServiceGrpc.ProviderAllocationServiceBlockingStub providerStub;
 
-    @Value("${homecare.internal.workload-token}")
-    private String workloadToken;
+    private final String workloadToken;
+
+    public ProviderOrgClient(HomecareSecurityProperties securityProperties) {
+        this.workloadToken = securityProperties.getInternal().getWorkloadToken();
+    }
 
     @Override
     public VerifiedMembership verify(UUID organizationId, String userId) {
@@ -52,8 +56,7 @@ public class ProviderOrgClient implements OrganizationMembershipVerifier {
                             .build());
             return VerifiedMembership.of(organizationId, userId, response.getRole(), response.getValid());
         } catch (StatusRuntimeException e) {
-            throw new DomainException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "MEMBERSHIP_UNAVAILABLE", "Membership verification unavailable");
+            throw new DomainException(CommonErrorCode.MEMBERSHIP_UNAVAILABLE);
         } catch (Exception e) {
             log.warn("Provider org membership gRPC verification failed for org {} user {}: {}",
                     organizationId, userId, e.getMessage());

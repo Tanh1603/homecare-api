@@ -3,10 +3,12 @@ package com.homecare.commerce.service;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
@@ -14,9 +16,10 @@ import java.util.stream.Collectors;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import com.homecare.commerce.config.VnpayProperties;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 
@@ -30,11 +33,16 @@ public class VnpaySandboxStrategy {
     private final String payUrl;
     private final String returnUrl;
 
+    @Autowired
+    public VnpaySandboxStrategy(VnpayProperties properties) {
+        this(properties.getTmnCode(), properties.getHashSecret(), properties.getPayUrl(), properties.getReturnUrl());
+    }
+
     public VnpaySandboxStrategy(
-            @Value("${homecare.vnpay.tmn-code}") String tmnCode,
-            @Value("${homecare.vnpay.hash-secret}") String hashSecret,
-            @Value("${homecare.vnpay.pay-url}") String payUrl,
-            @Value("${homecare.vnpay.return-url}") String returnUrl) {
+            String tmnCode,
+            String hashSecret,
+            String payUrl,
+            String returnUrl) {
         this.tmnCode = tmnCode;
         this.hashSecret = hashSecret;
         this.payUrl = payUrl;
@@ -90,9 +98,9 @@ public class VnpaySandboxStrategy {
         });
         String canonical = buildCanonicalQuery(sorted);
         String expected = hmacSha512(hashSecret, canonical);
-        return java.security.MessageDigest.isEqual(
-                expected.toLowerCase(java.util.Locale.ROOT).getBytes(StandardCharsets.UTF_8),
-                providedHash.trim().toLowerCase(java.util.Locale.ROOT).getBytes(StandardCharsets.UTF_8));
+        return MessageDigest.isEqual(
+                expected.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8),
+                providedHash.trim().toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8));
     }
 
     public String signParamsForTest(Map<String, String> params) {

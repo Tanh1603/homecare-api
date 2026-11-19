@@ -1,7 +1,6 @@
 package com.homecare.booking.config;
 
 import org.springframework.amqp.core.TopicExchange;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -14,6 +13,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.homecare.booking.service.BookingLifecycleService;
 import com.homecare.common.idempotency.IdempotencyService;
+import com.homecare.common.config.HomecareSecurityProperties;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
 import com.homecare.common.web.servlet.BaseApiExceptionHandler;
 import com.homecare.common.web.servlet.GatewayOriginFilter;
@@ -48,18 +48,17 @@ public class BookingSecurityAndRabbitConfig {
     }
 
     @Bean
-    public GatewayOriginFilter gatewayOriginFilter(
-            @Value("${homecare.security.enforce-gateway:false}") boolean enforceGateway,
-            @Value("${homecare.security.internal-gateway-secret:homecare-internal-secret-2026}") String gatewaySecret,
-            @Value("${homecare.internal.workload-token:change_me_internal_workload_token}") String workloadToken) {
-        return new GatewayOriginFilter(enforceGateway, gatewaySecret, workloadToken);
+    public GatewayOriginFilter gatewayOriginFilter(HomecareSecurityProperties securityProperties) {
+        return new GatewayOriginFilter(
+                securityProperties.getSecurity().isEnforceGateway(),
+                securityProperties.getSecurity().getInternalGatewaySecret(),
+                securityProperties.getInternal().getWorkloadToken());
     }
 
     @Bean
     @GrpcGlobalServerInterceptor
-    public ServerInterceptor internalWorkloadGrpcInterceptor(
-            @Value("${homecare.internal.workload-token:change_me_internal_workload_token}") String workloadToken) {
-        return new WorkloadAuthServerInterceptor(workloadToken);
+    public ServerInterceptor internalWorkloadGrpcInterceptor(HomecareSecurityProperties securityProperties) {
+        return new WorkloadAuthServerInterceptor(securityProperties.getInternal().getWorkloadToken());
     }
 
     @Bean

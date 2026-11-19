@@ -8,7 +8,6 @@ public enum CommerceErrorCode implements ApiErrorCodeContract {
     ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "error.order.not-found", "Order not found."),
     ORDER_LINE_NOT_FOUND(HttpStatus.NOT_FOUND, "error.order-line.not-found", "Order line not found."),
     PRODUCT_NOT_FOUND(HttpStatus.NOT_FOUND, "error.product.not-found", "Product not found."),
-    ORDER_RETURN_NOT_FOUND(HttpStatus.NOT_FOUND, "error.order-return.not-found", "Order return request not found."),
     RETURN_REQUEST_NOT_FOUND(HttpStatus.NOT_FOUND, "error.return-request.not-found", "Return request not found."),
     MIXED_MERCHANT_ORDER(HttpStatus.CONFLICT, "error.order.mixed-merchant", "All order lines in a single order must belong to the same merchant."),
     STOCK_INSUFFICIENT(HttpStatus.CONFLICT, "error.order.insufficient-stock", "Insufficient stock for product."),

@@ -11,8 +11,6 @@ import org.springframework.data.repository.query.Param;
 import com.homecare.commerce.entity.CommerceOutboxEventEntity;
 
 public interface CommerceOutboxEventRepository extends JpaRepository<CommerceOutboxEventEntity, UUID> {
-    List<CommerceOutboxEventEntity> findByStatusOrderByCreatedAtAsc(String status);
-
     @Query(value = """
             SELECT * FROM commerce_outbox_events
             WHERE status = 'PENDING'

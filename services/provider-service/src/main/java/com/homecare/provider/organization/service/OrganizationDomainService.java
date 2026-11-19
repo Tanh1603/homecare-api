@@ -1,8 +1,11 @@
 package com.homecare.provider.organization.service;
 
 import com.homecare.common.domain.EntityStatus;
+import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.event.DomainEventContracts;
+import com.homecare.common.web.EtagSupport;
+import com.homecare.common.web.PageResponse;
 import com.homecare.provider.entity.ProviderEntity;
 import com.homecare.provider.exception.ProviderErrorCode;
 import com.homecare.provider.organization.dto.OrganizationDtos.AddMemberRequest;
@@ -10,6 +13,7 @@ import com.homecare.provider.organization.dto.OrganizationDtos.MyOrganizationMem
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationMemberResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.RegisterOrganizationRequest;
+import com.homecare.provider.organization.dto.OrganizationDtos.UpdateOrganizationRequest;
 import com.homecare.provider.organization.entity.OrganizationEntity;
 import com.homecare.provider.organization.entity.OrganizationMemberEntity;
 import com.homecare.provider.organization.entity.OrganizationStatus;
@@ -38,6 +42,7 @@ public class OrganizationDomainService {
 
     public static final String EXCHANGE = DomainEventContracts.EXCHANGE;
     public static final String EVT_APPROVED = DomainEventContracts.ORG_APPROVED;
+    public static final String EVT_UPDATED = DomainEventContracts.ORG_UPDATED;
     public static final String EVT_SUSPENDED = DomainEventContracts.ORG_SUSPENDED;
     public static final String EVT_MEMBER_CHANGED = DomainEventContracts.ORG_MEMBER_CHANGED;
 
@@ -45,6 +50,7 @@ public class OrganizationDomainService {
     private final OrganizationMemberRepository memberRepository;
     private final ProviderOutboxEventRepository outboxRepository;
     private final ProviderRepository providerRepository;
+    private final SupabaseRoleClient supabaseRoleClient;
     private final ObjectMapper objectMapper;
 
     @Transactional
@@ -78,6 +84,28 @@ public class OrganizationDomainService {
                 .build());
 
         return toOrgResponse(org);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<MyOrganizationMembershipResponse> listMyOrganizationsPage(String userId, int page, int size) {
+        return slicePage(listMyOrganizations(userId), page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<OrganizationResponse> listAllForAdminPage(OrganizationStatus statusFilter, int page, int size) {
+        return slicePage(listAllForAdmin(statusFilter), page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<OrganizationMemberResponse> listMembersPage(UUID orgId, int page, int size) {
+        return slicePage(listMembers(orgId), page, size);
+    }
+
+    private static <T> PageResponse<T> slicePage(List<T> all, int page, int size) {
+        PageResponse.validate(page, size);
+        int from = Math.min((page - 1) * size, all.size());
+        int to = Math.min(from + size, all.size());
+        return PageResponse.of(all.subList(from, to), page, size, all.size());
     }
 
     @Transactional(readOnly = true)
@@ -239,12 +267,104 @@ public class OrganizationDomainService {
         return toOrgResponse(saved);
     }
 
-    @Transactional(readOnly = true)
-    public List<OrganizationMemberResponse> listMembers(UUID orgId) {
-        return memberRepository.findByOrganizationIdOrderByJoinedAtAsc(orgId)
+    @Transactional
+    public OrganizationResponse reactivateOrganization(UUID orgId) {
+        OrganizationEntity org = organizationRepository.findById(orgId)
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
+        if (org.getStatus() == OrganizationStatus.APPROVED) {
+            return toOrgResponse(org);
+        }
+        if (org.getStatus() != OrganizationStatus.SUSPENDED) {
+            throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE,
+                    "Only SUSPENDED organizations can be reactivated.");
+        }
+
+        Instant now = Instant.now();
+        org.setStatus(OrganizationStatus.APPROVED);
+        org.setRejectReason(null);
+        org.setUpdatedAt(now);
+        OrganizationEntity saved = organizationRepository.save(org);
+
+        providerRepository.findByOrganizationId(orgId).ifPresent(provider -> {
+            provider.setStatus(EntityStatus.ACTIVE.name());
+            providerRepository.save(provider);
+        });
+
+        List<String> activeMemberIds = memberRepository.findByOrganizationIdOrderByJoinedAtAsc(orgId)
                 .stream()
                 .filter(m -> EntityStatus.ACTIVE.name().equalsIgnoreCase(m.getStatus()))
-                .map(this::toMemberResponse)
+                .map(OrganizationMemberEntity::getUserId)
+                .toList();
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("organizationId", saved.getId().toString());
+        data.put("type", saved.getType().name());
+        data.put("name", saved.getName());
+        data.put("city", saved.getCity());
+        data.put("ownerUserId", saved.getOwnerUserId());
+        data.put("affectedUserIds", activeMemberIds);
+
+        enqueueOutbox(saved.getId(), EVT_APPROVED, data, now);
+        return toOrgResponse(saved);
+    }
+
+    @Transactional
+    public OrganizationResponse updateCurrentOrganization(UUID orgId, String ifMatch, UpdateOrganizationRequest req) {
+        if (req.name() == null && req.phone() == null && req.city() == null
+                && req.address() == null && req.description() == null) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "At least one field must be provided.");
+        }
+        OrganizationEntity org = organizationRepository.findById(orgId)
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
+        if (ifMatch != null && !ifMatch.isBlank()) {
+            EtagSupport.verifyIfMatch(ifMatch, org.getVersion());
+        }
+        if (req.name() != null) org.setName(req.name().trim());
+        if (req.phone() != null) org.setPhone(req.phone().trim());
+        if (req.city() != null) org.setCity(req.city().trim());
+        if (req.address() != null) org.setAddress(req.address().trim());
+        if (req.description() != null) org.setDescription(req.description().trim());
+
+        Instant now = Instant.now();
+        org.setUpdatedAt(now);
+        OrganizationEntity saved = organizationRepository.saveAndFlush(org);
+
+        if (saved.getType() == OrganizationType.SERVICE || saved.getType() == OrganizationType.BOTH) {
+            providerRepository.findByOrganizationId(orgId).ifPresent(provider -> {
+                provider.setName(saved.getName());
+                provider.setPhone(saved.getPhone());
+                provider.setCity(saved.getCity());
+                provider.setDescription(saved.getDescription());
+                providerRepository.save(provider);
+            });
+        }
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("organizationId", saved.getId().toString());
+        data.put("name", saved.getName());
+        data.put("type", saved.getType().name());
+        data.put("phone", saved.getPhone());
+        data.put("city", saved.getCity());
+        data.put("address", saved.getAddress());
+        data.put("description", saved.getDescription());
+        data.put("updatedAt", now.toString());
+        enqueueOutbox(saved.getId(), EVT_UPDATED, data, now);
+        return toOrgResponse(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrganizationMemberResponse> listMembers(UUID orgId) {
+        List<OrganizationMemberEntity> active = memberRepository.findByOrganizationIdOrderByJoinedAtAsc(orgId)
+                .stream()
+                .filter(m -> EntityStatus.ACTIVE.name().equalsIgnoreCase(m.getStatus()))
+                .toList();
+        if (active.isEmpty()) {
+            return List.of();
+        }
+        Map<String, SupabaseRoleClient.ProfileSummary> profiles = supabaseRoleClient.fetchProfilesBatch(
+                active.stream().map(OrganizationMemberEntity::getUserId).toList());
+        return active.stream()
+                .map(m -> toMemberResponse(m, profiles.get(m.getUserId())))
                 .toList();
     }
 
@@ -378,10 +498,17 @@ public class OrganizationDomainService {
     }
 
     private OrganizationMemberResponse toMemberResponse(OrganizationMemberEntity m) {
+        return toMemberResponse(m, null);
+    }
+
+    private OrganizationMemberResponse toMemberResponse(
+            OrganizationMemberEntity m, SupabaseRoleClient.ProfileSummary profile) {
         return new OrganizationMemberResponse(
                 m.getId(),
                 m.getOrganizationId(),
                 m.getUserId(),
+                profile != null ? profile.fullName() : null,
+                profile != null ? profile.email() : null,
                 m.getRole(),
                 m.getStatus(),
                 m.getJoinedAt());

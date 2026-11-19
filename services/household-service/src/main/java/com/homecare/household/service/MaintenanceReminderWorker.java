@@ -25,7 +25,7 @@ public class MaintenanceReminderWorker {
     private static final Logger log = LoggerFactory.getLogger(MaintenanceReminderWorker.class);
     static final int MAX_RETRIES = 10;
     public static final String EXCHANGE = DomainEventContracts.EXCHANGE;
-    public static final String ROUTING_KEY = "maintenance.reminder.due.v1";
+    public static final String ROUTING_KEY = DomainEventContracts.MAINTENANCE_REMINDER_DUE;
 
     private final HouseholdDomainService domainService;
     private final HouseholdOutboxEventRepository outboxEventRepository;

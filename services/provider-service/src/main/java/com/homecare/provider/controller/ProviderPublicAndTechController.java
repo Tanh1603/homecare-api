@@ -1,5 +1,7 @@
 package com.homecare.provider.controller;
 
+import com.homecare.common.error.CommonErrorCode;
+import com.homecare.common.error.DomainException;
 import com.homecare.common.security.ActorContext;
 import com.homecare.common.security.ActorContextResolver;
 import com.homecare.common.security.RbacConstants;
@@ -18,7 +20,6 @@ import com.homecare.provider.security.ProviderAccessPolicy;
 import com.homecare.provider.service.ProviderDomainService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -52,12 +53,18 @@ public class ProviderPublicAndTechController {
             @RequestParam(required = false) String category,
             @RequestParam(required = false) UUID providerId,
             @RequestParam(required = false) String q,
+            @RequestParam(defaultValue = "false") boolean includeInactive,
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
+        UUID effectiveProviderId = includeInactive
+                ? resolveAuthorizedInactiveScope(jwt, rawOrgId, providerId, RbacConstants.PERM_SERVICE_MANAGE)
+                : providerId;
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.offeringsPage(category, providerId, q, page, size),
+                service.offeringsPage(category, effectiveProviderId, q, includeInactive, page, size),
                 httpRequest));
     }
 
@@ -98,13 +105,27 @@ public class ProviderPublicAndTechController {
     public ResponseEntity<ApiResponse<PageResponse<TechnicianResponse>>> listTechnicians(
             @RequestParam(required = false) UUID providerId,
             @RequestParam(required = false) String q,
+            @RequestParam(defaultValue = "false") boolean includeInactive,
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
+        UUID effectiveProviderId = includeInactive
+                ? resolveAuthorizedInactiveScope(jwt, rawOrgId, providerId, RbacConstants.PERM_TECHNICIAN_MANAGE)
+                : providerId;
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.techniciansPage(providerId, q, page, size),
+                service.techniciansPage(effectiveProviderId, q, includeInactive, page, size),
                 httpRequest));
+    }
+
+    private UUID resolveAuthorizedInactiveScope(Jwt jwt, String rawOrgId, UUID requestedProviderId, String orgPermission) {
+        if (jwt == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        ActorContext actor = ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId), accessPolicy);
+        return accessPolicy.resolveAuthorizedInactiveScope(actor, requestedProviderId, orgPermission);
     }
 
     @GetMapping("/technicians/{technicianId}")
@@ -118,17 +139,20 @@ public class ProviderPublicAndTechController {
     }
 
     @GetMapping("/technicians/{technicianId}/schedules")
-    public ResponseEntity<ApiResponse<List<ScheduleWindowResponse>>> listSchedules(
+    public ResponseEntity<ApiResponse<PageResponse<ScheduleWindowResponse>>> listSchedules(
             @PathVariable String technicianId,
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
+            @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
+        PageResponse.validate(page, size);
         ActorContext actor = jwt != null
                 ? ActorContextResolver.resolve(jwt, ActorContextResolver.parseOrganizationId(rawOrgId), accessPolicy)
                 : null;
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.listScheduleWindows(technicianId, actor),
+                service.listScheduleWindowsPage(technicianId, actor, page, size),
                 httpRequest));
     }
 
