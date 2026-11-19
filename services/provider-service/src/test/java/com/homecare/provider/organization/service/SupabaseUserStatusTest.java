@@ -64,12 +64,26 @@ class SupabaseUserStatusTest {
             exchange.getResponseBody().write(json);
             exchange.close();
         });
+        listServer.createContext("/rest/v1/user_roles", exchange -> {
+            byte[] json = """
+                    [
+                      {"user_id":"u1","roles":{"code":"ADMIN"}},
+                      {"user_id":"u2","roles":{"code":"ORGANIZATION"}}
+                    ]""".getBytes(UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, json.length);
+            exchange.getResponseBody().write(json);
+            exchange.close();
+        });
         listServer.start();
         try {
             var client = new SupabaseRoleClient("http://127.0.0.1:" + listServer.getAddress().getPort(), "test-secret", "role");
             var users = client.listUsers();
-            assertThat(users).extracting("id", "status")
-                    .containsExactly(tuple("u1", "ACTIVE"), tuple("u2", "SUSPENDED"), tuple("u3", "SUSPENDED"));
+            assertThat(users).extracting("id", "status", "role")
+                    .containsExactly(
+                            tuple("u1", "ACTIVE", "ADMIN"),
+                            tuple("u2", "SUSPENDED", "ORGANIZATION"),
+                            tuple("u3", "SUSPENDED", "CUSTOMER"));
         } finally { listServer.stop(0); }
         var unconfigured = new SupabaseRoleClient("https://placeholder.supabase.co", "placeholder-secret-key", "role");
         assertThatThrownBy(() -> unconfigured.updateUserStatus(UUID.randomUUID(), "SUSPENDED")).isInstanceOf(DomainException.class);

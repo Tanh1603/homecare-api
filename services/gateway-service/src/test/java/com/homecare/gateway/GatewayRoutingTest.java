@@ -37,6 +37,7 @@ class GatewayRoutingTest {
             String corrId = exchange.getRequestHeaders().getFirst("X-Correlation-Id");
             if (corrId != null) {
                 exchange.getResponseHeaders().add("X-Upstream-Correlation-Id", corrId);
+                exchange.getResponseHeaders().add("X-Correlation-Id", corrId);
             }
             String gwSecret = exchange.getRequestHeaders().getFirst("X-Internal-Gateway-Secret");
             if (gwSecret != null) {
@@ -69,6 +70,7 @@ class GatewayRoutingTest {
         assertEquals("identity", response.headers().firstValue("X-Upstream-Fixture").orElseThrow());
         assertEquals("GET /api/v1/services?test=1 ", response.body());
         assertTrue(response.headers().firstValue("X-Correlation-Id").isPresent());
+        assertEquals(1, response.headers().allValues("X-Correlation-Id").size());
         assertTrue(response.headers().firstValue("X-Upstream-Correlation-Id").isPresent());
     }
 

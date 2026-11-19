@@ -110,7 +110,7 @@ public class SupabaseRoleClient {
         }
         try {
             List<Map<String, Object>> rows = restClient.get()
-                    .uri("/rest/v1/profiles?id=in.({ids})&select=id,full_name,email", joined)
+                    .uri("/rest/v1/profiles?id=in.({ids})&select=id,full_name", joined)
                     .header("apikey", secretKey)
                     .header("Authorization", "Bearer " + secretKey)
                     .retrieve()
@@ -122,7 +122,7 @@ public class SupabaseRoleClient {
             for (Map<String, Object> row : rows) {
                 String id = asString(row.get("id"));
                 if (id != null) {
-                    result.put(id, new ProfileSummary(asString(row.get("full_name")), asString(row.get("email"))));
+                    result.put(id, new ProfileSummary(asString(row.get("full_name")), null));
                 }
             }
             return result;
@@ -151,11 +151,20 @@ public class SupabaseRoleClient {
             if (body == null || !(body.get("users") instanceof Collection<?> rawUsers)) {
                 return PageResponse.of(List.of(), page, size, 0L);
             }
-            List<AdminUserResponse> result = new ArrayList<>();
+            List<Map<?, ?>> userEntries = new ArrayList<>();
+            List<String> userIds = new ArrayList<>();
             for (Object entry : rawUsers) {
-                if (!(entry instanceof Map<?, ?> user)) {
-                    continue;
+                if (entry instanceof Map<?, ?> user) {
+                    userEntries.add(user);
+                    String id = asString(user.get("id"));
+                    if (id != null && !id.isBlank()) {
+                        userIds.add(id);
+                    }
                 }
+            }
+            Map<String, List<String>> dbRolesByUser = fetchUserRolesBatch(userIds);
+            List<AdminUserResponse> result = new ArrayList<>();
+            for (Map<?, ?> user : userEntries) {
                 String id = asString(user.get("id"));
                 String email = asString(user.get("email"));
                 Map<?, ?> userMeta = user.get("user_metadata") instanceof Map<?, ?> m ? m : Map.of();
@@ -165,7 +174,7 @@ public class SupabaseRoleClient {
                         asString(userMeta.get("full_name")),
                         asString(userMeta.get("name")),
                         email != null && email.contains("@") ? email.substring(0, email.indexOf('@')) : id);
-                String role = resolveHighestRole(appMeta, userMeta);
+                String role = resolveHighestRole(appMeta, userMeta, dbRolesByUser.getOrDefault(id, List.of()));
                 String status = isUserSuspended(user, appMeta) ? "SUSPENDED" : "ACTIVE";
                 Instant createdAt = parseInstant(asString(user.get("created_at")));
                 result.add(new AdminUserResponse(id, fullName, email != null ? email : "", role, status, createdAt));
@@ -248,8 +257,50 @@ public class SupabaseRoleClient {
         }
     }
 
-    private String resolveHighestRole(Map<?, ?> appMeta, Map<?, ?> userMeta) {
+    private Map<String, List<String>> fetchUserRolesBatch(Collection<String> userIds) {
+        if (!isConfigured() || userIds == null || userIds.isEmpty()) {
+            return Map.of();
+        }
+        String joined = userIds.stream()
+                .filter(id -> id != null && !id.isBlank())
+                .distinct()
+                .collect(Collectors.joining(","));
+        if (joined.isBlank()) {
+            return Map.of();
+        }
+        try {
+            List<Map<String, Object>> rows = restClient.get()
+                    .uri("/rest/v1/user_roles?user_id=in.({ids})&select=user_id,roles(code)", joined)
+                    .header("apikey", secretKey)
+                    .header("Authorization", "Bearer " + secretKey)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+            if (rows == null || rows.isEmpty()) {
+                return Map.of();
+            }
+            Map<String, List<String>> result = new LinkedHashMap<>();
+            for (Map<String, Object> row : rows) {
+                String uid = asString(row.get("user_id"));
+                if (uid == null || !(row.get("roles") instanceof Map<?, ?> roleObj)) {
+                    continue;
+                }
+                String code = asString(roleObj.get("code"));
+                if (code != null && !code.isBlank()) {
+                    result.computeIfAbsent(uid, k -> new ArrayList<>()).add(code.trim());
+                }
+            }
+            return result;
+        } catch (Exception ex) {
+            log.warn("[ADMIN-USERS] Failed batch role lookup from public.user_roles: {}", ex.getMessage());
+            return Map.of();
+        }
+    }
+
+    private String resolveHighestRole(Map<?, ?> appMeta, Map<?, ?> userMeta, List<String> dbRoles) {
         List<String> roles = new ArrayList<>();
+        if (dbRoles != null) {
+            roles.addAll(dbRoles);
+        }
         collectStrings(appMeta.get("roles"), roles);
         collectStrings(appMeta.get("user_roles"), roles);
         collectStrings(userMeta.get("role"), roles);

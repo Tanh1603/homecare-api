@@ -50,7 +50,12 @@ public class GatewayCorrelationFilter implements GlobalFilter, WebFilter, Ordere
     public static ServerWebExchange ensureCorrelationId(ServerWebExchange exchange) {
         String suppliedId = exchange.getRequest().getHeaders().getFirst(CORRELATION_ID_HEADER);
         String resolvedId = CorrelationIdSupport.resolveOrGenerate(suppliedId);
-        exchange.getResponse().getHeaders().set(CORRELATION_ID_HEADER, resolvedId);
+        if (exchange.getAttributes().putIfAbsent(CORRELATION_ID_HEADER, resolvedId) == null) {
+            exchange.getResponse().beforeCommit(() -> {
+                exchange.getResponse().getHeaders().set(CORRELATION_ID_HEADER, resolvedId);
+                return Mono.empty();
+            });
+        }
         ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
                 .headers(headers -> headers.set(CORRELATION_ID_HEADER, resolvedId))
                 .build();
