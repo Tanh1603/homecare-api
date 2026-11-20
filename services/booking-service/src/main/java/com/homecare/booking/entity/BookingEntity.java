@@ -75,6 +75,39 @@ public class BookingEntity {
     @Column(nullable = false)
     private String address;
 
+    @Column(name = "service_address_id")
+    private UUID serviceAddressId;
+
+    @Column(name = "recipient_name", length = 255)
+    private String recipientName;
+
+    @Column(name = "phone_number", length = 50)
+    private String phoneNumber;
+
+    @Column(name = "address_line", length = 500)
+    private String addressLine;
+
+    @Column(name = "ward_code", length = 32)
+    private String wardCode;
+
+    @Column(name = "ward_name", length = 255)
+    private String wardName;
+
+    @Column(name = "province_code", length = 32)
+    private String provinceCode;
+
+    @Column(name = "province_name", length = 255)
+    private String provinceName;
+
+    @Column(name = "formatted_address", length = 1000)
+    private String formattedAddress;
+
+    @Column
+    private Double latitude;
+
+    @Column
+    private Double longitude;
+
     @Column(length = 1000)
     private String notes;
 

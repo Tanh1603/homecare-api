@@ -2,7 +2,9 @@ package com.homecare.commerce.service;
 
 import lombok.RequiredArgsConstructor;
 
+import com.homecare.commerce.client.HouseholdAddressClient;
 import com.homecare.commerce.client.ProviderOrgClient;
+import com.homecare.commerce.dto.CommerceDtos.ShippingAddressSnapshotResponse;
 import com.homecare.commerce.dto.CommerceDtos.ConfirmManualRefundRequest;
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderRequest;
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderReturnRequest;
@@ -70,7 +72,9 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.domain.Sort.Direction;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
@@ -93,6 +97,8 @@ public class CommerceDomainService {
     private final VnpaySandboxStrategy vnpayStrategy;
     private final ObjectMapper objectMapper;
     private final ProviderOrgClient providerOrgClient;
+    private final HouseholdAddressClient householdAddressClient;
+    private final PlatformTransactionManager transactionManager;
     private final CommerceAccessPolicy accessPolicy;
     private final CommerceAppProperties appProperties;
 
@@ -321,8 +327,31 @@ public class CommerceDomainService {
         return createOrder(buyerProfileId, null, request);
     }
 
-    @Transactional
     public OrderResponse createOrder(String buyerProfileId, String buyerName, CreateOrderRequest request) {
+        if (request.shippingAddressId() == null
+                && (request.shippingAddress() == null || request.shippingAddress().isBlank())) {
+            throw new DomainException(
+                    CommonErrorCode.VALIDATION_FAILED,
+                    "Either shippingAddressId or shippingAddress is required.");
+        }
+        HouseholdAddressClient.ResolvedShippingAddress resolvedAddress = request.shippingAddressId() != null
+                ? householdAddressClient.resolveUserAddress(request.shippingAddressId(), buyerProfileId)
+                : null;
+        String canonicalShippingAddress = resolvedAddress != null
+                ? resolvedAddress.formattedAddress()
+                : request.shippingAddress().trim();
+
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        return tx.execute(status -> createOrderInTx(
+                buyerProfileId, buyerName, request, resolvedAddress, canonicalShippingAddress));
+    }
+
+    private OrderResponse createOrderInTx(
+            String buyerProfileId,
+            String buyerName,
+            CreateOrderRequest request,
+            HouseholdAddressClient.ResolvedShippingAddress resolvedAddress,
+            String canonicalShippingAddress) {
         Set<UUID> merchantIds = new HashSet<>();
         long total = 0L;
         Instant now = Instant.now();
@@ -390,7 +419,18 @@ public class CommerceDomainService {
                 .buyerProfileId(buyerProfileId)
                 .buyerName(buyerName)
                 .merchantId(merchantIds.iterator().next())
-                .shippingAddress(request.shippingAddress().trim())
+                .shippingAddress(canonicalShippingAddress)
+                .shippingAddressId(resolvedAddress != null ? resolvedAddress.addressId() : null)
+                .shippingRecipientName(resolvedAddress != null ? resolvedAddress.recipientName() : null)
+                .shippingPhone(resolvedAddress != null ? resolvedAddress.phoneNumber() : null)
+                .shippingAddressLine(resolvedAddress != null ? resolvedAddress.addressLine() : null)
+                .shippingWardCode(resolvedAddress != null ? resolvedAddress.wardCode() : null)
+                .shippingWardName(resolvedAddress != null ? resolvedAddress.wardName() : null)
+                .shippingProvinceCode(resolvedAddress != null ? resolvedAddress.provinceCode() : null)
+                .shippingProvinceName(resolvedAddress != null ? resolvedAddress.provinceName() : null)
+                .shippingFormattedAddress(resolvedAddress != null ? resolvedAddress.formattedAddress() : null)
+                .shippingLatitude(resolvedAddress != null ? resolvedAddress.latitude() : null)
+                .shippingLongitude(resolvedAddress != null ? resolvedAddress.longitude() : null)
                 .totalAmount(total)
                 .status(OrderStatus.AWAITING_PAYMENT.name())
                 .paymentStatus("UNPAID")
@@ -1143,7 +1183,19 @@ public class CommerceDomainService {
                 o.getCreatedAt(),
                 o.getUpdatedAt(),
                 lines,
-                attempts);
+                attempts,
+                o.getShippingAddressId() == null ? null : new ShippingAddressSnapshotResponse(
+                        o.getShippingAddressId(),
+                        o.getShippingRecipientName(),
+                        o.getShippingPhone(),
+                        o.getShippingAddressLine(),
+                        o.getShippingWardCode(),
+                        o.getShippingWardName(),
+                        o.getShippingProvinceCode(),
+                        o.getShippingProvinceName(),
+                        o.getShippingFormattedAddress(),
+                        o.getShippingLatitude(),
+                        o.getShippingLongitude()));
     }
 
     private PaymentAttemptResponse toPaymentAttemptResponse(PaymentAttemptEntity a) {

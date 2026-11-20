@@ -16,7 +16,8 @@ public enum CommerceErrorCode implements ApiErrorCodeContract {
     ORDER_LINE_NOT_DELIVERED(HttpStatus.CONFLICT, "error.order-line.not-delivered", "Only DELIVERED order lines can request a return or exchange."),
     RETURN_QUANTITY_EXCEEDED(HttpStatus.CONFLICT, "error.return.quantity-exceeded", "Requested return quantity exceeds purchased line quantity."),
     RETURN_WINDOW_EXPIRED(HttpStatus.CONFLICT, "error.return.window-expired", "Return window has expired."),
-    RETURN_ALREADY_RESOLVED(HttpStatus.CONFLICT, "error.return.already-resolved", "Return request is already resolved.");
+    RETURN_ALREADY_RESOLVED(HttpStatus.CONFLICT, "error.return.already-resolved", "Return request is already resolved."),
+    HOUSEHOLD_SERVICE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "error.commerce.household-unavailable", "Household service is unavailable.");
 
     private final HttpStatus status;
     private final String messageKey;

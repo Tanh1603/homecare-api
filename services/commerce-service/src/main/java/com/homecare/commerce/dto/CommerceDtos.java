@@ -59,7 +59,25 @@ public final class CommerceDtos {
 
     public record CreateOrderRequest(
             @NotEmpty @Valid List<OrderLineRequest> items,
-            @NotBlank String shippingAddress) {
+            String shippingAddress,
+            UUID shippingAddressId) {
+        public CreateOrderRequest(List<OrderLineRequest> items, String shippingAddress) {
+            this(items, shippingAddress, null);
+        }
+    }
+
+    public record ShippingAddressSnapshotResponse(
+            UUID addressId,
+            String recipientName,
+            String phoneNumber,
+            String addressLine,
+            String wardCode,
+            String wardName,
+            String provinceCode,
+            String provinceName,
+            String formattedAddress,
+            Double latitude,
+            Double longitude) {
     }
 
     public record OrderLineResponse(
@@ -101,13 +119,22 @@ public final class CommerceDtos {
             Instant createdAt,
             Instant updatedAt,
             List<OrderLineResponse> lines,
-            List<PaymentAttemptResponse> paymentAttempts) {
+            List<PaymentAttemptResponse> paymentAttempts,
+            ShippingAddressSnapshotResponse shippingAddressSnapshot) {
+        public OrderResponse(UUID id, String buyerProfileId, String buyerName, UUID merchantId,
+                String shippingAddress, long totalAmount, String status, String paymentStatus,
+                Instant quoteExpiresAt, Long version, Instant createdAt, Instant updatedAt,
+                List<OrderLineResponse> lines, List<PaymentAttemptResponse> paymentAttempts) {
+            this(id, buyerProfileId, buyerName, merchantId, shippingAddress, totalAmount, status, paymentStatus,
+                    quoteExpiresAt, version, createdAt, updatedAt, lines, paymentAttempts, null);
+        }
+
         public OrderResponse(UUID id, String buyerProfileId, UUID merchantId, String shippingAddress,
                 long totalAmount, String status, String paymentStatus, Instant quoteExpiresAt, Long version,
                 Instant createdAt, Instant updatedAt, List<OrderLineResponse> lines,
                 List<PaymentAttemptResponse> paymentAttempts) {
             this(id, buyerProfileId, null, merchantId, shippingAddress, totalAmount, status, paymentStatus,
-                    quoteExpiresAt, version, createdAt, updatedAt, lines, paymentAttempts);
+                    quoteExpiresAt, version, createdAt, updatedAt, lines, paymentAttempts, null);
         }
     }
 

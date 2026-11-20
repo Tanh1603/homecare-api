@@ -38,6 +38,39 @@ public class OrderEntity {
     @Column(name = "shipping_address", nullable = false)
     private String shippingAddress;
 
+    @Column(name = "shipping_address_id")
+    private UUID shippingAddressId;
+
+    @Column(name = "shipping_recipient_name", length = 255)
+    private String shippingRecipientName;
+
+    @Column(name = "shipping_phone", length = 50)
+    private String shippingPhone;
+
+    @Column(name = "shipping_address_line", length = 500)
+    private String shippingAddressLine;
+
+    @Column(name = "shipping_ward_code", length = 32)
+    private String shippingWardCode;
+
+    @Column(name = "shipping_ward_name", length = 255)
+    private String shippingWardName;
+
+    @Column(name = "shipping_province_code", length = 32)
+    private String shippingProvinceCode;
+
+    @Column(name = "shipping_province_name", length = 255)
+    private String shippingProvinceName;
+
+    @Column(name = "shipping_formatted_address", length = 1000)
+    private String shippingFormattedAddress;
+
+    @Column(name = "shipping_latitude")
+    private Double shippingLatitude;
+
+    @Column(name = "shipping_longitude")
+    private Double shippingLongitude;
+
     @Column(name = "total_amount", nullable = false)
     private long totalAmount;
 

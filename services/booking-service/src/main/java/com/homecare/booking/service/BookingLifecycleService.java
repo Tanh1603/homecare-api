@@ -24,6 +24,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import com.homecare.booking.client.HouseholdVerificationClient;
 import com.homecare.booking.client.HouseholdVerificationClient.WarrantyVerificationResult;
 import com.homecare.booking.client.ProviderGrpcClientAdapter;
+import com.homecare.booking.dto.BookingDtos.AddressSnapshotResponse;
 import com.homecare.booking.dto.BookingDtos.ApproveExtraCostRequest;
 import com.homecare.booking.dto.BookingDtos.BookingHistoryResponse;
 import com.homecare.booking.dto.BookingDtos.BookingResponse;
@@ -93,6 +94,18 @@ public class BookingLifecycleService {
     }
 
     public BookingResponse createBooking(String requesterProfileId, String requesterName, CreateBookingRequest request) {
+        if (request.serviceAddressId() == null && (request.address() == null || request.address().isBlank())) {
+            throw new DomainException(
+                    CommonErrorCode.VALIDATION_FAILED,
+                    "Either serviceAddressId or address is required.");
+        }
+        HouseholdVerificationClient.ResolvedServiceAddress resolvedAddress = request.serviceAddressId() != null
+                ? householdVerificationClient.resolveUserAddress(request.serviceAddressId(), requesterProfileId)
+                : null;
+        String canonicalAddress = resolvedAddress != null
+                ? resolvedAddress.formattedAddress()
+                : request.address().trim();
+
         Instant now = Instant.now();
         Instant preferredStart = request.preferredStart() != null
                 ? request.preferredStart()
@@ -211,7 +224,18 @@ public class BookingLifecycleService {
                     .deviceType(finalDeviceType)
                     .preferredStart(preferredStart)
                     .preferredEnd(preferredEnd)
-                    .address(request.address().trim())
+                    .address(canonicalAddress)
+                    .serviceAddressId(resolvedAddress != null ? resolvedAddress.addressId() : null)
+                    .recipientName(resolvedAddress != null ? resolvedAddress.recipientName() : null)
+                    .phoneNumber(resolvedAddress != null ? resolvedAddress.phoneNumber() : null)
+                    .addressLine(resolvedAddress != null ? resolvedAddress.addressLine() : null)
+                    .wardCode(resolvedAddress != null ? resolvedAddress.wardCode() : null)
+                    .wardName(resolvedAddress != null ? resolvedAddress.wardName() : null)
+                    .provinceCode(resolvedAddress != null ? resolvedAddress.provinceCode() : null)
+                    .provinceName(resolvedAddress != null ? resolvedAddress.provinceName() : null)
+                    .formattedAddress(resolvedAddress != null ? resolvedAddress.formattedAddress() : null)
+                    .latitude(resolvedAddress != null ? resolvedAddress.latitude() : null)
+                    .longitude(resolvedAddress != null ? resolvedAddress.longitude() : null)
                     .notes(request.notes())
                     .status("REQUESTED")
                     .allocationStatus("ALLOCATING")
@@ -1175,6 +1199,18 @@ public class BookingLifecycleService {
                 b.getCreatedAt(),
                 b.getUpdatedAt(),
                 history,
-                updates);
+                updates,
+                b.getServiceAddressId() == null ? null : new AddressSnapshotResponse(
+                        b.getServiceAddressId(),
+                        b.getRecipientName(),
+                        b.getPhoneNumber(),
+                        b.getAddressLine(),
+                        b.getWardCode(),
+                        b.getWardName(),
+                        b.getProvinceCode(),
+                        b.getProvinceName(),
+                        b.getFormattedAddress(),
+                        b.getLatitude(),
+                        b.getLongitude()));
     }
 }

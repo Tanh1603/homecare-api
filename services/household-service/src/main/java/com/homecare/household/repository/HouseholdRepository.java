@@ -12,4 +12,5 @@ import com.homecare.household.entity.Household;
 public interface HouseholdRepository extends JpaRepository<Household, UUID> {
     List<Household> findByOwnerProfileIdOrderByCreatedAtDesc(String ownerProfileId);
     Page<Household> findByOwnerProfileIdOrderByCreatedAtDesc(String ownerProfileId, Pageable pageable);
+    List<Household> findByOwnerProfileIdAndDefaultServiceAddressId(String ownerProfileId, UUID defaultServiceAddressId);
 }

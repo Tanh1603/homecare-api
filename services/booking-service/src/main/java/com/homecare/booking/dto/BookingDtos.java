@@ -20,11 +20,12 @@ public final class BookingDtos {
             String deviceType,
             @JsonAlias({"preferredStart", "scheduledAt"}) Instant preferredStart,
             Instant preferredEnd,
-            @NotBlank String address,
+            String address,
             String notes,
             String bookingType,
             UUID warrantyId,
-            UUID preferredProviderId) {
+            UUID preferredProviderId,
+            UUID serviceAddressId) {
 
         public CreateBookingRequest(
                 UUID serviceId,
@@ -34,8 +35,38 @@ public final class BookingDtos {
                 Instant preferredEnd,
                 String address,
                 String notes) {
-            this(serviceId, deviceId, deviceType, preferredStart, preferredEnd, address, notes, "STANDARD", null, null);
+            this(serviceId, deviceId, deviceType, preferredStart, preferredEnd, address, notes,
+                    "STANDARD", null, null, null);
         }
+
+        public CreateBookingRequest(
+                UUID serviceId,
+                UUID deviceId,
+                String deviceType,
+                Instant preferredStart,
+                Instant preferredEnd,
+                String address,
+                String notes,
+                String bookingType,
+                UUID warrantyId,
+                UUID preferredProviderId) {
+            this(serviceId, deviceId, deviceType, preferredStart, preferredEnd, address, notes,
+                    bookingType, warrantyId, preferredProviderId, null);
+        }
+    }
+
+    public record AddressSnapshotResponse(
+            UUID addressId,
+            String recipientName,
+            String phoneNumber,
+            String addressLine,
+            String wardCode,
+            String wardName,
+            String provinceCode,
+            String provinceName,
+            String formattedAddress,
+            Double latitude,
+            Double longitude) {
     }
 
     public record CancelBookingRequest(
@@ -120,7 +151,21 @@ public final class BookingDtos {
             Instant createdAt,
             Instant updatedAt,
             List<BookingHistoryResponse> history,
-            List<WorkUpdateResponse> workUpdates) {
+            List<WorkUpdateResponse> workUpdates,
+            AddressSnapshotResponse addressSnapshot) {
+        public BookingResponse(
+                UUID id, String requesterProfileId, String requesterName, UUID serviceId, String serviceName,
+                UUID providerId, String bookingType, UUID warrantyId, UUID deviceId, String deviceType,
+                UUID assignedTechnicianId, String assignedTechnicianProfileId, String assignedTechnicianName,
+                Instant preferredStart, Instant preferredEnd, String address, String notes, String status,
+                String allocationStatus, long quotedPrice, Long version, Instant createdAt, Instant updatedAt,
+                List<BookingHistoryResponse> history, List<WorkUpdateResponse> workUpdates) {
+            this(id, requesterProfileId, requesterName, serviceId, serviceName, providerId, bookingType, warrantyId,
+                    deviceId, deviceType, assignedTechnicianId, assignedTechnicianProfileId, assignedTechnicianName,
+                    preferredStart, preferredEnd, address, notes, status, allocationStatus, quotedPrice, version,
+                    createdAt, updatedAt, history, workUpdates, null);
+        }
+
         public BookingResponse(
                 UUID id, String requesterProfileId, UUID serviceId, String serviceName, UUID providerId,
                 String bookingType, UUID warrantyId, UUID deviceId, String deviceType, UUID assignedTechnicianId,
@@ -131,7 +176,7 @@ public final class BookingDtos {
             this(id, requesterProfileId, null, serviceId, serviceName, providerId, bookingType, warrantyId,
                     deviceId, deviceType, assignedTechnicianId, assignedTechnicianProfileId, assignedTechnicianName,
                     preferredStart, preferredEnd, address, notes, status, allocationStatus, quotedPrice, version,
-                    createdAt, updatedAt, history, workUpdates);
+                    createdAt, updatedAt, history, workUpdates, null);
         }
     }
 

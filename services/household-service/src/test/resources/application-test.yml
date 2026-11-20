@@ -18,3 +18,5 @@ homecare:
     workload-token: test-internal-token
   maintenance:
     poll-ms: 3600000
+  locations:
+    auto-seed-if-empty: false

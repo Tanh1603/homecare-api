@@ -2,13 +2,18 @@ package com.homecare.household.grpc;
 
 import java.util.UUID;
 
+import com.homecare.common.error.DomainException;
+import com.homecare.household.service.AddressBookService;
 import com.homecare.household.service.HouseholdDomainService;
 import com.homecare.household.v1.HouseholdVerificationServiceGrpc;
+import com.homecare.household.v1.ResolveUserAddressRequest;
+import com.homecare.household.v1.ResolveUserAddressResponse;
 import com.homecare.household.v1.VerifyDeviceReferenceRequest;
 import com.homecare.household.v1.VerifyDeviceReferenceResponse;
 import com.homecare.household.v1.VerifyWarrantyRequest;
 import com.homecare.household.v1.VerifyWarrantyResponse;
 
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import lombok.RequiredArgsConstructor;
 import net.devh.boot.grpc.server.service.GrpcService;
@@ -18,6 +23,7 @@ import net.devh.boot.grpc.server.service.GrpcService;
 public class HouseholdVerificationGrpcService extends HouseholdVerificationServiceGrpc.HouseholdVerificationServiceImplBase {
 
     private final HouseholdDomainService domainService;
+    private final AddressBookService addressBookService;
 
     @Override
     public void verifyDeviceReference(
@@ -84,6 +90,51 @@ public class HouseholdVerificationGrpcService extends HouseholdVerificationServi
                             .build();
             responseObserver.onNext(response);
             responseObserver.onCompleted();
+        }
+    }
+
+    @Override
+    public void resolveUserAddress(
+            ResolveUserAddressRequest request,
+            StreamObserver<ResolveUserAddressResponse> responseObserver) {
+        if (request.getOwnerProfileId().isBlank()) {
+            responseObserver.onError(Status.INVALID_ARGUMENT
+                    .withDescription("owner_profile_id is required.")
+                    .asRuntimeException());
+            return;
+        }
+        UUID addressId;
+        try {
+            addressId = UUID.fromString(request.getAddressId());
+        } catch (IllegalArgumentException e) {
+            responseObserver.onError(Status.INVALID_ARGUMENT
+                    .withDescription("Invalid address_id UUID.")
+                    .asRuntimeException());
+            return;
+        }
+        try {
+            var addr = addressBookService.getAddress(request.getOwnerProfileId().trim(), addressId);
+            boolean hasCoords = addr.latitude() != null && addr.longitude() != null;
+            ResolveUserAddressResponse.Builder builder = ResolveUserAddressResponse.newBuilder()
+                    .setAddressId(addr.id().toString())
+                    .setRecipientName(addr.recipientName())
+                    .setPhoneNumber(addr.phoneNumber())
+                    .setAddressLine(addr.addressLine())
+                    .setWardCode(addr.wardCode())
+                    .setWardName(addr.wardName())
+                    .setProvinceCode(addr.provinceCode())
+                    .setProvinceName(addr.provinceName())
+                    .setFormattedAddress(addr.formattedAddress())
+                    .setHasCoordinates(hasCoords);
+            if (hasCoords) {
+                builder.setLatitude(addr.latitude()).setLongitude(addr.longitude());
+            }
+            responseObserver.onNext(builder.build());
+            responseObserver.onCompleted();
+        } catch (DomainException e) {
+            responseObserver.onError(Status.NOT_FOUND
+                    .withDescription("Address not found.")
+                    .asRuntimeException());
         }
     }
 }

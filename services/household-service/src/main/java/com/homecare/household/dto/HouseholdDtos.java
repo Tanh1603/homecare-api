@@ -5,8 +5,12 @@ import java.time.LocalDate;
 import java.util.UUID;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonSetter;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 public final class HouseholdDtos {
 
@@ -15,14 +19,35 @@ public final class HouseholdDtos {
 
     public record CreateHouseholdRequest(
             @NotBlank String name,
-            @NotBlank String address,
-            String timezone) {
+            String address,
+            String timezone,
+            UUID defaultServiceAddressId) {
+        public CreateHouseholdRequest(String name, String address, String timezone) {
+            this(name, address, timezone, null);
+        }
     }
 
-    public record UpdateHouseholdRequest(
-            String name,
-            String address,
-            String timezone) {
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    public static class UpdateHouseholdRequest {
+        private String name;
+        private String address;
+        private String timezone;
+        private UUID defaultServiceAddressId;
+        private boolean defaultServiceAddressIdProvided;
+
+        public UpdateHouseholdRequest(String name, String address, String timezone) {
+            this.name = name;
+            this.address = address;
+            this.timezone = timezone;
+        }
+
+        @JsonSetter("defaultServiceAddressId")
+        public void setDefaultServiceAddressId(UUID defaultServiceAddressId) {
+            this.defaultServiceAddressId = defaultServiceAddressId;
+            this.defaultServiceAddressIdProvided = true;
+        }
     }
 
     public record HouseholdResponse(
@@ -31,8 +56,19 @@ public final class HouseholdDtos {
             String name,
             String address,
             String timezone,
+            UUID defaultServiceAddressId,
             Instant createdAt,
             Instant updatedAt) {
+        public HouseholdResponse(
+                UUID id,
+                String ownerProfileId,
+                String name,
+                String address,
+                String timezone,
+                Instant createdAt,
+                Instant updatedAt) {
+            this(id, ownerProfileId, name, address, timezone, null, createdAt, updatedAt);
+        }
     }
 
     public record CreateDeviceRequest(

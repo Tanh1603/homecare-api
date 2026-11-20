@@ -33,6 +33,7 @@ import com.homecare.household.entity.Device;
 import com.homecare.household.entity.Household;
 import com.homecare.household.entity.HouseholdOutboxEvent;
 import com.homecare.household.entity.MaintenanceSchedule;
+import com.homecare.household.entity.UserAddress;
 import com.homecare.household.entity.Warranty;
 import com.homecare.household.exception.HouseholdErrorCode;
 import com.homecare.household.repository.CareRecordRepository;
@@ -40,6 +41,7 @@ import com.homecare.household.repository.DeviceRepository;
 import com.homecare.household.repository.HouseholdOutboxEventRepository;
 import com.homecare.household.repository.HouseholdRepository;
 import com.homecare.household.repository.MaintenanceScheduleRepository;
+import com.homecare.household.repository.UserAddressRepository;
 import com.homecare.household.repository.WarrantyRepository;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -66,24 +68,35 @@ public class HouseholdDomainService {
     private final MaintenanceScheduleRepository scheduleRepository;
     private final CareRecordRepository careRecordRepository;
     private final HouseholdOutboxEventRepository outboxEventRepository;
+    private final UserAddressRepository userAddressRepository;
+    private final AddressBookService addressBookService;
     private final ProviderOrgClient providerOrgClient;
     private final HouseholdAccessPolicy accessPolicy;
     private final ObjectMapper objectMapper;
 
     @Transactional
     public HouseholdResponse createHousehold(String ownerProfileId, CreateHouseholdRequest request) {
+        if (request.defaultServiceAddressId() == null && (request.address() == null || request.address().isBlank())) {
+            throw new DomainException(
+                    CommonErrorCode.VALIDATION_FAILED,
+                    "Either defaultServiceAddressId or address must be provided.");
+        }
         Instant now = Instant.now();
-        Household saved = householdRepository.save(Household.builder()
+        Household household = Household.builder()
                 .id(UUID.randomUUID())
                 .ownerProfileId(ownerProfileId)
                 .name(request.name().trim())
-                .address(request.address().trim())
+                .address(request.address() != null ? request.address().trim() : "")
                 .timezone(request.timezone() == null || request.timezone().isBlank()
                         ? "Asia/Ho_Chi_Minh"
                         : request.timezone().trim())
                 .createdAt(now)
                 .updatedAt(now)
-                .build());
+                .build();
+        if (request.defaultServiceAddressId() != null) {
+            assignServiceAddress(household, request.defaultServiceAddressId(), ownerProfileId);
+        }
+        Household saved = householdRepository.save(household);
         return toHouseholdResponse(saved);
     }
 
@@ -103,17 +116,47 @@ public class HouseholdDomainService {
     @Transactional
     public HouseholdResponse updateHousehold(String ownerProfileId, UUID householdId, UpdateHouseholdRequest request) {
         Household h = requireOwnedHousehold(ownerProfileId, householdId);
-        if (request.name() != null && !request.name().isBlank()) {
-            h.setName(request.name().trim());
+        if (request.getName() != null && !request.getName().isBlank()) {
+            h.setName(request.getName().trim());
         }
-        if (request.address() != null && !request.address().isBlank()) {
-            h.setAddress(request.address().trim());
+        if (request.isDefaultServiceAddressIdProvided()) {
+            if (request.getDefaultServiceAddressId() != null) {
+                assignServiceAddress(h, request.getDefaultServiceAddressId(), ownerProfileId);
+            } else {
+                h.setDefaultServiceAddressId(null);
+            }
         }
-        if (request.timezone() != null && !request.timezone().isBlank()) {
-            h.setTimezone(request.timezone().trim());
+        // Only allow legacy address String update when household is not linked to a UserAddress.
+        if (h.getDefaultServiceAddressId() == null && request.getAddress() != null && !request.getAddress().isBlank()) {
+            h.setAddress(request.getAddress().trim());
+        }
+        if (request.getTimezone() != null && !request.getTimezone().isBlank()) {
+            h.setTimezone(request.getTimezone().trim());
         }
         h.setUpdatedAt(Instant.now());
         return toHouseholdResponse(householdRepository.save(h));
+    }
+
+    @Transactional
+    public HouseholdResponse assignHouseholdServiceAddress(String ownerProfileId, UUID householdId, UUID addressId) {
+        Household h = requireOwnedHousehold(ownerProfileId, householdId);
+        assignServiceAddress(h, addressId, ownerProfileId);
+        h.setUpdatedAt(Instant.now());
+        return toHouseholdResponse(householdRepository.save(h));
+    }
+
+    private void assignServiceAddress(Household household, UUID addressId, String actorUserId) {
+        if (!household.getOwnerProfileId().equals(actorUserId)) {
+            throw new DomainException(HouseholdErrorCode.HOUSEHOLD_NOT_FOUND);
+        }
+        UserAddress address = userAddressRepository.lockByIdAndOwner(addressId, actorUserId)
+                .filter(UserAddress::isActive)
+                .orElseThrow(() -> new DomainException(
+                        CommonErrorCode.RESOURCE_NOT_FOUND,
+                        "Service address not found."));
+        String formatted = addressBookService.toAddressResponse(address).formattedAddress();
+        household.setDefaultServiceAddressId(address.getId());
+        household.setAddress(formatted);
     }
 
     @Transactional
@@ -768,6 +811,7 @@ public class HouseholdDomainService {
                 h.getName(),
                 h.getAddress(),
                 h.getTimezone(),
+                h.getDefaultServiceAddressId(),
                 h.getCreatedAt(),
                 h.getUpdatedAt());
     }
