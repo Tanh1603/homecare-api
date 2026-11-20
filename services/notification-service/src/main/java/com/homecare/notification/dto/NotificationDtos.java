@@ -16,6 +16,7 @@ public final class NotificationDtos {
             String eventType,
             String title,
             String body,
+            String deeplink,
             boolean read,
             Instant readAt,
             Instant createdAt) {

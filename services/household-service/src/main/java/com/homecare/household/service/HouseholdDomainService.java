@@ -18,6 +18,7 @@ import com.homecare.household.dto.HouseholdDtos.CreateHouseholdRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateMaintenanceScheduleRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateWarrantyRequest;
 import com.homecare.household.dto.HouseholdDtos.DeviceResponse;
+import com.homecare.household.dto.HouseholdDtos.DeviceLifecycleResponse;
 import com.homecare.household.dto.HouseholdDtos.HouseholdResponse;
 import com.homecare.household.dto.HouseholdDtos.MaintenanceScheduleResponse;
 import com.homecare.household.dto.HouseholdDtos.UpdateCareRecordRequest;
@@ -25,6 +26,7 @@ import com.homecare.household.dto.HouseholdDtos.UpdateDeviceRequest;
 import com.homecare.household.dto.HouseholdDtos.UpdateHouseholdRequest;
 import com.homecare.household.dto.HouseholdDtos.UpdateMaintenanceScheduleRequest;
 import com.homecare.household.dto.HouseholdDtos.UpdateWarrantyRequest;
+import com.homecare.household.dto.HouseholdDtos.RegisterSerialRequest;
 import com.homecare.household.dto.HouseholdDtos.VerifyDeviceReferenceResponse;
 import com.homecare.household.dto.HouseholdDtos.VerifyWarrantyResponse;
 import com.homecare.household.dto.HouseholdDtos.WarrantyResponse;
@@ -33,24 +35,29 @@ import com.homecare.household.entity.Device;
 import com.homecare.household.entity.Household;
 import com.homecare.household.entity.HouseholdOutboxEvent;
 import com.homecare.household.entity.MaintenanceSchedule;
+import com.homecare.household.entity.MaintenancePolicyEntity;
 import com.homecare.household.entity.UserAddress;
 import com.homecare.household.entity.Warranty;
+import com.homecare.household.entity.ManufacturerRegistrationStatus;
 import com.homecare.household.exception.HouseholdErrorCode;
 import com.homecare.household.repository.CareRecordRepository;
 import com.homecare.household.repository.DeviceRepository;
 import com.homecare.household.repository.HouseholdOutboxEventRepository;
 import com.homecare.household.repository.HouseholdRepository;
 import com.homecare.household.repository.MaintenanceScheduleRepository;
+import com.homecare.household.repository.MaintenancePolicyRepository;
 import com.homecare.household.repository.UserAddressRepository;
 import com.homecare.household.repository.WarrantyRepository;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.IntStream;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.PageRequest;
@@ -61,11 +68,11 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class HouseholdDomainService {
-
     private final HouseholdRepository householdRepository;
     private final DeviceRepository deviceRepository;
     private final WarrantyRepository warrantyRepository;
     private final MaintenanceScheduleRepository scheduleRepository;
+    private final MaintenancePolicyRepository maintenancePolicyRepository;
     private final CareRecordRepository careRecordRepository;
     private final HouseholdOutboxEventRepository outboxEventRepository;
     private final UserAddressRepository userAddressRepository;
@@ -191,6 +198,7 @@ public class HouseholdDomainService {
                 .createdAt(now)
                 .updatedAt(now)
                 .build());
+        createScheduleFromApprovedPolicy(saved.getId());
         return toDeviceResponse(saved);
     }
 
@@ -352,50 +360,262 @@ public class HouseholdDomainService {
             String brand,
             String productType,
             int warrantyMonths) {
-        if (warrantyMonths <= 0) {
-            return null;
-        }
-        Optional<Warranty> existing = warrantyRepository.findByOrderLineId(orderLineId);
-        if (existing.isPresent()) {
-            return toWarrantyResponse(existing.get());
+        List<WarrantyResponse> created = autoActivateFromOrderLineDelivered(
+                buyerProfileId,
+                buyerName,
+                organizationId,
+                merchantName,
+                orderId,
+                orderLineId,
+                productId,
+                productName,
+                category,
+                brand,
+                productType,
+                null,
+                null,
+                "DELIVERY_DATE",
+                warrantyMonths,
+                1,
+                List.of(),
+                null);
+        return created.isEmpty() ? null : created.getFirst();
+    }
+
+    @Transactional
+    public List<WarrantyResponse> autoActivateFromOrderLineDelivered(
+            String buyerProfileId,
+            String buyerName,
+            UUID organizationId,
+            String merchantName,
+            UUID orderId,
+            UUID orderLineId,
+            UUID productId,
+            String productName,
+            String category,
+            String brand,
+            String productType,
+            String model,
+            String deviceEligibility,
+            String warrantyStartTrigger,
+            int warrantyMonths,
+            int quantityDelivered,
+            List<String> unitKeys,
+            String shippingAddressFallback) {
+        boolean createsDevice = "REQUIRED".equalsIgnoreCase(deviceEligibility)
+                || "OPTIONAL".equalsIgnoreCase(deviceEligibility);
+        if (!createsDevice && warrantyMonths <= 0) {
+            return List.of();
         }
 
-        UUID householdId = ensureDefaultHouseholdId(buyerProfileId);
+        String resolvedModel = (model != null && !model.isBlank()) ? model.trim() : null;
+        String trigger = (warrantyStartTrigger == null || warrantyStartTrigger.isBlank())
+                ? "DELIVERY_DATE"
+                : warrantyStartTrigger.trim().toUpperCase();
+        boolean activateNow = "DELIVERY_DATE".equals(trigger) || "PURCHASE".equals(trigger);
+
+        List<String> effectiveUnitKeys;
+        if (createsDevice) {
+            List<String> normalizedKeys = unitKeys == null ? List.of()
+                    : unitKeys.stream()
+                            .filter(k -> k != null && !k.isBlank())
+                            .map(String::trim)
+                            .distinct()
+                            .toList();
+            if (!normalizedKeys.isEmpty()) {
+                effectiveUnitKeys = normalizedKeys;
+            } else {
+                int units = Math.max(1, quantityDelivered);
+                effectiveUnitKeys = IntStream.rangeClosed(1, units)
+                        .mapToObj(i -> orderLineId + ":" + i)
+                        .toList();
+            }
+        } else {
+            effectiveUnitKeys = List.of(orderLineId + ":orderline");
+        }
+
+        UUID householdId = createsDevice ? ensureDefaultHouseholdId(buyerProfileId, shippingAddressFallback) : null;
         Instant now = Instant.now();
         LocalDate today = LocalDate.now();
-        Device createdDevice = deviceRepository.saveAndFlush(Device.builder()
-                .id(UUID.randomUUID())
-                .householdId(householdId)
-                .ownerProfileId(buyerProfileId)
-                .name(productName != null && !productName.isBlank() ? productName.trim() : "Thiết bị mua tại HomeCare")
-                .deviceType(category != null && !category.isBlank() ? category.trim().toUpperCase() : "AC")
-                .brand(brand != null && !brand.isBlank() ? brand.trim() : "HomeCare")
-                .model(productType != null && !productType.isBlank() ? productType.trim() : "MAJOR_PART")
-                .purchaseDate(today)
-                .status(EntityStatus.ACTIVE.name())
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
+        List<WarrantyResponse> results = new ArrayList<>();
 
-        Warranty savedWarranty = warrantyRepository.save(Warranty.builder()
-                .id(UUID.randomUUID())
-                .deviceId(createdDevice.getId())
-                .ownerProfileId(buyerProfileId)
-                .ownerName(buyerName)
-                .organizationId(organizationId)
-                .orderId(orderId)
-                .orderLineId(orderLineId)
-                .productId(productId)
-                .source("ORDER_AUTO_ACTIVATED")
-                .providerName(
-                        merchantName != null && !merchantName.isBlank() ? merchantName.trim() : "Cửa hàng HomeCare")
-                .startsOn(today)
-                .endsOn(today.plusMonths(warrantyMonths))
-                .notes("Bảo hành điện tử tự động kích hoạt (" + warrantyMonths + " tháng) từ đơn hàng #" + orderId)
-                .status(EntityStatus.ACTIVE.name())
-                .createdAt(now)
-                .build());
-        return toWarrantyResponse(savedWarranty);
+        for (String unitKey : effectiveUnitKeys) {
+            Optional<Warranty> existingWarranty = warrantyRepository.findByUnitKey(unitKey);
+            if (existingWarranty.isEmpty() && effectiveUnitKeys.size() == 1 && (unitKeys == null || unitKeys.isEmpty())) {
+                existingWarranty = warrantyRepository.findFirstByOrderLineIdOrderByCreatedAtAsc(orderLineId);
+            }
+            if (existingWarranty.isPresent()) {
+                results.add(toWarrantyResponse(existingWarranty.get()));
+                continue;
+            }
+
+            Device unitDevice = null;
+            if (createsDevice) {
+                unitDevice = deviceRepository.findByUnitKey(unitKey).orElseGet(() -> deviceRepository.saveAndFlush(
+                        Device.builder()
+                                .id(UUID.randomUUID())
+                                .householdId(householdId)
+                                .ownerProfileId(buyerProfileId)
+                                .name(productName != null && !productName.isBlank() ? productName.trim()
+                                        : "Thiết bị mua tại HomeCare")
+                                .deviceType(category != null && !category.isBlank() ? category.trim().toUpperCase() : "AC")
+                                .brand(brand != null && !brand.isBlank() ? brand.trim() : "HomeCare")
+                                .model(resolvedModel)
+                                .unitKey(unitKey)
+                                .purchaseDate(today)
+                                .status(EntityStatus.ACTIVE.name())
+                                .createdAt(now)
+                                .updatedAt(now)
+                                .build()));
+            }
+
+            if (warrantyMonths > 0) {
+                LocalDate startsOn = activateNow ? today : null;
+                LocalDate endsOn = activateNow ? today.plusMonths(warrantyMonths) : null;
+                String status = activateNow ? EntityStatus.ACTIVE.name() : "PENDING_TRIGGER";
+                Warranty savedWarranty = warrantyRepository.save(Warranty.builder()
+                        .id(UUID.randomUUID())
+                        .deviceId(unitDevice != null ? unitDevice.getId() : null)
+                        .ownerProfileId(buyerProfileId)
+                        .ownerName(buyerName)
+                        .organizationId(organizationId)
+                        .warrantyResponsibleOrgId(organizationId)
+                        .orderId(orderId)
+                        .orderLineId(orderLineId)
+                        .productId(productId)
+                        .unitKey(unitKey)
+                        .startTrigger(trigger)
+                        .coverageMonths(warrantyMonths)
+                        .manufacturerRegistrationStatus(ManufacturerRegistrationStatus.NOT_VERIFIED)
+                        .source("ORDER_AUTO_ACTIVATED")
+                        .providerName(merchantName != null && !merchantName.isBlank()
+                                ? merchantName.trim()
+                                : "Cửa hàng HomeCare")
+                        .startsOn(startsOn)
+                        .endsOn(endsOn)
+                        .notes("Bảo hành điện tử tự động kích hoạt (" + warrantyMonths + " tháng) từ đơn hàng #" + orderId)
+                        .status(status)
+                        .createdAt(now)
+                        .build());
+                results.add(toWarrantyResponse(savedWarranty));
+            }
+        }
+        return results;
+    }
+
+    @Transactional
+    public void recordInstallationCompleted(
+            UUID bookingId,
+            UUID deviceId,
+            UUID orderLineId,
+            UUID executorOrgId,
+            Instant completedAt,
+            List<String> evidenceRefs) {
+        if (bookingId == null) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Installation completion requires bookingId.");
+        }
+        if (evidenceRefs == null || evidenceRefs.isEmpty()) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Installation completion requires evidence.");
+        }
+        List<Warranty> warranties = orderLineId == null
+                ? new ArrayList<>()
+                : new ArrayList<>(warrantyRepository.findAllByOrderLineIdForUpdate(orderLineId));
+        if (deviceId != null) {
+            warrantyRepository.findByDeviceIdOrderByEndsOnDesc(deviceId).stream()
+                    .filter(w -> !warranties.contains(w))
+                    .forEach(warranties::add);
+        }
+        for (Warranty warranty : warranties) {
+            if (deviceId != null && warranty.getDeviceId() != null
+                    && !deviceId.equals(warranty.getDeviceId())) {
+                continue;
+            }
+            Device device = warranty.getDeviceId() == null ? null
+                    : deviceRepository.findById(warranty.getDeviceId()).orElse(null);
+            if (device == null && deviceId != null) {
+                device = deviceRepository.findById(deviceId).orElse(null);
+                if (device != null) {
+                    warranty.setDeviceId(device.getId());
+                }
+            }
+            boolean firstInstallation = device != null && !"COMPLETED".equalsIgnoreCase(device.getInstallationStatus());
+            if (device != null && firstInstallation) {
+                device.setInstallationStatus("COMPLETED");
+                device.setInstallationCompletedAt(completedAt != null ? completedAt : Instant.now());
+                device.setInstallationBookingId(bookingId);
+                device.setInstallationEvidenceRefs(evidenceRefs == null ? null : String.join(",", evidenceRefs));
+                deviceRepository.save(device);
+            }
+            if (!"INSTALLATION_COMPLETED".equalsIgnoreCase(warranty.getStartTrigger())) {
+                continue;
+            }
+            if (device == null || device.getSerialNumber() == null || device.getSerialNumber().isBlank()) {
+                warranty.setStatus("PENDING_SERIAL");
+            } else if (!"ACTIVE".equalsIgnoreCase(warranty.getStatus())) {
+                activateInstallationWarranty(warranty);
+            }
+            if (!"ACTIVE".equalsIgnoreCase(warranty.getStatus())) {
+                warranty.setWarrantyResponsibleOrgId(executorOrgId != null ? executorOrgId : warranty.getWarrantyResponsibleOrgId());
+                warranty.setTriggerEvidenceRef(String.join(",", evidenceRefs));
+                warrantyRepository.save(warranty);
+            }
+            if (device != null && careRecordRepository.findFirstByDeviceIdAndKindOrderByCreatedAtAsc(
+                    device.getId(), "INSTALLATION").isEmpty()) {
+                careRecordRepository.save(CareRecord.builder()
+                        .id(UUID.randomUUID())
+                        .deviceId(device.getId())
+                        .ownerProfileId(device.getOwnerProfileId())
+                        .kind("INSTALLATION")
+                        .occurredAt(completedAt != null ? completedAt : Instant.now())
+                        .title("Installation completed")
+                        .notes(evidenceRefs == null ? null : String.join(",", evidenceRefs))
+                        .bookingId(bookingId)
+                        .createdAt(Instant.now())
+                        .build());
+            }
+        }
+    }
+
+    private void activateInstallationWarranty(Warranty warranty) {
+        LocalDate startsOn = LocalDate.now();
+        warranty.setStartsOn(startsOn);
+        warranty.setEndsOn(startsOn.plusMonths(warranty.getCoverageMonths() == null ? 0 : warranty.getCoverageMonths()));
+        warranty.setStatus(EntityStatus.ACTIVE.name());
+    }
+
+    @Transactional
+    public DeviceResponse registerSerial(String ownerProfileId, UUID deviceId, RegisterSerialRequest request) {
+        Device device = requireOwnedDevice(ownerProfileId, deviceId);
+        device.setSerialNumber(request.serialNumber().trim());
+        device.setUpdatedAt(Instant.now());
+        Device saved = deviceRepository.saveAndFlush(device);
+        warrantyRepository.findByDeviceIdOrderByEndsOnDesc(deviceId).stream()
+                .filter(w -> "PENDING_SERIAL".equalsIgnoreCase(w.getStatus()))
+                .forEach(w -> {
+                    activateInstallationWarranty(w);
+                    warrantyRepository.save(w);
+                });
+        return toDeviceResponse(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public DeviceLifecycleResponse getDeviceLifecycle(String ownerProfileId, UUID deviceId) {
+        Device device = requireOwnedDevice(ownerProfileId, deviceId);
+        Warranty warranty = warrantyRepository.findByDeviceIdOrderByEndsOnDesc(deviceId).stream().findFirst().orElse(null);
+        return new DeviceLifecycleResponse(
+                device.getId(), device.getHouseholdId(), device.getOwnerProfileId(), device.getName(),
+                device.getDeviceType(), device.getBrand(), device.getModel(), device.getSerialNumber(),
+                device.getInstallationStatus(), device.getInstallationCompletedAt(), device.getInstallationBookingId(),
+                warranty == null ? null : warranty.getOrderId(), warranty == null ? null : warranty.getOrderLineId(),
+                warranty == null ? null : warranty.getStatus(), warranty == null ? null : warranty.getSource(),
+                warranty == null || warranty.getManufacturerRegistrationStatus() == null
+                        ? null : warranty.getManufacturerRegistrationStatus().name(),
+                warranty == null ? null : warranty.getTriggerEvidenceRef(),
+                scheduleRepository.findByDeviceIdOrderByDueOnAsc(deviceId).stream().map(this::toScheduleResponse).toList(),
+                careRecordRepository.findByDeviceIdOrderByOccurredAtDesc(deviceId).stream().map(this::toCareRecordResponse).toList(),
+                List.of());
     }
 
     @Transactional
@@ -409,29 +629,104 @@ public class HouseholdDomainService {
         if (bookingId == null || deviceId == null) {
             return null;
         }
-        Optional<CareRecord> existing = careRecordRepository.findByBookingId(bookingId);
-        if (existing.isPresent()) {
-            return toCareRecordResponse(existing.get());
-        }
-        Optional<Device> deviceOpt = deviceRepository.findById(deviceId);
+        Optional<Device> deviceOpt = deviceRepository.findLockedById(deviceId);
         if (deviceOpt.isEmpty()) {
             return null;
         }
-        Device device = deviceOpt.get();
-        String kind = "WARRANTY_CLAIM".equalsIgnoreCase(bookingType) ? "WARRANTY_REPAIR" : "PAID_REPAIR";
-        Instant now = Instant.now();
-        CareRecord saved = careRecordRepository.save(CareRecord.builder()
+        try {
+            Optional<CareRecord> existing = careRecordRepository.findByBookingId(bookingId);
+            if (existing.isPresent()) {
+                return toCareRecordResponse(existing.get());
+            }
+            Device device = deviceOpt.get();
+            String kind = "WARRANTY_CLAIM".equalsIgnoreCase(bookingType) ? "WARRANTY_REPAIR"
+                    : ("MAINTENANCE".equalsIgnoreCase(bookingType)
+                            || "MAINTENANCE_SERVICE".equalsIgnoreCase(bookingType)
+                                    ? "MAINTENANCE" : "PAID_REPAIR");
+            Instant now = Instant.now();
+            CareRecord saved = careRecordRepository.saveAndFlush(CareRecord.builder()
+                    .id(UUID.randomUUID())
+                    .deviceId(device.getId())
+                    .ownerProfileId(requesterProfileId != null ? requesterProfileId : device.getOwnerProfileId())
+                    .kind(kind)
+                    .occurredAt(now)
+                    .title(serviceName != null && !serviceName.isBlank() ? serviceName : kind)
+                    .notes(notes)
+                    .bookingId(bookingId)
+                    .createdAt(now)
+                    .build());
+            if ("MAINTENANCE".equals(kind)) {
+                advanceMaintenanceSchedule(deviceId, now);
+            }
+            return toCareRecordResponse(saved);
+        } catch (org.springframework.dao.DataIntegrityViolationException duplicate) {
+            return careRecordRepository.findByBookingId(bookingId)
+                    .map(this::toCareRecordResponse)
+                    .orElseThrow(() -> duplicate);
+        }
+    }
+
+    private void advanceMaintenanceSchedule(UUID deviceId, Instant servicedAt) {
+        scheduleRepository.findByDeviceIdOrderByDueOnAsc(deviceId).stream()
+                .filter(s -> !"CANCELLED".equalsIgnoreCase(s.getStatus()))
+                .findFirst()
+                .ifPresent(schedule -> {
+                    int cadence = schedule.getCadenceMonths() == null ? 6 : schedule.getCadenceMonths();
+                    schedule.setDueOn(schedule.getDueOn().plusMonths(cadence));
+                    schedule.setStatus("SCHEDULED");
+                    schedule.setNotifiedAt(null);
+                    schedule.setCompletedAt(servicedAt);
+                    schedule.setLastServicedAt(servicedAt);
+                    scheduleRepository.save(schedule);
+                });
+    }
+
+    @Transactional
+    public MaintenanceScheduleResponse createScheduleFromApprovedPolicy(UUID deviceId) {
+        Device device = deviceRepository.findById(deviceId).orElse(null);
+        if (device == null) {
+            return null;
+        }
+        Optional<MaintenancePolicyEntity> policy = maintenancePolicyRepository
+                .findFirstByCategoryAndModelAndStatusAndConsentGrantedTrueOrderByPolicyVersionDesc(
+                        device.getDeviceType(), device.getModel(), "APPROVED");
+        if (policy.isEmpty()) {
+            return null;
+        }
+        MaintenancePolicyEntity p = policy.get();
+        if (p.getDeviceId() != null && !p.getDeviceId().equals(deviceId)) {
+            return null;
+        }
+        if (scheduleRepository.existsByDeviceIdAndPolicyVersion(deviceId, p.getPolicyVersion())) {
+            return scheduleRepository.findByDeviceIdOrderByDueOnAsc(deviceId).stream()
+                    .filter(s -> java.util.Objects.equals(s.getPolicyVersion(), p.getPolicyVersion()))
+                    .findFirst().map(this::toScheduleResponse).orElse(null);
+        }
+        MaintenanceSchedule saved = scheduleRepository.save(MaintenanceSchedule.builder()
                 .id(UUID.randomUUID())
-                .deviceId(device.getId())
-                .ownerProfileId(requesterProfileId != null ? requesterProfileId : device.getOwnerProfileId())
-                .kind(kind)
-                .occurredAt(now)
-                .title(serviceName != null && !serviceName.isBlank() ? serviceName : kind)
-                .notes(notes)
-                .bookingId(bookingId)
-                .createdAt(now)
+                .deviceId(deviceId)
+                .ownerProfileId(device.getOwnerProfileId())
+                .title(p.getTitle())
+                .cadenceMonths(p.getCadenceMonths())
+                .policyVersion(p.getPolicyVersion())
+                .dueOn(p.getFirstDueOn() == null
+                        ? LocalDate.now().plusMonths(p.getCadenceMonths())
+                        : p.getFirstDueOn())
+                .status("SCHEDULED")
+                .createdAt(Instant.now())
                 .build());
-        return toCareRecordResponse(saved);
+        return toScheduleResponse(saved);
+    }
+
+    @Transactional
+    public MaintenancePolicyEntity createMaintenancePolicy(MaintenancePolicyEntity policy) {
+        MaintenancePolicyEntity saved = maintenancePolicyRepository.saveAndFlush(policy);
+        deviceRepository.findAll().stream()
+                .filter(d -> d.getDeviceType().equalsIgnoreCase(saved.getCategory()))
+                .filter(d -> d.getModel().equalsIgnoreCase(saved.getModel()))
+                .filter(d -> saved.getDeviceId() == null || saved.getDeviceId().equals(d.getId()))
+                .forEach(d -> createScheduleFromApprovedPolicy(d.getId()));
+        return saved;
     }
 
     @Transactional(readOnly = true)
@@ -624,6 +919,10 @@ public class HouseholdDomainService {
         if (!r.getOwnerProfileId().equals(ownerProfileId)) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this care record.");
         }
+        if ("INSTALLATION".equalsIgnoreCase(r.getKind())) {
+            throw new DomainException(CommonErrorCode.OPERATION_FORBIDDEN,
+                    "Installation history is immutable.");
+        }
         if (request.kind() != null && !request.kind().isBlank()) {
             r.setKind(request.kind().trim().toUpperCase());
         }
@@ -646,6 +945,10 @@ public class HouseholdDomainService {
         if (!r.getOwnerProfileId().equals(ownerProfileId)) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this care record.");
         }
+        if ("INSTALLATION".equalsIgnoreCase(r.getKind())) {
+            throw new DomainException(CommonErrorCode.OPERATION_FORBIDDEN,
+                    "Installation history is immutable.");
+        }
         careRecordRepository.delete(r);
     }
 
@@ -659,14 +962,18 @@ public class HouseholdDomainService {
                         d.getHouseholdId(),
                         d.getDeviceType(),
                         d.getName(),
-                        d.getStatus()))
+                        d.getStatus(),
+                        d.getBrand(),
+                        d.getModel()))
                 .orElseGet(() -> new VerifyDeviceReferenceResponse(
                         false,
                         deviceId,
                         null,
                         null,
                         null,
-                        "NOT_FOUND_OR_FORBIDDEN"));
+                        "NOT_FOUND_OR_FORBIDDEN",
+                        null,
+                        null));
     }
 
     @Transactional(readOnly = true)
@@ -685,7 +992,7 @@ public class HouseholdDomainService {
                     "NOT_FOUND_OR_FORBIDDEN");
         }
         Warranty w = warrantyOpt.get();
-        Device device = deviceRepository.findById(w.getDeviceId()).orElse(null);
+        Device device = w.getDeviceId() != null ? deviceRepository.findById(w.getDeviceId()).orElse(null) : null;
         String deviceType = device != null ? device.getDeviceType() : "AC";
         if (!"ORDER_AUTO_ACTIVATED".equalsIgnoreCase(w.getSource()) || w.getOrganizationId() == null) {
             return new VerifyWarrantyResponse(
@@ -699,7 +1006,20 @@ public class HouseholdDomainService {
                     w.getEndsOn(),
                     "NOT_STORE_WARRANTY");
         }
-        boolean isExpired = w.getEndsOn().isBefore(LocalDate.now()) || !EntityStatus.ACTIVE.name().equalsIgnoreCase(w.getStatus());
+        if ("PENDING_TRIGGER".equalsIgnoreCase(w.getStatus())) {
+            return new VerifyWarrantyResponse(
+                    false,
+                    false,
+                    w.getId(),
+                    w.getDeviceId(),
+                    deviceType,
+                    w.getOrganizationId(),
+                    w.getProviderName(),
+                    w.getEndsOn(),
+                    "PENDING_TRIGGER");
+        }
+        boolean isExpired = (w.getEndsOn() == null || w.getEndsOn().isBefore(LocalDate.now()))
+                || !EntityStatus.ACTIVE.name().equalsIgnoreCase(w.getStatus());
         if (isExpired) {
             return new VerifyWarrantyResponse(
                     false,
@@ -776,13 +1096,31 @@ public class HouseholdDomainService {
     }
 
     private UUID ensureDefaultHouseholdId(String ownerProfileId) {
+        return ensureDefaultHouseholdId(ownerProfileId, null);
+    }
+
+    private UUID ensureDefaultHouseholdId(String ownerProfileId, String fallbackAddress) {
         List<Household> households = householdRepository.findByOwnerProfileIdOrderByCreatedAtDesc(ownerProfileId);
         if (!households.isEmpty()) {
             return households.getFirst().getId();
         }
+        var activeAddresses = userAddressRepository.findActiveWithLocationByOwner(ownerProfileId);
+        if (!activeAddresses.isEmpty()) {
+            HouseholdResponse created = createHousehold(
+                    ownerProfileId,
+                    new CreateHouseholdRequest(
+                            "Gia đình của tôi",
+                            null,
+                            "Asia/Ho_Chi_Minh",
+                            activeAddresses.getFirst().getId()));
+            return created.id();
+        }
+        String resolvedAddress = (fallbackAddress != null && !fallbackAddress.isBlank())
+                ? fallbackAddress.trim()
+                : "Chưa cập nhật địa chỉ";
         HouseholdResponse created = createHousehold(
                 ownerProfileId,
-                new CreateHouseholdRequest("Gia đình của tôi", "TP. Hồ Chí Minh", "Asia/Ho_Chi_Minh"));
+                new CreateHouseholdRequest("Gia đình của tôi", resolvedAddress, "Asia/Ho_Chi_Minh"));
         return created.id();
     }
 
@@ -853,6 +1191,8 @@ public class HouseholdDomainService {
                 w.getNotes(),
                 w.getDocumentUrl(),
                 w.getStatus(),
+                w.getManufacturerRegistrationStatus() == null ? null : w.getManufacturerRegistrationStatus().name(),
+                w.getTriggerEvidenceRef(),
                 w.getCreatedAt());
     }
 

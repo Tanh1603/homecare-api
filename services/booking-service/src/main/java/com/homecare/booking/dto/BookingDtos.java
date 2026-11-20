@@ -25,7 +25,10 @@ public final class BookingDtos {
             String bookingType,
             UUID warrantyId,
             UUID preferredProviderId,
-            UUID serviceAddressId) {
+            UUID serviceAddressId,
+            UUID orderId,
+            UUID orderLineId,
+            String purpose) {
 
         public CreateBookingRequest(
                 UUID serviceId,
@@ -36,7 +39,7 @@ public final class BookingDtos {
                 String address,
                 String notes) {
             this(serviceId, deviceId, deviceType, preferredStart, preferredEnd, address, notes,
-                    "STANDARD", null, null, null);
+                    "STANDARD", null, null, null, null, null, "REPAIR");
         }
 
         public CreateBookingRequest(
@@ -51,7 +54,23 @@ public final class BookingDtos {
                 UUID warrantyId,
                 UUID preferredProviderId) {
             this(serviceId, deviceId, deviceType, preferredStart, preferredEnd, address, notes,
-                    bookingType, warrantyId, preferredProviderId, null);
+                    bookingType, warrantyId, preferredProviderId, null, null, null, "REPAIR");
+        }
+
+        public CreateBookingRequest(
+                UUID serviceId,
+                UUID deviceId,
+                String deviceType,
+                Instant preferredStart,
+                Instant preferredEnd,
+                String address,
+                String notes,
+                String bookingType,
+                UUID warrantyId,
+                UUID preferredProviderId,
+                UUID serviceAddressId) {
+            this(serviceId, deviceId, deviceType, preferredStart, preferredEnd, address, notes,
+                    bookingType, warrantyId, preferredProviderId, serviceAddressId, null, null, "REPAIR");
         }
     }
 
@@ -77,9 +96,15 @@ public final class BookingDtos {
             @JsonAlias({"kind", "status"}) @NotBlank String kind,
             @JsonAlias({"note", "notes"}) String note,
             @PositiveOrZero Long extraCost,
-            List<UUID> evidenceIds) {
+            List<UUID> evidenceIds,
+            String partSource,
+            UUID partOrderLineId) {
         public CreateWorkUpdateRequest(String kind, String note) {
-            this(kind, note, null, List.of());
+            this(kind, note, null, List.of(), null, null);
+        }
+
+        public CreateWorkUpdateRequest(String kind, String note, Long extraCost, List<UUID> evidenceIds) {
+            this(kind, note, extraCost, evidenceIds, null, null);
         }
     }
 
@@ -118,11 +143,13 @@ public final class BookingDtos {
             String note,
             Long extraCost,
             String extraCostStatus,
+            String partSource,
+            UUID partOrderLineId,
             List<WorkEvidenceResponse> evidence,
             Instant createdAt) {
         public WorkUpdateResponse(UUID id, UUID bookingId, String technicianProfileId,
                 String kind, String note, Instant createdAt) {
-            this(id, bookingId, technicianProfileId, kind, note, null, "NONE", List.of(), createdAt);
+            this(id, bookingId, technicianProfileId, kind, note, null, "NONE", null, null, List.of(), createdAt);
         }
     }
 
@@ -134,6 +161,9 @@ public final class BookingDtos {
             String serviceName,
             UUID providerId,
             String bookingType,
+            UUID orderId,
+            UUID orderLineId,
+            String purpose,
             UUID warrantyId,
             UUID deviceId,
             String deviceType,
@@ -160,8 +190,9 @@ public final class BookingDtos {
                 Instant preferredStart, Instant preferredEnd, String address, String notes, String status,
                 String allocationStatus, long quotedPrice, Long version, Instant createdAt, Instant updatedAt,
                 List<BookingHistoryResponse> history, List<WorkUpdateResponse> workUpdates) {
-            this(id, requesterProfileId, requesterName, serviceId, serviceName, providerId, bookingType, warrantyId,
-                    deviceId, deviceType, assignedTechnicianId, assignedTechnicianProfileId, assignedTechnicianName,
+            this(id, requesterProfileId, requesterName, serviceId, serviceName, providerId, bookingType,
+                    null, null, "REPAIR", warrantyId, deviceId, deviceType, assignedTechnicianId,
+                    assignedTechnicianProfileId, assignedTechnicianName,
                     preferredStart, preferredEnd, address, notes, status, allocationStatus, quotedPrice, version,
                     createdAt, updatedAt, history, workUpdates, null);
         }
@@ -173,8 +204,9 @@ public final class BookingDtos {
                 Instant preferredEnd, String address, String notes, String status, String allocationStatus,
                 long quotedPrice, Long version, Instant createdAt, Instant updatedAt,
                 List<BookingHistoryResponse> history, List<WorkUpdateResponse> workUpdates) {
-            this(id, requesterProfileId, null, serviceId, serviceName, providerId, bookingType, warrantyId,
-                    deviceId, deviceType, assignedTechnicianId, assignedTechnicianProfileId, assignedTechnicianName,
+            this(id, requesterProfileId, null, serviceId, serviceName, providerId, bookingType,
+                    null, null, "REPAIR", warrantyId, deviceId, deviceType, assignedTechnicianId,
+                    assignedTechnicianProfileId, assignedTechnicianName,
                     preferredStart, preferredEnd, address, notes, status, allocationStatus, quotedPrice, version,
                     createdAt, updatedAt, history, workUpdates, null);
         }

@@ -5,6 +5,8 @@ import java.util.UUID;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
@@ -44,6 +46,26 @@ public class ProductEntity {
     @Column(name = "product_type", nullable = false)
     @Builder.Default
     private String productType = "SMALL_PART";
+
+    @Column(name = "model", length = 255)
+    private String model;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "device_eligibility", nullable = false, length = 32)
+    @Builder.Default
+    private DeviceEligibility deviceEligibility = DeviceEligibility.NONE;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "warranty_start_trigger", nullable = false, length = 40)
+    @Builder.Default
+    private WarrantyStartTrigger warrantyStartTrigger = WarrantyStartTrigger.DELIVERY_DATE;
+
+    @Column(name = "installable", nullable = false)
+    @Builder.Default
+    private boolean installable = false;
+
+    @Column(name = "default_install_category", length = 255)
+    private String defaultInstallCategory;
 
     @Column(name = "warranty_months", nullable = false)
     @Builder.Default

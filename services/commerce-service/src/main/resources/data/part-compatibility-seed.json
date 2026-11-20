@@ -1,0 +1,22 @@
+[
+  {
+    "id": "88888888-8888-8888-8888-888888888801",
+    "partProductId": "66666666-6666-6666-6666-666666666601",
+    "deviceType": "AC",
+    "deviceBrand": "Daikin",
+    "deviceModel": "FTKF25",
+    "compatibilityStatus": "VERIFIED_COMPATIBLE",
+    "source": "CURATED_PILOT",
+    "version": "1"
+  },
+  {
+    "id": "88888888-8888-8888-8888-888888888802",
+    "partProductId": "66666666-6666-6666-6666-666666666605",
+    "deviceType": "WATER_PURIFIER",
+    "deviceBrand": "Karofi",
+    "deviceModel": "KAROFI-CORE",
+    "compatibilityStatus": "VERIFIED_COMPATIBLE",
+    "source": "CURATED_PILOT",
+    "version": "1"
+  }
+]

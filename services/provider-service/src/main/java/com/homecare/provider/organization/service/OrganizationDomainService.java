@@ -62,6 +62,7 @@ public class OrganizationDomainService {
                 .id(orgId)
                 .name(req.name().trim())
                 .type(req.type())
+                .legalEntityType(req.legalEntityType())
                 .status(OrganizationStatus.PENDING)
                 .taxCode(req.taxCode() != null ? req.taxCode().trim() : null)
                 .phone(req.phone().trim())
@@ -127,6 +128,7 @@ public class OrganizationDomainService {
                             org.getId(),
                             org.getName(),
                             org.getType(),
+                            org.getLegalEntityType(),
                             org.getStatus(),
                             org.getRejectReason(),
                             m.getRole(),
@@ -211,6 +213,9 @@ public class OrganizationDomainService {
         data.put("organizationId", saved.getId().toString());
         data.put("name", saved.getName());
         data.put("type", saved.getType().name());
+        if (saved.getLegalEntityType() != null) {
+            data.put("legalEntityType", saved.getLegalEntityType().name());
+        }
         data.put("ownerUserId", saved.getOwnerUserId());
         data.put("city", saved.getCity());
         data.put("phone", saved.getPhone());
@@ -299,6 +304,9 @@ public class OrganizationDomainService {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("organizationId", saved.getId().toString());
         data.put("type", saved.getType().name());
+        if (saved.getLegalEntityType() != null) {
+            data.put("legalEntityType", saved.getLegalEntityType().name());
+        }
         data.put("name", saved.getName());
         data.put("city", saved.getCity());
         data.put("ownerUserId", saved.getOwnerUserId());
@@ -343,6 +351,9 @@ public class OrganizationDomainService {
         data.put("organizationId", saved.getId().toString());
         data.put("name", saved.getName());
         data.put("type", saved.getType().name());
+        if (saved.getLegalEntityType() != null) {
+            data.put("legalEntityType", saved.getLegalEntityType().name());
+        }
         data.put("phone", saved.getPhone());
         data.put("city", saved.getCity());
         data.put("address", saved.getAddress());
@@ -484,6 +495,7 @@ public class OrganizationDomainService {
                 org.getId(),
                 org.getName(),
                 org.getType(),
+                org.getLegalEntityType(),
                 org.getStatus(),
                 org.getRejectReason(),
                 org.getTaxCode(),

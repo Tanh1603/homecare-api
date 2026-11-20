@@ -81,6 +81,13 @@ public class HouseholdSecurityConfig {
     }
 
     @Bean
+    public Binding bindInstallationCompleted(Queue householdEventsQueue, TopicExchange domainEventsExchange) {
+        return BindingBuilder.bind(householdEventsQueue)
+                .to(domainEventsExchange)
+                .with(DomainEventContracts.INSTALLATION_COMPLETED);
+    }
+
+    @Bean
     public ServletCorrelationIdFilter servletCorrelationIdFilter() {
         return new ServletCorrelationIdFilter();
     }

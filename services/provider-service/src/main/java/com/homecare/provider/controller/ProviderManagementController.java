@@ -6,16 +6,19 @@ import com.homecare.common.security.RbacConstants;
 import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
+import com.homecare.provider.dto.ProviderDtos.CoverageAreaItem;
 import com.homecare.provider.dto.ProviderDtos.OfferingInput;
 import com.homecare.provider.dto.ProviderDtos.ProviderInput;
 import com.homecare.provider.dto.ProviderDtos.ProviderResponse;
 import com.homecare.provider.dto.ProviderDtos.ServiceOfferingResponse;
 import com.homecare.provider.dto.ProviderDtos.TechnicianInput;
 import com.homecare.provider.dto.ProviderDtos.TechnicianResponse;
+import com.homecare.provider.dto.ProviderDtos.UpsertServiceCoverageRequest;
 import com.homecare.provider.security.ProviderAccessPolicy;
 import com.homecare.provider.service.ProviderDomainService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -28,6 +31,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -80,6 +84,19 @@ public class ProviderManagementController {
         return ResponseEntity.ok(responses.ok(
                 ApiMessages.UPDATED,
                 service.saveOffering(id, input, resolveActor(jwt, rawOrgId)),
+                request));
+    }
+
+    @PutMapping("/services/{id}/coverage")
+    public ResponseEntity<ApiResponse<List<CoverageAreaItem>>> replaceOfferingCoverage(
+            @PathVariable UUID id,
+            @Valid @RequestBody UpsertServiceCoverageRequest input,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest request) {
+        return ResponseEntity.ok(responses.ok(
+                ApiMessages.UPDATED,
+                service.replaceOfferingCoverage(id, input, resolveActor(jwt, rawOrgId)),
                 request));
     }
 

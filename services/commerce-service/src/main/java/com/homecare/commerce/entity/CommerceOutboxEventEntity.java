@@ -37,7 +37,7 @@ public class CommerceOutboxEventEntity {
     @Column(name = "routing_key", nullable = false)
     private String routingKey;
 
-    @Column(name = "payload_json", nullable = false, length = 4000)
+    @Column(name = "payload_json", nullable = false, columnDefinition = "TEXT")
     private String payloadJson;
 
     @Column(nullable = false)

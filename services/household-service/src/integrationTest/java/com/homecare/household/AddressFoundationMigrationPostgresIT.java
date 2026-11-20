@@ -100,5 +100,18 @@ class AddressFoundationMigrationPostgresIT {
                         + "VALUES (?, 'user-1', 'Office', 'An', '0900000001', '456 Nguyen Hue', ?, TRUE, TRUE)",
                 UUID.randomUUID(), wardId))
                 .isInstanceOf(DataIntegrityViolationException.class);
+
+        // 5. Verify Flyway history + MVP-0 device/warranty indexes and constraints exist
+        Integer flywayRows = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM flyway_schema_history WHERE success = true", Integer.class);
+        assertThat(flywayRows).isGreaterThanOrEqualTo(3);
+
+        Integer deviceUnitKeyIdx = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM pg_indexes WHERE indexname = 'uq_device_unit_key'", Integer.class);
+        assertThat(deviceUnitKeyIdx).isEqualTo(1);
+
+        Integer warrantyUnitKeyIdx = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM pg_indexes WHERE indexname = 'uq_warranty_unit_key'", Integer.class);
+        assertThat(warrantyUnitKeyIdx).isEqualTo(1);
     }
 }

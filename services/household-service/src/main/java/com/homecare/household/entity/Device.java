@@ -42,8 +42,11 @@ public class Device {
     @Column(nullable = false)
     private String brand;
 
-    @Column(nullable = false)
+    @Column(name = "model")
     private String model;
+
+    @Column(name = "unit_key", length = 128, unique = true)
+    private String unitKey;
 
     @Column(name = "serial_number")
     private String serialNumber;
@@ -53,6 +56,19 @@ public class Device {
 
     @Column(nullable = false)
     private String status;
+
+    @Column(name = "installation_status", nullable = false)
+    @Builder.Default
+    private String installationStatus = "PENDING";
+
+    @Column(name = "installation_completed_at")
+    private Instant installationCompletedAt;
+
+    @Column(name = "installation_booking_id")
+    private UUID installationBookingId;
+
+    @Column(name = "installation_evidence_refs", length = 2000)
+    private String installationEvidenceRefs;
 
     @Version
     private Long version;

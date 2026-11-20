@@ -37,6 +37,31 @@ public class HouseholdAddressClient {
     public HouseholdAddressClient() {
     }
 
+    public ResolvedDevice verifyDevice(UUID deviceId, String ownerProfileId) {
+        try {
+            var response = withInternalMetadata(householdStub)
+                    .withDeadlineAfter(3, TimeUnit.SECONDS)
+                    .verifyDeviceReference(
+                            com.homecare.household.v1.VerifyDeviceReferenceRequest.newBuilder()
+                                    .setDeviceId(deviceId.toString())
+                                    .setRequesterProfileId(ownerProfileId)
+                                    .build());
+            if (!response.getValid()) {
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                        "Target device is invalid or not owned by the buyer.");
+            }
+            return new ResolvedDevice(
+                    UUID.fromString(response.getDeviceId()),
+                    response.getDeviceType(),
+                    response.getDeviceBrand(),
+                    response.getDeviceModel());
+        } catch (DomainException e) {
+            throw e;
+        } catch (StatusRuntimeException e) {
+            throw new DomainException(CommerceErrorCode.HOUSEHOLD_SERVICE_UNAVAILABLE);
+        }
+    }
+
     @Autowired
     public HouseholdAddressClient(HomecareSecurityProperties securityProperties) {
         this.workloadToken = securityProperties.getInternal().getWorkloadToken();
@@ -101,5 +126,8 @@ public class HouseholdAddressClient {
             String formattedAddress,
             Double latitude,
             Double longitude) {
+    }
+
+    public record ResolvedDevice(UUID deviceId, String deviceType, String brand, String model) {
     }
 }

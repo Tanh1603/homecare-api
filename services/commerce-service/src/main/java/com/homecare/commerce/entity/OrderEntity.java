@@ -71,6 +71,19 @@ public class OrderEntity {
     @Column(name = "shipping_longitude")
     private Double shippingLongitude;
 
+    @Column(name = "install_offering_id")
+    private UUID installOfferingId;
+
+    @Column(name = "service_address_id")
+    private UUID serviceAddressId;
+
+    @Column(name = "preferred_install_start")
+    private Instant preferredInstallStart;
+
+    @Column(name = "install_amount", nullable = false)
+    @Builder.Default
+    private long installAmount = 0L;
+
     @Column(name = "total_amount", nullable = false)
     private long totalAmount;
 

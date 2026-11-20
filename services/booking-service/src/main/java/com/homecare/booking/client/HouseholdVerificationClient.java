@@ -190,4 +190,47 @@ public class HouseholdVerificationClient {
             UUID organizationId,
             String providerName) {
     }
+
+    public record WarrantyCheckStatus(
+            boolean valid,
+            boolean expired,
+            UUID warrantyId,
+            UUID deviceId,
+            String deviceType,
+            UUID organizationId,
+            String providerName,
+            String status) {
+    }
+
+    public WarrantyCheckStatus checkWarrantyStatus(UUID warrantyId, String requesterProfileId) {
+        if (warrantyId == null) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "warrantyId is required.");
+        }
+        try {
+            VerifyWarrantyResponse response = withInternalMetadata(householdStub)
+                    .withDeadlineAfter(3, TimeUnit.SECONDS)
+                    .verifyWarranty(VerifyWarrantyRequest.newBuilder()
+                            .setWarrantyId(warrantyId.toString())
+                            .setRequesterProfileId(requesterProfileId)
+                            .build());
+            UUID deviceId = parseUuid(response.getDeviceId());
+            UUID orgId = parseUuid(response.getOrganizationId());
+            String deviceType = !response.getDeviceType().isBlank() ? response.getDeviceType() : "AC";
+            return new WarrantyCheckStatus(
+                    response.getValid(),
+                    response.getExpired(),
+                    warrantyId,
+                    deviceId,
+                    deviceType,
+                    orgId,
+                    response.getProviderName(),
+                    response.getStatus());
+        } catch (StatusRuntimeException e) {
+            log.warn("Household warranty gRPC check unavailable ({}: {})", e.getStatus().getCode(), e.getMessage());
+            throw new DomainException(BookingErrorCode.HOUSEHOLD_SERVICE_UNAVAILABLE);
+        } catch (Exception e) {
+            log.warn("Household warranty gRPC check unreachable ({})", e.getMessage());
+            return new WarrantyCheckStatus(false, false, warrantyId, null, "AC", null, "", "NOT_FOUND_OR_FORBIDDEN");
+        }
+    }
 }

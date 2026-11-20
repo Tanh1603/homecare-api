@@ -109,7 +109,38 @@ public class DomainEventConsumer {
                         eventType,
                         "Hoàn tất dịch vụ — Mời bạn đánh giá",
                         "Dịch vụ " + stringField(data, "serviceName") + " đã hoàn thành.",
-                        Map.of("bookingId", stringField(data, "bookingId")));
+                        lifecycleData("bookingId", stringField(data, "bookingId"),
+                                "homecare://requests/" + stringField(data, "bookingId")));
+                case "WarrantyActivated" -> recordLifecycle(
+                        eventId, eventType, data, "ownerProfileId",
+                        "Bảo hành HomeCare đã được kích hoạt",
+                        "Thiết bị của bạn đã được kích hoạt bảo hành HomeCare.",
+                        "deviceId");
+                case DomainEventContracts.INSTALLATION_COMPLETED, "InstallationCompleted" -> recordLifecycle(
+                        eventId, eventType, data, "requesterProfileId",
+                        "Lắp đặt thiết bị đã hoàn tất",
+                        "Lắp đặt thiết bị của bạn đã hoàn tất và được ghi nhận.",
+                        "deviceId");
+                case "CareRecordUpdated" -> recordLifecycle(
+                        eventId, eventType, data, "ownerProfileId",
+                        "Lịch sử chăm sóc đã cập nhật",
+                        "Lịch sử chăm sóc thiết bị của bạn vừa được cập nhật.",
+                        "deviceId");
+                case "QuotationSent" -> recordLifecycle(
+                        eventId, eventType, data, "requesterProfileId",
+                        "Báo giá dịch vụ đã được gửi",
+                        "Bạn có một báo giá mới cần xem xét.",
+                        "requestId");
+                case "WarrantyRequestRejected" -> recordLifecycle(
+                        eventId, eventType, data, "requesterProfileId",
+                        "Yêu cầu bảo hành chưa được chấp thuận",
+                        "Yêu cầu bảo hành của bạn chưa được chấp thuận.",
+                        "requestId");
+                case "FallbackToMarketplaceAvailable" -> recordLifecycle(
+                        eventId, eventType, data, "requesterProfileId",
+                        "Đã có lựa chọn thay thế trên Marketplace",
+                        "Bạn có thể xem các lựa chọn dịch vụ thay thế trên Marketplace.",
+                        "requestId");
                 case DomainEventContracts.ORDER_CREATED -> inboxService.recordIfAbsent(
                         eventId,
                         stringField(data, "buyerProfileId"),
@@ -161,7 +192,8 @@ public class DomainEventConsumer {
                         eventType,
                         "Nhắc lịch bảo dưỡng thiết bị định kỳ",
                         "Thiết bị của bạn đã đến hạn bảo dưỡng: " + stringField(data, "title"),
-                        Map.of("deviceId", stringField(data, "deviceId"), "scheduleId", stringField(data, "scheduleId")));
+                        lifecycleData("scheduleId", stringField(data, "scheduleId"),
+                                "homecare://devices/" + stringField(data, "deviceId")));
                 default -> log.debug("Ignored domain event type {}", eventType);
             }
         } catch (Exception e) {
@@ -179,6 +211,46 @@ public class DomainEventConsumer {
             throw new IllegalStateException("SHA-256 unavailable", ex);
         }
     }
+
+    private void recordLifecycle(
+                String eventId,
+                String eventType,
+                Map<String, Object> data,
+                String recipientField,
+                String title,
+                String body,
+                String targetIdField) {
+            String targetId = stringField(data, targetIdField);
+            String deeplinkPrefix = "deviceId".equals(targetIdField)
+                    ? "homecare://devices/"
+                    : "homecare://requests/";
+            inboxService.recordIfAbsent(
+                    eventId,
+                    firstNonBlank(stringField(data, recipientField), stringField(data, "ownerProfileId"),
+                            stringField(data, "requesterProfileId")),
+                    eventType,
+                    title,
+                    body + (targetId.isBlank() ? "" : " Xem chi tiết: " + deeplinkPrefix + targetId),
+                    lifecycleData(targetIdField, targetId, targetId.isBlank() ? null : deeplinkPrefix + targetId));
+        }
+
+    private Map<String, String> lifecycleData(String idField, String id, String deeplink) {
+            Map<String, String> data = new java.util.LinkedHashMap<>();
+            data.put(idField, id);
+            if (deeplink != null && !deeplink.isBlank()) {
+                data.put("deeplink", deeplink);
+            }
+            return data;
+        }
+
+    private String firstNonBlank(String... values) {
+            for (String value : values) {
+                if (value != null && !value.isBlank()) {
+                    return value;
+                }
+            }
+            return "";
+        }
 
     private String stringField(Map<String, Object> data, String key) {
         Object val = data.get(key);

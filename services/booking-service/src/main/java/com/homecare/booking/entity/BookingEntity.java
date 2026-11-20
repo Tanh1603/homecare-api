@@ -48,6 +48,23 @@ public class BookingEntity {
     @Builder.Default
     private String bookingType = "STANDARD";
 
+    @Column(name = "service_request_id")
+    private UUID serviceRequestId;
+
+    @Column(name = "order_id")
+    private UUID orderId;
+
+    @Column(name = "order_line_id")
+    private UUID orderLineId;
+
+    @Column(name = "product_ready", nullable = false)
+    @Builder.Default
+    private boolean productReady = false;
+
+    @Column(name = "purpose", nullable = false, length = 32)
+    @Builder.Default
+    private String purpose = "REPAIR";
+
     @Column(name = "warranty_id")
     private UUID warrantyId;
 

@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 
 import com.homecare.commerce.client.HouseholdAddressClient;
 import com.homecare.commerce.client.ProviderOrgClient;
+import com.homecare.commerce.client.ProviderOfferingClient;
 import com.homecare.commerce.dto.CommerceDtos.ShippingAddressSnapshotResponse;
 import com.homecare.commerce.dto.CommerceDtos.ConfirmManualRefundRequest;
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderRequest;
@@ -18,10 +19,12 @@ import com.homecare.commerce.dto.CommerceDtos.ProductResponse;
 import com.homecare.commerce.dto.CommerceDtos.ResolveOrderReturnRequest;
 import com.homecare.commerce.dto.CommerceDtos.VerifyOrderLineReviewEligibilityResponse;
 import com.homecare.commerce.entity.CommerceOutboxEventEntity;
+import com.homecare.commerce.entity.DeviceEligibility;
 import com.homecare.commerce.entity.InventoryEntity;
 import com.homecare.commerce.entity.InventoryReservationEntity;
 import com.homecare.commerce.entity.MerchantEntity;
 import com.homecare.commerce.entity.OrderEntity;
+import com.homecare.commerce.entity.OrderComponentSnapshotEntity;
 import com.homecare.commerce.entity.OrderLineEntity;
 import com.homecare.commerce.entity.OrderReturnRequestEntity;
 import com.homecare.commerce.entity.OrderStatus;
@@ -30,12 +33,14 @@ import com.homecare.commerce.entity.PaymentAttemptStatus;
 import com.homecare.commerce.entity.ProductEntity;
 import com.homecare.commerce.entity.ProductType;
 import com.homecare.commerce.entity.RefundOperationEntity;
+import com.homecare.commerce.entity.WarrantyStartTrigger;
 import com.homecare.commerce.exception.CommerceErrorCode;
 import com.homecare.commerce.repository.CommerceOutboxEventRepository;
 import com.homecare.commerce.repository.InventoryRepository;
 import com.homecare.commerce.repository.InventoryReservationRepository;
 import com.homecare.commerce.repository.MerchantRepository;
 import com.homecare.commerce.repository.OrderLineRepository;
+import com.homecare.commerce.repository.OrderComponentSnapshotRepository;
 import com.homecare.commerce.repository.OrderRepository;
 import com.homecare.commerce.repository.OrderReturnRequestRepository;
 import com.homecare.commerce.repository.PaymentAttemptRepository;
@@ -52,6 +57,7 @@ import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.event.DomainEventContracts;
+import com.homecare.provider.v1.VerifyOfferingResponse;
 import com.homecare.common.web.PageResponse;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -65,6 +71,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Pageable;
@@ -90,6 +97,7 @@ public class CommerceDomainService {
     private final InventoryReservationRepository reservationRepository;
     private final OrderRepository orderRepository;
     private final OrderLineRepository orderLineRepository;
+    private final OrderComponentSnapshotRepository componentSnapshotRepository;
     private final OrderReturnRequestRepository returnRequestRepository;
     private final PaymentAttemptRepository paymentAttemptRepository;
     private final RefundOperationRepository refundOperationRepository;
@@ -97,10 +105,12 @@ public class CommerceDomainService {
     private final VnpaySandboxStrategy vnpayStrategy;
     private final ObjectMapper objectMapper;
     private final ProviderOrgClient providerOrgClient;
+    private final ProviderOfferingClient providerOfferingClient;
     private final HouseholdAddressClient householdAddressClient;
     private final PlatformTransactionManager transactionManager;
     private final CommerceAccessPolicy accessPolicy;
     private final CommerceAppProperties appProperties;
+    private final PartCompatibilityService partCompatibilityService;
 
     private MerchantEntity requireMerchant(UUID merchantId, UUID organizationId, String user, boolean admin) {
         var merchant = merchantRepository.findById(merchantId).orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_NOT_FOUND));
@@ -236,6 +246,9 @@ public class CommerceDomainService {
             if (input.sku() == null || input.name() == null || input.category() == null || input.brand() == null || input.unitPrice() == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
             item.setId(UUID.randomUUID()); item.setMerchantId(merchant); item.setCreatedAt(Instant.now());
             item.setStatus(EntityStatus.ACTIVE.name()); item.setProductType(ProductType.SMALL_PART.name()); item.setReturnWindowDays(7);
+            item.setModel(null);
+            item.setDeviceEligibility(DeviceEligibility.NONE);
+            item.setWarrantyStartTrigger(WarrantyStartTrigger.DELIVERY_DATE);
         }
         if (input.sku() != null) item.setSku(input.sku());
         if (input.name() != null) item.setName(input.name());
@@ -248,6 +261,23 @@ public class CommerceDomainService {
         if (input.imageUrl() != null) item.setImageUrl(input.imageUrl());
         if (input.unitPrice() != null) item.setUnitPrice(input.unitPrice());
         if (input.status() != null) item.setStatus(input.status());
+        if (input.model() != null) item.setModel(normalizeOptionalModel(input.model()));
+        if (input.deviceEligibility() != null) {
+            item.setDeviceEligibility(input.deviceEligibility());
+        } else if (item.getDeviceEligibility() == null) {
+            item.setDeviceEligibility(DeviceEligibility.NONE);
+        }
+        if (input.warrantyStartTrigger() != null) {
+            item.setWarrantyStartTrigger(input.warrantyStartTrigger());
+        } else if (item.getWarrantyStartTrigger() == null) {
+            item.setWarrantyStartTrigger(WarrantyStartTrigger.DELIVERY_DATE);
+        }
+        if (input.installable() != null) {
+            item.setInstallable(input.installable());
+        }
+        if (input.defaultInstallCategory() != null) {
+            item.setDefaultInstallCategory(input.defaultInstallCategory().trim());
+        }
         productRepository.saveAndFlush(item);
         if (id == null) inventoryRepository.save(InventoryEntity.builder().id(UUID.randomUUID()).productId(item.getId()).updatedAt(Instant.now()).build());
         return toProductResponse(item);
@@ -328,6 +358,14 @@ public class CommerceDomainService {
     }
 
     public OrderResponse createOrder(String buyerProfileId, String buyerName, CreateOrderRequest request) {
+        if (request.installOfferingId() != null && request.serviceAddressId() == null) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "serviceAddressId is required when installation is selected.");
+        }
+        if (request.serviceAddressId() != null && request.installOfferingId() == null) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "installOfferingId is required when serviceAddressId is provided.");
+        }
         if (request.shippingAddressId() == null
                 && (request.shippingAddress() == null || request.shippingAddress().isBlank())) {
             throw new DomainException(
@@ -337,13 +375,24 @@ public class CommerceDomainService {
         HouseholdAddressClient.ResolvedShippingAddress resolvedAddress = request.shippingAddressId() != null
                 ? householdAddressClient.resolveUserAddress(request.shippingAddressId(), buyerProfileId)
                 : null;
+        HouseholdAddressClient.ResolvedShippingAddress resolvedServiceAddress = request.serviceAddressId() != null
+                ? householdAddressClient.resolveUserAddress(request.serviceAddressId(), buyerProfileId)
+                : null;
+        VerifyOfferingResponse installationOffering = request.installOfferingId() != null
+                ? providerOfferingClient.verify(request.installOfferingId())
+                : null;
+        if (installationOffering != null && !installationOffering.getActive()) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Installation is not available for the selected offering.");
+        }
         String canonicalShippingAddress = resolvedAddress != null
                 ? resolvedAddress.formattedAddress()
                 : request.shippingAddress().trim();
 
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         return tx.execute(status -> createOrderInTx(
-                buyerProfileId, buyerName, request, resolvedAddress, canonicalShippingAddress));
+                buyerProfileId, buyerName, request, resolvedAddress, resolvedServiceAddress,
+                installationOffering, canonicalShippingAddress));
     }
 
     private OrderResponse createOrderInTx(
@@ -351,6 +400,8 @@ public class CommerceDomainService {
             String buyerName,
             CreateOrderRequest request,
             HouseholdAddressClient.ResolvedShippingAddress resolvedAddress,
+            HouseholdAddressClient.ResolvedShippingAddress resolvedServiceAddress,
+            VerifyOfferingResponse installationOffering,
             String canonicalShippingAddress) {
         Set<UUID> merchantIds = new HashSet<>();
         long total = 0L;
@@ -359,6 +410,7 @@ public class CommerceDomainService {
         UUID orderId = UUID.randomUUID();
         List<OrderLineEntity> linesToSave = new ArrayList<>();
         List<InventoryReservationEntity> reservationsToSave = new ArrayList<>();
+        int installableSkuCount = 0;
 
         Map<UUID, Integer> quantitiesByProduct = new TreeMap<>();
         for (OrderLineRequest item : request.items()) {
@@ -372,33 +424,64 @@ public class CommerceDomainService {
                     .orElseThrow(() -> new DomainException(
                             CommerceErrorCode.PRODUCT_NOT_FOUND, "Product not found: " + productId));
             if (!EntityStatus.ACTIVE.name().equals(product.getStatus())) throw new DomainException(CommerceErrorCode.PRODUCT_NOT_FOUND);
+            if (product.isInstallable()) {
+                installableSkuCount++;
+            }
             merchantIds.add(product.getMerchantId());
             if (merchantIds.size() > 1) {
                 throw new DomainException(CommerceErrorCode.MIXED_MERCHANT_ORDER);
             }
-            InventoryEntity inv = inventoryRepository.lockByProductId(product.getId())
-                    .orElseThrow(() -> new DomainException(
-                            CommerceErrorCode.STOCK_INSUFFICIENT, "Inventory not found."));
-            if (inv.getAvailableQty() < quantity) {
-                throw new DomainException(
-                        CommerceErrorCode.STOCK_INSUFFICIENT,
-                        "Insufficient stock for product " + product.getName());
+            if (request.installOfferingId() != null && installableSkuCount != 1) {
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                        "Installation is available for exactly one installable product SKU.");
             }
-            inv.setAvailableQty(inv.getAvailableQty() - quantity);
-            inv.setReservedQty(inv.getReservedQty() + quantity);
-            inv.setUpdatedAt(now);
-            inventoryRepository.save(inv);
+            UUID targetDeviceId = request.items().stream()
+                    .filter(item -> item.productId().equals(product.getId()))
+                    .map(OrderLineRequest::targetDeviceId)
+                    .filter(java.util.Objects::nonNull)
+                    .findFirst()
+                    .orElse(null);
+            if (targetDeviceId != null) {
+                HouseholdAddressClient.ResolvedDevice device =
+                        householdAddressClient.verifyDevice(targetDeviceId, buyerProfileId);
+                var compatibility = partCompatibilityService.resolve(
+                        product.getId(), device.deviceType(), device.brand(), device.model());
+                if (compatibility.status() == com.homecare.commerce.entity.PartCompatibilityEntity.CompatibilityStatus.INCOMPATIBLE) {
+                    throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                            "Target device is incompatible with the selected part.");
+                }
+            }
+            String partSource = request.items().stream()
+                    .filter(item -> item.productId().equals(product.getId()))
+                    .map(OrderLineRequest::partSource)
+                    .filter(java.util.Objects::nonNull)
+                    .findFirst()
+                    .orElse(null);
+            if (InventoryFulfillmentPolicy.shouldDecrement(partSource)) {
+                InventoryEntity inv = inventoryRepository.lockByProductId(product.getId())
+                        .orElseThrow(() -> new DomainException(
+                                CommerceErrorCode.STOCK_INSUFFICIENT, "Inventory not found."));
+                if (inv.getAvailableQty() < quantity) {
+                    throw new DomainException(
+                            CommerceErrorCode.STOCK_INSUFFICIENT,
+                            "Insufficient stock for product " + product.getName());
+                }
+                inv.setAvailableQty(inv.getAvailableQty() - quantity);
+                inv.setReservedQty(inv.getReservedQty() + quantity);
+                inv.setUpdatedAt(now);
+                inventoryRepository.save(inv);
 
-            reservationsToSave.add(InventoryReservationEntity.builder()
-                    .id(UUID.randomUUID())
-                    .orderId(orderId)
-                    .inventoryBalanceId(inv.getId())
-                    .productId(product.getId())
-                    .quantity(quantity)
-                    .status(EntityStatus.ACTIVE.name())
-                    .reservedAt(now)
-                    .expiresAt(quoteExpiresAt)
-                    .build());
+                reservationsToSave.add(InventoryReservationEntity.builder()
+                        .id(UUID.randomUUID())
+                        .orderId(orderId)
+                        .inventoryBalanceId(inv.getId())
+                        .productId(product.getId())
+                        .quantity(quantity)
+                        .status(EntityStatus.ACTIVE.name())
+                        .reservedAt(now)
+                        .expiresAt(quoteExpiresAt)
+                        .build());
+            }
 
             long lineTotal = Math.multiplyExact(product.getUnitPrice(), quantity);
             total = Math.addExact(total, lineTotal);
@@ -406,6 +489,12 @@ public class CommerceDomainService {
                     .id(UUID.randomUUID())
                     .orderId(orderId)
                     .productId(product.getId())
+                    .targetDeviceId(request.items().stream()
+                            .filter(item -> item.productId().equals(product.getId()))
+                            .map(OrderLineRequest::targetDeviceId)
+                            .filter(java.util.Objects::nonNull)
+                            .findFirst()
+                            .orElse(null))
                     .productName(product.getName())
                     .quantity(quantity)
                     .unitPrice(product.getUnitPrice())
@@ -431,7 +520,12 @@ public class CommerceDomainService {
                 .shippingFormattedAddress(resolvedAddress != null ? resolvedAddress.formattedAddress() : null)
                 .shippingLatitude(resolvedAddress != null ? resolvedAddress.latitude() : null)
                 .shippingLongitude(resolvedAddress != null ? resolvedAddress.longitude() : null)
-                .totalAmount(total)
+                .installOfferingId(request.installOfferingId())
+                .serviceAddressId(resolvedServiceAddress != null ? resolvedServiceAddress.addressId() : null)
+                .preferredInstallStart(request.preferredInstallStart())
+                .installAmount(installationOffering != null ? installationOffering.getBasePrice() : 0L)
+                .totalAmount(Math.addExact(total,
+                        installationOffering != null ? installationOffering.getBasePrice() : 0L))
                 .status(OrderStatus.AWAITING_PAYMENT.name())
                 .paymentStatus("UNPAID")
                 .quoteExpiresAt(quoteExpiresAt)
@@ -546,6 +640,7 @@ public class CommerceDomainService {
                 res.setResolvedAt(now);
                 reservationRepository.save(res);
             }
+            createComponentSnapshots(order, sortedLines);
             publishDomainEvent(DomainEventContracts.ORDER_PAYMENT_SUCCEEDED, order);
         } else {
             attempt.setStatus(PaymentAttemptStatus.FAILED.name());
@@ -553,6 +648,64 @@ public class CommerceDomainService {
             publishDomainEvent(DomainEventContracts.ORDER_PAYMENT_FAILED, order);
         }
         return Map.of("RspCode", "00", "Message", "Confirm Success");
+    }
+
+    private void createComponentSnapshots(OrderEntity order, List<OrderLineEntity> lines) {
+        OrderLineEntity installationLine = lines.stream()
+                .filter(line -> productRepository.findById(line.getProductId())
+                        .map(ProductEntity::isInstallable)
+                        .orElse(false))
+                .findFirst()
+                .orElse(null);
+        for (OrderLineEntity line : lines) {
+            if (componentSnapshotRepository.findByOrderLineIdAndComponentType(line.getId(), "PRODUCT").isEmpty()) {
+                componentSnapshotRepository.save(OrderComponentSnapshotEntity.builder()
+                        .id(UUID.randomUUID())
+                        .orderId(order.getId())
+                        .orderLineId(line.getId())
+                        .componentType("PRODUCT")
+                        .allocatedGrossAmount(line.getLineTotal())
+                        .allocatedDiscountAmount(0L)
+                        .refundableRemainingAmount(line.getLineTotal())
+                        .policyVersion("MVP-2-v1")
+                        .createdAt(Instant.now())
+                        .build());
+            }
+        }
+        if (order.getInstallOfferingId() != null && installationLine != null
+                && componentSnapshotRepository.findByOrderLineIdAndComponentType(
+                        installationLine.getId(), "INSTALLATION").isEmpty()) {
+            componentSnapshotRepository.save(OrderComponentSnapshotEntity.builder()
+                    .id(UUID.randomUUID())
+                    .orderId(order.getId())
+                    .orderLineId(installationLine.getId())
+                    .componentType("INSTALLATION")
+                    .serviceOfferingId(order.getInstallOfferingId())
+                    .allocatedGrossAmount(order.getInstallAmount())
+                    .allocatedDiscountAmount(0L)
+                    .refundableRemainingAmount(order.getInstallAmount())
+                    .policyVersion("MVP-2-v1")
+                    .createdAt(Instant.now())
+                    .build());
+            publishInstallationRequestedEvent(order, installationLine, Instant.now());
+        }
+    }
+
+    private void publishInstallationRequestedEvent(OrderEntity order, OrderLineEntity line, Instant now) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("orderId", order.getId());
+        data.put("orderLineId", line.getId());
+        data.put("targetDeviceId", line.getTargetDeviceId());
+        data.put("buyerProfileId", order.getBuyerProfileId());
+        data.put("buyerName", order.getBuyerName());
+        data.put("serviceOfferingId", order.getInstallOfferingId());
+        data.put("serviceAddressId", order.getServiceAddressId());
+        data.put("preferredInstallStart", order.getPreferredInstallStart());
+        data.put("productId", line.getProductId());
+        data.put("productName", line.getProductName());
+        data.put("quantity", line.getQuantity());
+        saveOutbox(UUID.randomUUID(), "CustomerOrder", order.getId(),
+                "ORDER_INSTALLATION_REQUESTED", data, now);
     }
 
     @Transactional
@@ -1030,12 +1183,25 @@ public class CommerceDomainService {
         String category = product != null ? product.getCategory() : "AC";
         String brand = product != null ? product.getBrand() : "HomeCare";
         String productType = product != null ? product.getProductType() : "SMALL_PART";
+        String model = product != null ? normalizeOptionalModel(product.getModel()) : null;
+        String deviceEligibility = product != null && product.getDeviceEligibility() != null
+                ? product.getDeviceEligibility().name()
+                : DeviceEligibility.NONE.name();
+        String warrantyStartTrigger = product != null && product.getWarrantyStartTrigger() != null
+                ? product.getWarrantyStartTrigger().name()
+                : WarrantyStartTrigger.DELIVERY_DATE.name();
         int warrantyMonths = product != null ? product.getWarrantyMonths() : 0;
         int returnWindowDays = product != null ? product.getReturnWindowDays() : 7;
+        int quantityDelivered = Math.max(0, line.getQuantity());
+        List<String> unitKeys = IntStream.rangeClosed(1, quantityDelivered)
+                .mapToObj(unitIndex -> line.getId() + ":" + unitIndex)
+                .toList();
+        String deliveredAt = line.getDeliveredAt() != null ? line.getDeliveredAt().toString() : now.toString();
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("orderId", order.getId());
         data.put("orderLineId", line.getId());
+        data.put("targetDeviceId", line.getTargetDeviceId());
         data.put("buyerProfileId", order.getBuyerProfileId());
         data.put("buyerName", order.getBuyerName());
         data.put("organizationId", order.getMerchantId());
@@ -1045,8 +1211,17 @@ public class CommerceDomainService {
         data.put("category", category);
         data.put("brand", brand);
         data.put("productType", productType);
+        data.put("model", model);
+        data.put("deviceEligibility", deviceEligibility);
+        data.put("warrantyStartTrigger", warrantyStartTrigger);
         data.put("warrantyMonths", warrantyMonths);
         data.put("returnWindowDays", returnWindowDays);
+        data.put("quantityDelivered", quantityDelivered);
+        data.put("unitKeys", unitKeys);
+        data.put("deliveredAt", deliveredAt);
+        data.put("shippingAddressId", order.getShippingAddressId());
+        data.put("shippingProvinceName", order.getShippingProvinceName());
+        data.put("shippingWardName", order.getShippingWardName());
 
         saveOutbox(eventId, "CustomerOrder", order.getId(), eventType, data, now);
     }
@@ -1140,7 +1315,24 @@ public class CommerceDomainService {
                 p.getUnitPrice(),
                 inv != null ? inv.getAvailableQty() : 0,
                 inv != null ? inv.getReservedQty() : 0,
-                p.getStatus());
+                p.getStatus(),
+                normalizeOptionalModel(p.getModel()),
+                p.getDeviceEligibility() != null
+                        ? p.getDeviceEligibility().name()
+                        : DeviceEligibility.NONE.name(),
+                p.getWarrantyStartTrigger() != null
+                        ? p.getWarrantyStartTrigger().name()
+                        : WarrantyStartTrigger.DELIVERY_DATE.name(),
+                p.isInstallable(),
+                p.getDefaultInstallCategory());
+    }
+
+    private static String normalizeOptionalModel(String model) {
+        if (model == null) {
+            return null;
+        }
+        String trimmed = model.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private OrderResponse toOrderResponse(OrderEntity o) {
@@ -1163,7 +1355,8 @@ public class CommerceDomainService {
                         l.getQuantity(),
                         l.getUnitPrice(),
                         l.getLineTotal(),
-                        l.getFulfillmentStatus()))
+                        l.getFulfillmentStatus(),
+                        l.getTargetDeviceId()))
                 .toList();
         List<PaymentAttemptResponse> attempts = paymentAttempts
                 .stream()

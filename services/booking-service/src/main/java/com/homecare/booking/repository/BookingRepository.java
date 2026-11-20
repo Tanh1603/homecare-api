@@ -15,6 +15,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface BookingRepository extends JpaRepository<BookingEntity, UUID>, JpaSpecificationExecutor<BookingEntity> {
+    Optional<BookingEntity> findByOrderLineIdAndPurpose(UUID orderLineId, String purpose);
     @Lock(PESSIMISTIC_WRITE)
     @Query("select b from BookingEntity b where b.id = :id")
     Optional<BookingEntity> lockById(UUID id);

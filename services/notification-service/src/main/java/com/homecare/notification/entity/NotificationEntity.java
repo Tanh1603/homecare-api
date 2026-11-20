@@ -40,6 +40,9 @@ public class NotificationEntity {
     @Column(nullable = false, length = 1500)
     private String body;
 
+    @Column(length = 500)
+    private String deeplink;
+
     @Column(name = "is_read", nullable = false)
     private boolean read;
 

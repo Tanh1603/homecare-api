@@ -40,6 +40,7 @@ import com.homecare.booking.entity.BookingEntity;
 import com.homecare.booking.entity.BookingStatus;
 import com.homecare.booking.entity.BookingHistoryEntry;
 import com.homecare.booking.entity.BookingOutboxEventEntity;
+import com.homecare.booking.entity.BookingPurpose;
 import com.homecare.booking.entity.WorkEvidenceEntity;
 import com.homecare.booking.entity.WorkUpdateEntity;
 import com.homecare.booking.exception.BookingErrorCode;
@@ -219,6 +220,10 @@ public class BookingLifecycleService {
                     .providerId(providerId)
                     .preferredProviderId(request.preferredProviderId())
                     .bookingType(bookingType)
+                    .orderId(request.orderId())
+                    .orderLineId(request.orderLineId())
+                    .purpose(request.purpose() == null || request.purpose().isBlank()
+                            ? "REPAIR" : request.purpose().trim().toUpperCase())
                     .warrantyId(request.warrantyId())
                     .deviceId(finalDeviceId)
                     .deviceType(finalDeviceType)
@@ -433,7 +438,11 @@ public class BookingLifecycleService {
                 "CANCELLED",
                 actor.userId(),
                 request != null && request.reason() != null ? request.reason() : "Customer cancelled");
-        publishDomainEvent(DomainEventContracts.BOOKING_CANCELLED, saved);
+        publishDomainEvent(
+                BookingPurpose.INSTALLATION.name().equals(saved.getPurpose())
+                        ? "INSTALLATION_CANCELLED"
+                        : DomainEventContracts.BOOKING_CANCELLED,
+                saved);
         return toBookingResponse(saved);
     }
 
@@ -454,6 +463,10 @@ public class BookingLifecycleService {
                 if (!"ASSIGNED".equals(previous) && !"IN_PROGRESS".equals(previous)) {
                     throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
                 }
+                if (BookingPurpose.INSTALLATION.name().equals(booking.getPurpose()) && !booking.isProductReady()) {
+                    throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE,
+                            "Installation cannot start before product delivery.");
+                }
                 booking.setStatus("IN_PROGRESS");
                 recordHistory(bookingId, previous, "IN_PROGRESS", actor.userId(),
                         "[" + kind + "] " + (request.note() != null ? request.note() : ""));
@@ -466,6 +479,10 @@ public class BookingLifecycleService {
             case "COMPLETED" -> {
                 if (!"IN_PROGRESS".equals(previous)) {
                     throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
+                }
+                if (BookingPurpose.INSTALLATION.name().equals(booking.getPurpose()) && !booking.isProductReady()) {
+                    throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE,
+                            "Installation cannot complete before product delivery.");
                 }
                 if (workUpdateRepository.existsByBookingIdAndExtraCostStatus(bookingId, "PENDING_APPROVAL")) {
                     throw new DomainException(CommonErrorCode.CONFLICT);
@@ -481,6 +498,13 @@ public class BookingLifecycleService {
         if (hasExtraCost && !"DIAGNOSED".equals(kind) && !"NOTE".equals(kind)) {
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         }
+        String partSource = request.partSource() == null ? null : request.partSource().trim().toUpperCase();
+        if (partSource != null && !Set.of("CUSTOMER_SUPPLIED", "PROVIDER_STOCK", "HOMECARE_ORDER").contains(partSource)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        }
+        if (partSource == null && request.partOrderLineId() != null) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        }
 
         WorkUpdateEntity savedUpdate = workUpdateRepository.save(WorkUpdateEntity.builder()
                 .id(UUID.randomUUID())
@@ -488,6 +512,8 @@ public class BookingLifecycleService {
                 .technicianProfileId(actor.userId())
                 .kind(kind)
                 .note(request.note())
+                .partSource(partSource)
+                .partOrderLineId(request.partOrderLineId())
                 .extraCost(hasExtraCost ? extraCost : null)
                 .extraCostStatus(hasExtraCost ? "PENDING_APPROVAL" : "NONE")
                 .createdAt(Instant.now())
@@ -513,7 +539,11 @@ public class BookingLifecycleService {
         BookingEntity saved = bookingRepository.saveAndFlush(booking);
 
         if ("COMPLETED".equals(saved.getStatus())) {
-            publishDomainEvent(DomainEventContracts.BOOKING_COMPLETED, saved);
+            publishDomainEvent(
+                    BookingPurpose.INSTALLATION.name().equals(saved.getPurpose())
+                            ? "INSTALLATION_COMPLETED"
+                            : DomainEventContracts.BOOKING_COMPLETED,
+                    saved);
         }
         return toBookingResponse(saved);
     }
@@ -1072,6 +1102,21 @@ public class BookingLifecycleService {
         data.put("bookingType", booking.getBookingType());
         data.put("deviceId", booking.getDeviceId());
         data.put("warrantyId", booking.getWarrantyId());
+        data.put("purpose", booking.getPurpose());
+        data.put("orderId", booking.getOrderId());
+        data.put("orderLineId", booking.getOrderLineId());
+        if ("INSTALLATION_COMPLETED".equals(eventType)) {
+            List<String> evidenceRefs = workEvidenceRepository.findByBookingId(booking.getId()).stream()
+                    .map(e -> e.getId() + ":" + e.getObjectKey())
+                    .toList();
+            if (evidenceRefs.isEmpty()) {
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                        "Installation completion requires evidence.");
+            }
+            data.put("completedAt", now);
+            data.put("evidenceRefs", evidenceRefs);
+            data.put("executorOrgId", booking.getProviderId());
+        }
 
         Map<String, Object> envelope = new LinkedHashMap<>();
         envelope.put(DomainEventContracts.FIELD_EVENT_ID, eventId);
@@ -1171,6 +1216,8 @@ public class BookingLifecycleService {
                         u.getNote(),
                         u.getExtraCost(),
                         u.getExtraCostStatus() != null ? u.getExtraCostStatus() : "NONE",
+                        u.getPartSource(),
+                        u.getPartOrderLineId(),
                         finalEvidenceByUpdate.getOrDefault(u.getId(), List.of()),
                         u.getCreatedAt()))
                 .toList();
@@ -1182,6 +1229,9 @@ public class BookingLifecycleService {
                 b.getServiceName(),
                 b.getProviderId(),
                 b.getBookingType(),
+                b.getOrderId(),
+                b.getOrderLineId(),
+                b.getPurpose(),
                 b.getWarrantyId(),
                 b.getDeviceId(),
                 b.getDeviceType(),

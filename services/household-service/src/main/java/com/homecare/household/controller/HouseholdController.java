@@ -18,6 +18,8 @@ import com.homecare.household.dto.HouseholdDtos.CreateHouseholdRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateMaintenanceScheduleRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateWarrantyRequest;
 import com.homecare.household.dto.HouseholdDtos.DeviceResponse;
+import com.homecare.household.dto.HouseholdDtos.DeviceLifecycleResponse;
+import com.homecare.household.dto.HouseholdDtos.RegisterSerialRequest;
 import com.homecare.household.dto.HouseholdDtos.HouseholdResponse;
 import com.homecare.household.dto.HouseholdDtos.MaintenanceScheduleResponse;
 import com.homecare.household.dto.HouseholdDtos.UpdateCareRecordRequest;
@@ -174,6 +176,31 @@ public class HouseholdController {
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(device.version()))
                 .body(responseFactory.ok(ApiMessages.RETRIEVED, device, httpRequest));
+    }
+
+    @GetMapping("/devices/{deviceId}/lifecycle")
+    public ResponseEntity<ApiResponse<DeviceLifecycleResponse>> getDeviceLifecycle(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID deviceId,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.RETRIEVED,
+                service.getDeviceLifecycle(resolvePersonal(jwt, rawOrgId).userId(), deviceId),
+                httpRequest));
+    }
+
+    @PostMapping("/devices/{deviceId}/serial")
+    public ResponseEntity<ApiResponse<DeviceResponse>> registerSerial(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID deviceId,
+            @Valid @RequestBody RegisterSerialRequest request,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.UPDATED,
+                service.registerSerial(resolvePersonal(jwt, rawOrgId).userId(), deviceId, request),
+                httpRequest));
     }
 
     @PatchMapping("/devices/{deviceId}")

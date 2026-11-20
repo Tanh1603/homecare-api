@@ -24,6 +24,8 @@ message VerifyDeviceReferenceResponse {
   string device_type = 4;
   string device_name = 5;
   string status = 6;
+  string device_brand = 7;
+  string device_model = 8;
 }
 
 message VerifyWarrantyRequest {

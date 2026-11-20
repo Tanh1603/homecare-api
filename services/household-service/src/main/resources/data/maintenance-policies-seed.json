@@ -1,0 +1,22 @@
+[
+  {
+    "id": "77777777-7777-7777-7777-777777777701",
+    "category": "AC",
+    "model": "FTKF25",
+    "title": "Bảo dưỡng máy lạnh định kỳ",
+    "cadenceMonths": 6,
+    "policyVersion": 1,
+    "status": "APPROVED",
+    "consentRequired": true
+  },
+  {
+    "id": "77777777-7777-7777-7777-777777777702",
+    "category": "WATER_PURIFIER",
+    "model": "KAROFI-CORE",
+    "title": "Thay lõi lọc định kỳ",
+    "cadenceMonths": 6,
+    "policyVersion": 1,
+    "status": "APPROVED",
+    "consentRequired": true
+  }
+]

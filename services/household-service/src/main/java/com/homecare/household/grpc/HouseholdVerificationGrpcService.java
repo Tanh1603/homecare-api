@@ -41,6 +41,8 @@ public class HouseholdVerificationGrpcService extends HouseholdVerificationServi
                             .setDeviceType(res.deviceType() != null ? res.deviceType() : "")
                             .setDeviceName(res.deviceName() != null ? res.deviceName() : "")
                             .setStatus(res.status() != null ? res.status() : "")
+                            .setDeviceBrand(res.brand() != null ? res.brand() : "")
+                            .setDeviceModel(res.model() != null ? res.model() : "")
                             .build();
 
             responseObserver.onNext(response);

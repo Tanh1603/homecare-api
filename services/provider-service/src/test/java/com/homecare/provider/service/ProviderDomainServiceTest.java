@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -15,10 +16,16 @@ import org.springframework.test.context.ActiveProfiles;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.security.AccessMode;
 import com.homecare.common.security.ActorContext;
+import com.homecare.common.security.RbacConstants;
 import com.homecare.common.web.EtagSupport;
+import com.homecare.provider.dto.ProviderDtos.CoverageAreaItem;
 import com.homecare.provider.dto.ProviderDtos.CreateScheduleWindowRequest;
+import com.homecare.provider.dto.ProviderDtos.OfferingInput;
 import com.homecare.provider.dto.ProviderDtos.ScheduleWindowResponse;
+import com.homecare.provider.dto.ProviderDtos.ServiceOfferingResponse;
 import com.homecare.provider.dto.ProviderDtos.UpdateScheduleWindowRequest;
+import com.homecare.provider.dto.ProviderDtos.UpsertServiceCoverageRequest;
+import com.homecare.provider.entity.ServicePriceType;
 import com.homecare.provider.service.ProviderDomainService.AllocationOutcome;
 
 @SpringBootTest
@@ -160,6 +167,92 @@ class ProviderDomainServiceTest {
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("VALIDATION_FAILED");
+    }
+
+    @Test
+    void eligibleServicesFiltersCoverageBeforeRankAndEnforcesInspectionFeeBounds() {
+        ActorContext adminActor = new ActorContext(
+                "admin-user",
+                AccessMode.PERSONAL,
+                null,
+                java.util.Set.of(RbacConstants.ROLE_ADMIN),
+                java.util.Set.of(),
+                java.util.Set.of(),
+                java.util.Set.of(RbacConstants.PERM_SERVICE_MANAGE));
+
+        // 1. Out-of-bounds inspectionFee (> 500,000 VND) rejected
+        assertThatThrownBy(() -> service.saveOffering(
+                null,
+                new OfferingInput(
+                        ProviderDataInitializer.PROVIDER_1_ID,
+                        "Khảo sát sửa ống nước",
+                        "PLUMBING_TEST",
+                        "Test fee bounds",
+                        150_000L,
+                        60,
+                        true,
+                        ServicePriceType.QUOTE_REQUIRED,
+                        600_000L),
+                adminActor))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("VALIDATION_FAILED");
+
+        // 2. Provider 1 offering in Province 79 (HCM); Provider 2 offering in Ward 26734 (HCM)
+        ServiceOfferingResponse p1Offering = service.saveOffering(
+                null,
+                new OfferingInput(
+                        ProviderDataInitializer.PROVIDER_1_ID,
+                        "Sửa máy lạnh HCM Tỉnh",
+                        "AC_COVERAGE_TEST",
+                        "Province coverage",
+                        200_000L,
+                        60,
+                        true,
+                        ServicePriceType.QUOTE_REQUIRED,
+                        120_000L),
+                adminActor);
+        assertThat(p1Offering.priceType()).isEqualTo(ServicePriceType.QUOTE_REQUIRED);
+        assertThat(p1Offering.inspectionFee()).isEqualTo(120_000L);
+        assertThat(p1Offering.priceVersion()).isEqualTo(1);
+
+        ServiceOfferingResponse p2Offering = service.saveOffering(
+                null,
+                new OfferingInput(
+                        ProviderDataInitializer.PROVIDER_2_ID,
+                        "Sửa máy lạnh Phường Bến Nghé",
+                        "AC_COVERAGE_TEST",
+                        "Ward coverage",
+                        220_000L,
+                        60,
+                        true,
+                        ServicePriceType.FIXED,
+                        null),
+                adminActor);
+
+        service.replaceOfferingCoverage(
+                p1Offering.id(),
+                new UpsertServiceCoverageRequest(List.of(new CoverageAreaItem("79", "PROVINCE", true))),
+                adminActor);
+        service.replaceOfferingCoverage(
+                p2Offering.id(),
+                new UpsertServiceCoverageRequest(List.of(new CoverageAreaItem("26734", "WARD", true))),
+                adminActor);
+
+        // Querying HCM + Ward 26734 returns both, with exact WARD match ranked before PROVINCE match
+        List<ServiceOfferingResponse> hcmEligible = service.listEligibleOfferings("AC_COVERAGE_TEST", "79", "26734");
+        assertThat(hcmEligible).extracting(ServiceOfferingResponse::id)
+                .containsExactly(p2Offering.id(), p1Offering.id());
+
+        // Querying Hanoi (Province 01) excludes both HCM offerings
+        assertThat(service.listEligibleOfferings("AC_COVERAGE_TEST", "01", "00001")).isEmpty();
+
+        // Updating price increments priceVersion
+        ServiceOfferingResponse updatedP1 = service.saveOffering(
+                p1Offering.id(),
+                new OfferingInput(null, null, null, null, 250_000L, null, null, null, 150_000L),
+                adminActor);
+        assertThat(updatedP1.priceVersion()).isEqualTo(2);
     }
 
     private static ActorContext personalActor(String userId) {

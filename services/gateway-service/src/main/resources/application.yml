@@ -40,7 +40,7 @@ spring:
             - id: booking-service-route
               uri: ${BOOKING_URL:http://localhost:8084}
               predicates:
-                - Path=/api/v1/bookings,/api/v1/bookings/**
+                - Path=/api/v1/bookings,/api/v1/bookings/**,/api/v1/service-requests,/api/v1/service-requests/**
             - id: commerce-service-route
               uri: ${COMMERCE_URL:http://localhost:8085}
               predicates:

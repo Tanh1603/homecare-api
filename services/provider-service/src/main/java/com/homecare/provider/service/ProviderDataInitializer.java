@@ -14,6 +14,7 @@ import com.homecare.provider.entity.ProviderEntity;
 import com.homecare.provider.entity.ScheduleWindow;
 import com.homecare.provider.entity.ServiceOffering;
 import com.homecare.provider.entity.Technician;
+import com.homecare.provider.organization.entity.LegalEntityType;
 import com.homecare.provider.organization.entity.OrgRole;
 import com.homecare.provider.organization.entity.OrganizationEntity;
 import com.homecare.provider.organization.entity.OrganizationMemberEntity;
@@ -216,6 +217,7 @@ public class ProviderDataInitializer implements CommandLineRunner {
                 .id(PROVIDER_1_ID)
                 .name("Điện Lạnh Bách Khoa Sài Gòn")
                 .type(OrganizationType.BOTH)
+                .legalEntityType(LegalEntityType.COMPANY)
                 .status(OrganizationStatus.APPROVED)
                 .taxCode("0312345678")
                 .phone("0901234567")
@@ -231,6 +233,7 @@ public class ProviderDataInitializer implements CommandLineRunner {
                 .id(PROVIDER_2_ID)
                 .name("HomeCare Pro Kỹ Thuật Số")
                 .type(OrganizationType.SERVICE)
+                .legalEntityType(LegalEntityType.COMPANY)
                 .status(OrganizationStatus.APPROVED)
                 .taxCode("0387654321")
                 .phone("0909888777")
