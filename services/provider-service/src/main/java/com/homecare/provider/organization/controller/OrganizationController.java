@@ -31,6 +31,8 @@ import com.homecare.provider.organization.dto.OrganizationDtos.MyOrganizationMem
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationAppealResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationMemberResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationResponse;
+import com.homecare.provider.organization.dto.OrganizationDtos.PresignEvidenceUploadRequest;
+import com.homecare.provider.organization.dto.OrganizationDtos.PresignedEvidenceUploadResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.RegisterOrganizationRequest;
 import com.homecare.provider.organization.dto.OrganizationDtos.ResubmitOrganizationRequest;
 import com.homecare.provider.organization.dto.OrganizationDtos.UpdateMemberRoleRequest;
@@ -43,6 +45,7 @@ import com.homecare.provider.organization.entity.OrganizationAppealEntity;
 import com.homecare.provider.organization.security.OrgContext;
 import com.homecare.provider.organization.security.RequireOrgRole;
 import com.homecare.provider.organization.service.OrganizationDomainService;
+import com.homecare.provider.organization.service.OrganizationEvidenceStorageService;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -57,7 +60,28 @@ import lombok.RequiredArgsConstructor;
 public class OrganizationController {
 
     private final OrganizationDomainService organizationService;
+    private final OrganizationEvidenceStorageService evidenceStorageService;
     private final ServletApiResponseFactory responseFactory;
+
+    @PostMapping("/evidence/presign")
+    public ResponseEntity<ApiResponse<PresignedEvidenceUploadResponse>> presignEvidenceUpload(
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody PresignEvidenceUploadRequest request,
+            HttpServletRequest httpRequest) {
+        PresignedEvidenceUploadResponse presigned = evidenceStorageService.createPresignedUpload(
+                jwt.getSubject(), request.fileName(), request.contentType());
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.CREATED, presigned, httpRequest));
+    }
+
+    @PutMapping("/evidence/local/**")
+    public ResponseEntity<Void> uploadEvidenceLocalFallback(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestBody(required = false) byte[] payload) {
+        if (evidenceStorageService.isConfigured()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        return ResponseEntity.ok().build();
+    }
 
     @PostMapping
     public ResponseEntity<ApiResponse<OrganizationResponse>> registerOrganization(

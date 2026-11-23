@@ -81,6 +81,7 @@ public final class OrganizationDtos {
             int resubmitCount,
             boolean identityVerified,
             Instant identityVerifiedAt,
+            String identityEvidenceRefs,
             LegalEntityType pendingLegalEntityUpgrade,
             String taxCode,
             String phone,
@@ -98,6 +99,10 @@ public final class OrganizationDtos {
                 LegalEntityType legalEntityType,
                 OrganizationStatus status,
                 String rejectReason,
+                int resubmitCount,
+                boolean identityVerified,
+                Instant identityVerifiedAt,
+                LegalEntityType pendingLegalEntityUpgrade,
                 String taxCode,
                 String phone,
                 String city,
@@ -107,7 +112,28 @@ public final class OrganizationDtos {
                 Long version,
                 Instant createdAt,
                 Instant updatedAt) {
-            this(id, name, type, legalEntityType, status, rejectReason, 0, false, null, null,
+            this(id, name, type, legalEntityType, status, rejectReason, resubmitCount,
+                    identityVerified, identityVerifiedAt, null, pendingLegalEntityUpgrade,
+                    taxCode, phone, city, address, description, ownerUserId, version, createdAt, updatedAt);
+        }
+
+        public OrganizationResponse(
+                UUID id,
+                String name,
+                OrganizationType type,
+                LegalEntityType legalEntityType,
+                OrganizationStatus status,
+                String rejectReason,
+                String taxCode,
+                String phone,
+                String city,
+                String address,
+                String description,
+                String ownerUserId,
+                Long version,
+                Instant createdAt,
+                Instant updatedAt) {
+            this(id, name, type, legalEntityType, status, rejectReason, 0, false, null, null, null,
                     taxCode, phone, city, address, description, ownerUserId, version, createdAt, updatedAt);
         }
 
@@ -126,9 +152,25 @@ public final class OrganizationDtos {
                 Long version,
                 Instant createdAt,
                 Instant updatedAt) {
-            this(id, name, type, null, status, rejectReason, 0, false, null, null,
+            this(id, name, type, null, status, rejectReason, 0, false, null, null, null,
                     taxCode, phone, city, address, description, ownerUserId, version, createdAt, updatedAt);
         }
+    }
+
+    public record PresignEvidenceUploadRequest(
+            @NotBlank @Size(max = 255) String fileName,
+            @NotBlank @Size(max = 120) String contentType,
+            @Size(max = 80) String documentType) {
+    }
+
+    public record PresignedEvidenceUploadResponse(
+            String uploadUrl,
+            String bucket,
+            String objectKey,
+            String token,
+            int expiresInSeconds,
+            String method,
+            boolean localFallback) {
     }
 
     public record MyOrganizationMembershipResponse(

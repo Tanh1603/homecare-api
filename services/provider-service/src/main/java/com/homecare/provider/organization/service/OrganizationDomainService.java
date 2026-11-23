@@ -825,6 +825,7 @@ public class OrganizationDomainService {
                 org.getResubmitCount(),
                 org.isIdentityVerified(),
                 org.getIdentityVerifiedAt(),
+                org.getIdentityEvidenceRefs(),
                 org.getPendingLegalEntityUpgrade(),
                 org.getTaxCode(),
                 org.getPhone(),
