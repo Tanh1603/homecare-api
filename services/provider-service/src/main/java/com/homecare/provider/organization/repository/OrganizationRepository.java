@@ -13,4 +13,8 @@ public interface OrganizationRepository extends JpaRepository<OrganizationEntity
     List<OrganizationEntity> findByStatusOrderByCreatedAtDesc(OrganizationStatus status);
 
     List<OrganizationEntity> findAllByOrderByCreatedAtDesc();
+
+    boolean existsByOwnerUserIdAndStatus(String ownerUserId, OrganizationStatus status);
+
+    List<OrganizationEntity> findByOwnerUserIdAndStatus(String ownerUserId, OrganizationStatus status);
 }

@@ -21,13 +21,16 @@ import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.PageResponse;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
+import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationAppealResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.RejectOrganizationRequest;
+import com.homecare.provider.organization.entity.OrganizationAppealEntity;
 import com.homecare.provider.organization.entity.OrganizationStatus;
 import com.homecare.provider.organization.service.OrganizationDomainService;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import lombok.RequiredArgsConstructor;
 
 @RestController
@@ -62,6 +65,15 @@ public class AdminOrganizationController {
         return ResponseEntity.ok(responseFactory.ok(ApiMessages.APPROVED, approved, httpRequest));
     }
 
+    @PostMapping("/{id}/approve-upgrade")
+    public ResponseEntity<ApiResponse<OrganizationResponse>> approveLegalEntityUpgrade(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest httpRequest) {
+        OrganizationResponse approved = organizationService.approveLegalEntityUpgrade(id, jwt.getSubject());
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.APPROVED, approved, httpRequest));
+    }
+
     @PostMapping("/{id}/reject")
     public ResponseEntity<ApiResponse<OrganizationResponse>> rejectOrganization(
             @PathVariable UUID id,
@@ -71,12 +83,52 @@ public class AdminOrganizationController {
         return ResponseEntity.ok(responseFactory.ok(ApiMessages.REJECTED, rejected, httpRequest));
     }
 
+    public record SanctionOrganizationRequest(
+            @NotBlank String reason,
+            String evidenceRefs,
+            boolean safetyInterventionFlag) {}
+
+    public record ResolveAppealRequest(
+            boolean approved,
+            String reviewNote,
+            OrganizationStatus targetStatus) {}
+
     @PostMapping("/{id}/suspend")
     public ResponseEntity<ApiResponse<OrganizationResponse>> suspendOrganization(
             @PathVariable UUID id,
+            @Valid @RequestBody(required = false) SanctionOrganizationRequest request,
+            @AuthenticationPrincipal Jwt jwt,
             HttpServletRequest httpRequest) {
-        OrganizationResponse suspended = organizationService.suspendOrganization(id);
+        String reason = request != null ? request.reason() : "Admin suspension";
+        String evidence = request != null ? request.evidenceRefs() : null;
+        boolean safety = request != null && request.safetyInterventionFlag();
+        String adminId = jwt != null ? jwt.getSubject() : "ADMIN";
+        OrganizationResponse suspended = organizationService.suspendOrganization(id, reason, evidence, safety, adminId);
         return ResponseEntity.ok(responseFactory.ok(ApiMessages.SUSPENDED, suspended, httpRequest));
+    }
+
+    @PostMapping("/{id}/ban")
+    public ResponseEntity<ApiResponse<OrganizationResponse>> banOrganization(
+            @PathVariable UUID id,
+            @Valid @RequestBody SanctionOrganizationRequest request,
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest httpRequest) {
+        OrganizationResponse banned = organizationService.banOrganization(
+                id, request.reason(), request.evidenceRefs(), request.safetyInterventionFlag(), jwt.getSubject());
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.SUSPENDED, banned, httpRequest));
+    }
+
+    @PostMapping("/{id}/appeals/{appealId}/resolve")
+    public ResponseEntity<ApiResponse<OrganizationAppealResponse>> resolveAppeal(
+            @PathVariable UUID id,
+            @PathVariable UUID appealId,
+            @Valid @RequestBody ResolveAppealRequest request,
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest httpRequest) {
+        OrganizationAppealEntity resolved = organizationService.resolveAppeal(
+                id, appealId, request.approved(), request.reviewNote(), request.targetStatus(), jwt.getSubject());
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.UPDATED, OrganizationAppealResponse.from(resolved), httpRequest));
     }
 
     @PostMapping("/{id}/reactivate")

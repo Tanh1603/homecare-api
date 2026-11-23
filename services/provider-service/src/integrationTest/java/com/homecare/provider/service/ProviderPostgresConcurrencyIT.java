@@ -9,6 +9,9 @@ import com.homecare.common.security.AccessMode;
 import com.homecare.common.security.ActorContext;
 import com.homecare.provider.dto.ProviderDtos.CreateScheduleWindowRequest;
 import com.homecare.provider.entity.TechnicianAllocation;
+import com.homecare.provider.organization.entity.OrgRole;
+import com.homecare.provider.organization.entity.OrganizationMemberEntity;
+import com.homecare.provider.organization.repository.OrganizationMemberRepository;
 import com.homecare.provider.repository.TechnicianAllocationRepository;
 import java.time.Instant;
 import java.util.Set;
@@ -38,6 +41,9 @@ class ProviderPostgresConcurrencyIT {
 
     @Autowired
     TechnicianAllocationRepository allocationRepository;
+
+    @Autowired
+    OrganizationMemberRepository organizationMemberRepository;
 
     @BeforeAll
     static void migrate(@Autowired DataSource dataSource) {
@@ -86,5 +92,31 @@ class ProviderPostgresConcurrencyIT {
                 ProviderDataInitializer.PROVIDER_1_ID, true, ProviderDataInitializer.DEMO_TECH_ID);
         assertThat(late.allocated()).isFalse();
         assertThat(late.failureReason()).isEqualTo("OPERATION_ALREADY_RELEASED");
+    }
+
+    @Test
+    void enforcesOneToOneActiveTechnicianPartialUniqueIndexOnRealPostgres() {
+        String techUserId = "pg-tech-" + UUID.randomUUID();
+        Instant now = Instant.now();
+        organizationMemberRepository.saveAndFlush(OrganizationMemberEntity.builder()
+                .id(UUID.randomUUID())
+                .organizationId(UUID.randomUUID())
+                .userId(techUserId)
+                .role(OrgRole.ORG_TECHNICIAN)
+                .status("ACTIVE")
+                .joinedAt(now)
+                .createdAt(now)
+                .build());
+
+        assertThatThrownBy(() -> organizationMemberRepository.saveAndFlush(OrganizationMemberEntity.builder()
+                .id(UUID.randomUUID())
+                .organizationId(UUID.randomUUID())
+                .userId(techUserId)
+                .role(OrgRole.ORG_TECHNICIAN)
+                .status("ACTIVE")
+                .joinedAt(now)
+                .createdAt(now)
+                .build()))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 }

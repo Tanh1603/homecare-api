@@ -4,5 +4,6 @@ public enum OrganizationStatus {
     PENDING,
     APPROVED,
     REJECTED,
-    SUSPENDED
+    SUSPENDED,
+    BANNED
 }

@@ -109,7 +109,7 @@ class SupabaseUserStatusTest {
         var req = new org.springframework.mock.web.MockHttpServletRequest();
         req.setAttribute(com.homecare.common.web.CorrelationIdSupport.REQUEST_ATTRIBUTE, "test-trace-id");
 
-        controller.updateStatus(target, new com.homecare.provider.organization.controller.AdminUserController.StatusRequest("SUSPENDED"), jwt, req);
+        controller.updateStatus(target, new com.homecare.provider.organization.controller.AdminUserController.StatusRequest("SUSPENDED", "Policy violation"), jwt, req);
         org.mockito.Mockito.verify(ops).set("auth:blacklist:user:" + target, "SUSPENDED", java.time.Duration.ofHours(24));
 
         controller.updateStatus(target, new com.homecare.provider.organization.controller.AdminUserController.StatusRequest("ACTIVE"), jwt, req);

@@ -31,6 +31,9 @@ class AdminOrganizationControllerSecurityTest {
     @Autowired
     private AdminOrganizationController adminOrganizationController;
 
+    @Autowired
+    private AdminGovernanceController adminGovernanceController;
+
     @AfterEach
     void clearSecurityContext() {
         SecurityContextHolder.clearContext();
@@ -70,6 +73,8 @@ class AdminOrganizationControllerSecurityTest {
                 "user_roles", List.of(RbacConstants.ROLE_CUSTOMER)));
 
         assertThatThrownBy(() -> adminOrganizationController.listOrganizations(null, 1, 20, new MockHttpServletRequest()))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> adminGovernanceController.listSettings(new MockHttpServletRequest()))
                 .isInstanceOf(AccessDeniedException.class);
     }
 

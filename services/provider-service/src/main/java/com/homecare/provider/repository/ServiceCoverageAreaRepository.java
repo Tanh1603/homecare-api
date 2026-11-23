@@ -14,5 +14,7 @@ public interface ServiceCoverageAreaRepository extends JpaRepository<ServiceCove
 
     List<ServiceCoverageAreaEntity> findByServiceOfferingIdInAndActiveTrue(Collection<UUID> serviceOfferingIds);
 
+    long countByServiceOfferingIdAndActiveTrue(UUID serviceOfferingId);
+
     void deleteByServiceOfferingId(UUID serviceOfferingId);
 }

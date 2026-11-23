@@ -16,6 +16,8 @@ import org.springframework.transaction.annotation.Transactional;
 import com.homecare.booking.client.HouseholdVerificationClient;
 import com.homecare.booking.client.HouseholdVerificationClient.ResolvedServiceAddress;
 import com.homecare.booking.client.HouseholdVerificationClient.WarrantyCheckStatus;
+import com.homecare.booking.client.ProviderGrpcClientAdapter;
+import org.springframework.beans.factory.ObjectProvider;
 import com.homecare.booking.entity.BookingEntity;
 import com.homecare.booking.entity.BookingOutboxEventEntity;
 import com.homecare.booking.entity.BookingPurpose;
@@ -46,6 +48,7 @@ public class ServiceRequestService {
     private final BookingRepository bookingRepository;
     private final BookingOutboxEventRepository outboxRepository;
     private final HouseholdVerificationClient householdClient;
+    private final ObjectProvider<ProviderGrpcClientAdapter> providerGrpcClientProvider;
     private final ObjectMapper objectMapper;
 
     public record CreateServiceRequestInput(
@@ -151,6 +154,13 @@ public class ServiceRequestService {
         String warrantyStatus = null;
         UUID warrantyOrgId = null;
         UUID assignedProviderId = input.preferredProviderId();
+        if (assignedProviderId != null && providerGrpcClientProvider != null) {
+            ProviderGrpcClientAdapter grpc = providerGrpcClientProvider.getIfAvailable();
+            if (grpc != null && grpc.isUserMemberOfProvider(assignedProviderId, requesterProfileId)) {
+                throw new DomainException(CommonErrorCode.OPERATION_FORBIDDEN,
+                        "Active organization members cannot create a personal service request for their own organization (D-29).");
+            }
+        }
         String initialStatus = "AWAITING_PROVIDER";
 
         if ("WARRANTY_CLAIM".equals(reqType) || input.warrantyId() != null) {

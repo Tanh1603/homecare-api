@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
+import com.homecare.common.event.DomainEventContracts;
 import com.homecare.common.security.AccessMode;
 import com.homecare.common.security.ActorContext;
 import com.homecare.common.web.EtagSupport;
@@ -21,10 +22,14 @@ import com.homecare.provider.dto.ProviderDtos.TechnicianInput;
 import com.homecare.provider.dto.ProviderDtos.TechnicianResponse;
 import com.homecare.provider.dto.ProviderDtos.UpdateScheduleWindowRequest;
 import com.homecare.provider.dto.ProviderDtos.UpsertServiceCoverageRequest;
+import com.homecare.provider.entity.CategoryQualificationEntity;
+import com.homecare.provider.entity.CategoryQualificationStatus;
+import com.homecare.provider.entity.InspectionFeePolicy;
 import com.homecare.provider.entity.ProviderAllocationOperation;
 import com.homecare.provider.entity.ProviderEntity;
 import com.homecare.provider.entity.ScheduleWindow;
 import com.homecare.provider.entity.ScheduleWindowStatus;
+import com.homecare.provider.entity.ServiceCategory;
 import com.homecare.provider.entity.ServiceCoverageAreaEntity;
 import com.homecare.provider.entity.ServiceOffering;
 import com.homecare.provider.entity.ServicePriceType;
@@ -34,8 +39,11 @@ import com.homecare.provider.exception.ProviderErrorCode;
 import com.homecare.provider.organization.entity.OrganizationMemberEntity;
 import com.homecare.provider.organization.entity.OrganizationStatus;
 import com.homecare.provider.organization.entity.OrgRole;
+import com.homecare.provider.organization.entity.ProviderOutboxEventEntity;
 import com.homecare.provider.organization.repository.OrganizationMemberRepository;
 import com.homecare.provider.organization.repository.OrganizationRepository;
+import com.homecare.provider.organization.repository.ProviderOutboxEventRepository;
+import com.homecare.provider.repository.CategoryQualificationRepository;
 import com.homecare.provider.repository.ProviderAllocationOperationRepository;
 import com.homecare.provider.repository.ProviderRepository;
 import com.homecare.provider.repository.ScheduleWindowRepository;
@@ -46,12 +54,14 @@ import com.homecare.provider.repository.TechnicianRepository;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import tools.jackson.databind.ObjectMapper;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.data.domain.Pageable;
@@ -130,8 +140,6 @@ public class ProviderDomainService {
         return toProviderResponse(providerRepository.save(p));
     }
 
-    public static final long MAX_INSPECTION_FEE_VND = 500_000L;
-
     @Transactional
     public ServiceOfferingResponse saveOffering(UUID id, OfferingInput input, ActorContext actor) {
         var item = id == null ? new ServiceOffering() : offeringRepository.findById(id).orElseThrow(() -> new DomainException(ProviderErrorCode.SERVICE_NOT_FOUND));
@@ -139,19 +147,30 @@ public class ProviderDomainService {
         if (provider == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         requireProviderManager(provider, actor);
         if (input.providerId() != null && !provider.equals(input.providerId())) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
-        if (input.inspectionFee() != null && (input.inspectionFee() < 0 || input.inspectionFee() > MAX_INSPECTION_FEE_VND)) {
-            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
-                    "inspectionFee must be within FeeBounds [0, " + MAX_INSPECTION_FEE_VND + "] VND.");
+        if (input.inspectionFee() != null && input.inspectionFee() < 0) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "inspectionFee must be >= 0.");
         }
+        boolean wasActive = id != null && item.isActive();
         boolean priceChanged = false;
         if (id == null) {
-            if (input.name() == null || input.category() == null || input.basePrice() == null || input.estimatedDurationMinutes() == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
-            item.setId(UUID.randomUUID()); item.setProviderId(provider); item.setActive(true); item.setCreatedAt(Instant.now());
+            if (input.name() == null || input.category() == null || input.basePrice() == null || input.estimatedDurationMinutes() == null) {
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+            }
+            item.setId(UUID.randomUUID());
+            item.setProviderId(provider);
+            item.setActive(input.active() != null ? input.active() : false);
+            item.setCreatedAt(Instant.now());
             item.setPriceType(ServicePriceType.FIXED);
+            item.setInspectionFeePolicy(InspectionFeePolicy.NO_FEE);
             item.setPriceVersion(1);
         }
         if (input.name() != null) item.setName(input.name());
-        if (input.category() != null) item.setCategory(input.category());
+        String effectiveCategoryCode = input.category() != null ? input.category() : item.getCategory();
+        ServiceCategory category = ServiceCategory.fromCode(effectiveCategoryCode)
+                .orElseThrow(() -> new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                        "Invalid v0.1 ServiceCategory: " + effectiveCategoryCode));
+        item.setCategory(category.name());
+
         if (input.description() != null) item.setDescription(input.description());
         if (input.basePrice() != null) {
             if (id != null && input.basePrice() != item.getBasePrice()) priceChanged = true;
@@ -165,12 +184,50 @@ public class ProviderDomainService {
             if (id != null && !input.inspectionFee().equals(item.getInspectionFee())) priceChanged = true;
             item.setInspectionFee(input.inspectionFee());
         }
+        if (input.inspectionFeePolicy() != null) {
+            if (id != null && input.inspectionFeePolicy() != item.getInspectionFeePolicy()) priceChanged = true;
+            item.setInspectionFeePolicy(input.inspectionFeePolicy());
+        }
+        long softThreshold = governanceService.getInspectionFeeSoftWarningVnd();
+        item.setInspectionFeeAuditFlag(item.getInspectionFee() != null && item.getInspectionFee() > softThreshold);
+
+        int workmanshipDays = input.workmanshipDurationDays() != null
+                ? input.workmanshipDurationDays()
+                : (id == null ? Math.max(7, category.minWorkmanshipDays()) : item.getWorkmanshipDurationDays());
+        if (!category.isValidWorkmanshipDays(workmanshipDays)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "workmanshipDurationDays for " + category.name() + " must be within ["
+                            + category.minWorkmanshipDays() + ", " + category.maxWorkmanshipDays() + "].");
+        }
+        item.setWorkmanshipDurationDays(workmanshipDays);
+
         if (priceChanged) {
             item.setPriceVersion(Math.max(1, item.getPriceVersion()) + 1);
         }
         if (input.estimatedDurationMinutes() != null) item.setEstimatedDurationMinutes(input.estimatedDurationMinutes());
         if (input.active() != null) item.setActive(input.active());
-        return toOfferingResponse(offeringRepository.save(item));
+
+        if (item.isActive()) {
+            if (category.requiresQualification()) {
+                boolean qualified = categoryQualificationRepository.findByProviderIdAndCategory(provider, category)
+                        .map(q -> q.getStatus() == CategoryQualificationStatus.VERIFIED)
+                        .orElse(false);
+                if (!qualified) {
+                    throw new DomainException(ProviderErrorCode.ORGANIZATION_NOT_APPROVED,
+                            "Admin Qualification Verification is required before activating " + category.name() + " offerings.");
+                }
+            }
+            if (coverageAreaRepository.countByServiceOfferingIdAndActiveTrue(item.getId()) == 0) {
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                        "At least 1 active ServiceCoverageArea is required before activating a ServiceOffering.");
+            }
+        }
+
+        ServiceOffering saved = offeringRepository.save(item);
+        if (wasActive && !saved.isActive()) {
+            enqueueOfferingDeactivatedEvent(saved, "PROVIDER_DEACTIVATED");
+        }
+        return toOfferingResponse(saved);
     }
 
     @Transactional
@@ -179,11 +236,19 @@ public class ProviderDomainService {
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.SERVICE_NOT_FOUND));
         requireProviderManager(offering.getProviderId(), actor);
         List<CoverageAreaItem> areas = request != null && request.areas() != null ? request.areas() : List.of();
+        long activeCount = 0;
         for (CoverageAreaItem a : areas) {
             if (a == null || a.locationCode() == null || a.locationCode().isBlank()
                     || a.level() == null || (!"PROVINCE".equalsIgnoreCase(a.level()) && !"WARD".equalsIgnoreCase(a.level()))) {
                 throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Coverage area must have valid PROVINCE or WARD level and locationCode.");
             }
+            if (a.active() == null || a.active()) {
+                activeCount++;
+            }
+        }
+        if (offering.isActive() && activeCount == 0) {
+            throw new DomainException(CommonErrorCode.CONFLICT,
+                    "Cannot remove the last active ServiceCoverageArea while the ServiceOffering is ACTIVE.");
         }
         coverageAreaRepository.deleteByServiceOfferingId(offeringId);
         coverageAreaRepository.flush();
@@ -202,6 +267,72 @@ public class ProviderDomainService {
                     .build());
         }
         return getOfferingCoverage(offeringId);
+    }
+
+    @Transactional
+    public CategoryQualificationEntity verifyCategoryQualification(
+            UUID providerId, ServiceCategory category, CategoryQualificationStatus decision, String reason, String adminUserId) {
+        providerRepository.findById(providerId)
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.PROVIDER_NOT_FOUND));
+        if (decision == null || decision == CategoryQualificationStatus.UNVERIFIED) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Decision must be VERIFIED, REJECTED, or REVOKED.");
+        }
+        Instant now = Instant.now();
+        CategoryQualificationEntity qual = categoryQualificationRepository.findByProviderIdAndCategory(providerId, category)
+                .orElse(CategoryQualificationEntity.builder()
+                        .id(UUID.randomUUID())
+                        .providerId(providerId)
+                        .category(category)
+                        .createdAt(now)
+                        .build());
+        qual.setStatus(decision);
+        qual.setReason(reason != null ? reason.trim() : null);
+        qual.setVerifiedBy(adminUserId);
+        qual.setVerifiedAt(now);
+        qual.setUpdatedAt(now);
+        CategoryQualificationEntity saved = categoryQualificationRepository.save(qual);
+
+        if (decision == CategoryQualificationStatus.REVOKED || decision == CategoryQualificationStatus.REJECTED) {
+            List<ServiceOffering> activeInCat = offeringRepository.findByProviderIdAndActiveTrue(providerId).stream()
+                    .filter(o -> category.name().equalsIgnoreCase(o.getCategory()))
+                    .toList();
+            for (ServiceOffering offering : activeInCat) {
+                offering.setActive(false);
+                offeringRepository.save(offering);
+                enqueueOfferingDeactivatedEvent(offering, "QUALIFICATION_" + decision.name());
+            }
+        }
+        return saved;
+    }
+
+    private void enqueueOfferingDeactivatedEvent(ServiceOffering offering, String reason) {
+        Instant now = Instant.now();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("providerId", offering.getProviderId().toString());
+        data.put("serviceOfferingId", offering.getId().toString());
+        data.put("category", offering.getCategory());
+        data.put("reason", reason);
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put(DomainEventContracts.FIELD_EVENT_ID, UUID.randomUUID().toString());
+        envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, DomainEventContracts.OFFERING_DEACTIVATED);
+        envelope.put(DomainEventContracts.FIELD_OCCURRED_AT, now.toString());
+        envelope.put(DomainEventContracts.FIELD_PRODUCER, "provider-service");
+        envelope.put(DomainEventContracts.FIELD_DATA, data);
+        try {
+            outboxRepository.save(ProviderOutboxEventEntity.builder()
+                    .id(UUID.randomUUID())
+                    .aggregateType("ServiceOffering")
+                    .aggregateId(offering.getId())
+                    .eventType(DomainEventContracts.OFFERING_DEACTIVATED)
+                    .payloadJson(objectMapper.writeValueAsString(envelope))
+                    .status(EntityStatus.PENDING.name())
+                    .retryCount(0)
+                    .nextAttemptAt(now)
+                    .createdAt(now)
+                    .build());
+        } catch (Exception ex) {
+            throw new IllegalStateException("Failed to serialize offering deactivated event.", ex);
+        }
     }
 
     @Transactional(readOnly = true)
@@ -227,6 +358,9 @@ public class ProviderDomainService {
         Set<UUID> providerIds = activeOfferings.stream().map(ServiceOffering::getProviderId).collect(Collectors.toSet());
         Map<UUID, ProviderEntity> activeProviders = providerRepository.findAllById(providerIds).stream()
                 .filter(p -> "ACTIVE".equalsIgnoreCase(p.getStatus()))
+                .filter(p -> organizationRepository.findById(p.getOrganizationId())
+                        .map(o -> o.getStatus() == OrganizationStatus.APPROVED)
+                        .orElse(true))
                 .collect(Collectors.toMap(ProviderEntity::getId, p -> p));
 
         Map<UUID, List<ServiceCoverageAreaEntity>> coverageByOffering = coverageAreaRepository
@@ -237,6 +371,7 @@ public class ProviderDomainService {
 
         return activeOfferings.stream()
                 .filter(o -> activeProviders.containsKey(o.getProviderId()))
+                .filter(o -> isOfferingQualificationSatisfied(o))
                 .filter(o -> matchesCoverage(coverageByOffering.getOrDefault(o.getId(), List.of()), normProvince, normWard))
                 .sorted(Comparator
                         .comparingInt((ServiceOffering o) -> coverageRank(coverageByOffering.getOrDefault(o.getId(), List.of()), normProvince, normWard))
@@ -244,6 +379,28 @@ public class ProviderDomainService {
                         .thenComparing(ServiceOffering::getId))
                 .map(o -> toOfferingResponse(o, activeProviders.get(o.getProviderId()).getName()))
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public boolean isOfferingQualificationSatisfied(ServiceOffering o) {
+        return ServiceCategory.fromCode(o.getCategory())
+                .map(cat -> !cat.requiresQualification() || isCategoryQualificationVerified(o.getProviderId(), cat))
+                .orElse(true);
+    }
+
+    @Transactional(readOnly = true)
+    public boolean isCategoryQualificationVerified(UUID providerId, ServiceCategory category) {
+        return categoryQualificationRepository.findByProviderIdAndCategory(providerId, category)
+                .map(q -> q.getStatus() == CategoryQualificationStatus.VERIFIED)
+                .orElse(false);
+    }
+
+    @Transactional(readOnly = true)
+    public boolean isProviderIdentityVerified(UUID providerId) {
+        return providerRepository.findById(providerId)
+                .flatMap(p -> organizationRepository.findById(p.getOrganizationId()))
+                .map(o -> o.isIdentityVerified() && o.getStatus() == OrganizationStatus.APPROVED)
+                .orElse(false);
     }
 
     private boolean matchesCoverage(List<ServiceCoverageAreaEntity> areas, String provinceCode, String wardCode) {
@@ -342,6 +499,10 @@ public class ProviderDomainService {
     private final OrganizationMemberRepository organizationMemberRepository;
     private final ProviderAccessPolicy accessPolicy;
     private final PlatformTransactionManager transactionManager;
+    private final CategoryQualificationRepository categoryQualificationRepository;
+    private final PlatformGovernanceService governanceService;
+    private final ProviderOutboxEventRepository outboxRepository;
+    private final ObjectMapper objectMapper;
 
     @Transactional(readOnly = true)
     public ServiceOfferingResponse getOffering(UUID serviceId) {
@@ -1101,6 +1262,10 @@ public class ProviderDomainService {
 
     private ServiceOfferingResponse toOfferingResponse(ServiceOffering o, String providerName) {
         List<CoverageAreaItem> areas = o.getId() != null ? getOfferingCoverage(o.getId()) : List.of();
+        long threshold = governanceService.getInspectionFeeSoftWarningVnd();
+        String warning = o.isInspectionFeeAuditFlag()
+                ? "Inspection fee exceeds platform soft-warning threshold (" + threshold + " VND) and is flagged for Admin post-audit."
+                : null;
         return new ServiceOfferingResponse(
                 o.getId(),
                 o.getProviderId(),
@@ -1113,6 +1278,10 @@ public class ProviderDomainService {
                 o.isActive(),
                 o.getPriceType() != null ? o.getPriceType() : ServicePriceType.FIXED,
                 o.getInspectionFee(),
+                o.getInspectionFeePolicy() != null ? o.getInspectionFeePolicy() : InspectionFeePolicy.NO_FEE,
+                o.isInspectionFeeAuditFlag(),
+                warning,
+                o.getWorkmanshipDurationDays(),
                 o.getPriceVersion() > 0 ? o.getPriceVersion() : 1,
                 areas);
     }

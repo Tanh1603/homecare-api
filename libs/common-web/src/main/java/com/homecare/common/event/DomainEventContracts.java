@@ -21,11 +21,14 @@ public final class DomainEventContracts {
     public static final String FIELD_PRODUCER = "producer";
     public static final String FIELD_DATA = "data";
 
-    // Organization lifecycle events
+    // Organization & Provider governance lifecycle events
     public static final String ORG_APPROVED = "organization.approved.v1";
     public static final String ORG_UPDATED = "organization.updated.v1";
     public static final String ORG_SUSPENDED = "organization.suspended.v1";
+    public static final String ORG_BANNED = "organization.banned.v1";
     public static final String ORG_MEMBER_CHANGED = "organization.member.changed.v1";
+    public static final String OFFERING_DEACTIVATED = "provider.offering.deactivated.v1";
+    public static final String USER_SUSPENDED = "user.suspended.v1";
 
     // Booking lifecycle events
     public static final String BOOKING_REQUESTED = "booking.requested.v1";

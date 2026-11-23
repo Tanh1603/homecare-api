@@ -25,7 +25,11 @@ import com.homecare.provider.dto.ProviderDtos.ScheduleWindowResponse;
 import com.homecare.provider.dto.ProviderDtos.ServiceOfferingResponse;
 import com.homecare.provider.dto.ProviderDtos.UpdateScheduleWindowRequest;
 import com.homecare.provider.dto.ProviderDtos.UpsertServiceCoverageRequest;
+import com.homecare.provider.entity.CategoryQualificationStatus;
+import com.homecare.provider.entity.InspectionFeePolicy;
+import com.homecare.provider.entity.ServiceCategory;
 import com.homecare.provider.entity.ServicePriceType;
+import com.homecare.provider.exception.ProviderErrorCode;
 import com.homecare.provider.service.ProviderDomainService.AllocationOutcome;
 
 @SpringBootTest
@@ -180,23 +184,75 @@ class ProviderDomainServiceTest {
                 java.util.Set.of(),
                 java.util.Set.of(RbacConstants.PERM_SERVICE_MANAGE));
 
-        // 1. Out-of-bounds inspectionFee (> 500,000 VND) rejected
-        assertThatThrownBy(() -> service.saveOffering(
+        // 1. High inspectionFee (> 500,000 VND) is allowed with soft warning + Admin post-audit flag (D-22)
+        ServiceOfferingResponse highFeeDraft = service.saveOffering(
                 null,
                 new OfferingInput(
                         ProviderDataInitializer.PROVIDER_1_ID,
                         "Khảo sát sửa ống nước",
-                        "PLUMBING_TEST",
-                        "Test fee bounds",
+                        ServiceCategory.PLUMBING.name(),
+                        "Test soft-warning fee",
                         150_000L,
                         60,
-                        true,
+                        false,
                         ServicePriceType.QUOTE_REQUIRED,
-                        600_000L),
+                        600_000L,
+                        InspectionFeePolicy.CREDIT_FULL,
+                        14),
+                adminActor);
+        assertThat(highFeeDraft.inspectionFee()).isEqualTo(600_000L);
+        assertThat(highFeeDraft.inspectionFeeAuditFlag()).isTrue();
+        assertThat(highFeeDraft.inspectionFeeWarning()).contains("500000");
+
+        // 1b. High-risk category activation blocked without Qualification Verification (D-25)
+        ServiceOfferingResponse elecDraft = service.saveOffering(
+                null,
+                new OfferingInput(
+                        ProviderDataInitializer.PROVIDER_1_ID,
+                        "Sửa điện dân dụng",
+                        ServiceCategory.ELECTRICAL_REPAIR.name(),
+                        "High-risk electrical",
+                        200_000L,
+                        60,
+                        false,
+                        ServicePriceType.FIXED,
+                        0L,
+                        InspectionFeePolicy.NO_FEE,
+                        14),
+                adminActor);
+        service.replaceOfferingCoverage(
+                elecDraft.id(),
+                new UpsertServiceCoverageRequest(List.of(new CoverageAreaItem("79", "PROVINCE", true))),
+                adminActor);
+        assertThatThrownBy(() -> service.saveOffering(
+                elecDraft.id(),
+                new OfferingInput(null, null, null, null, null, null, true),
                 adminActor))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
-                .isEqualTo("VALIDATION_FAILED");
+                .isEqualTo(ProviderErrorCode.ORGANIZATION_NOT_APPROVED.name());
+
+        // Verify qualification -> activation succeeds
+        service.verifyCategoryQualification(
+                ProviderDataInitializer.PROVIDER_1_ID,
+                ServiceCategory.ELECTRICAL_REPAIR,
+                CategoryQualificationStatus.VERIFIED,
+                "Valid electrical certificate",
+                "admin-1");
+        ServiceOfferingResponse elecActive = service.saveOffering(
+                elecDraft.id(),
+                new OfferingInput(null, null, null, null, null, null, true),
+                adminActor);
+        assertThat(elecActive.active()).isTrue();
+
+        // Removing last active coverage while ACTIVE is blocked (Clarify Q1)
+        assertThatThrownBy(() -> service.replaceOfferingCoverage(
+                elecDraft.id(),
+                new UpsertServiceCoverageRequest(List.of()),
+                adminActor))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("CONFLICT");
 
         // 2. Provider 1 offering in Province 79 (HCM); Provider 2 offering in Ward 26734 (HCM)
         ServiceOfferingResponse p1Offering = service.saveOffering(
@@ -204,13 +260,15 @@ class ProviderDomainServiceTest {
                 new OfferingInput(
                         ProviderDataInitializer.PROVIDER_1_ID,
                         "Sửa máy lạnh HCM Tỉnh",
-                        "AC_COVERAGE_TEST",
+                        ServiceCategory.AC_CLEANING_MAINTENANCE.name(),
                         "Province coverage",
                         200_000L,
                         60,
-                        true,
+                        false,
                         ServicePriceType.QUOTE_REQUIRED,
-                        120_000L),
+                        120_000L,
+                        InspectionFeePolicy.CREDIT_FULL,
+                        14),
                 adminActor);
         assertThat(p1Offering.priceType()).isEqualTo(ServicePriceType.QUOTE_REQUIRED);
         assertThat(p1Offering.inspectionFee()).isEqualTo(120_000L);
@@ -221,13 +279,15 @@ class ProviderDomainServiceTest {
                 new OfferingInput(
                         ProviderDataInitializer.PROVIDER_2_ID,
                         "Sửa máy lạnh Phường Bến Nghé",
-                        "AC_COVERAGE_TEST",
+                        ServiceCategory.AC_CLEANING_MAINTENANCE.name(),
                         "Ward coverage",
                         220_000L,
                         60,
-                        true,
+                        false,
                         ServicePriceType.FIXED,
-                        null),
+                        null,
+                        InspectionFeePolicy.NO_FEE,
+                        14),
                 adminActor);
 
         service.replaceOfferingCoverage(
@@ -238,14 +298,17 @@ class ProviderDomainServiceTest {
                 p2Offering.id(),
                 new UpsertServiceCoverageRequest(List.of(new CoverageAreaItem("26734", "WARD", true))),
                 adminActor);
+        service.saveOffering(p1Offering.id(), new OfferingInput(null, null, null, null, null, null, true), adminActor);
+        service.saveOffering(p2Offering.id(), new OfferingInput(null, null, null, null, null, null, true), adminActor);
 
         // Querying HCM + Ward 26734 returns both, with exact WARD match ranked before PROVINCE match
-        List<ServiceOfferingResponse> hcmEligible = service.listEligibleOfferings("AC_COVERAGE_TEST", "79", "26734");
+        List<ServiceOfferingResponse> hcmEligible = service.listEligibleOfferings(
+                ServiceCategory.AC_CLEANING_MAINTENANCE.name(), "79", "26734");
         assertThat(hcmEligible).extracting(ServiceOfferingResponse::id)
                 .containsExactly(p2Offering.id(), p1Offering.id());
 
         // Querying Hanoi (Province 01) excludes both HCM offerings
-        assertThat(service.listEligibleOfferings("AC_COVERAGE_TEST", "01", "00001")).isEmpty();
+        assertThat(service.listEligibleOfferings(ServiceCategory.AC_CLEANING_MAINTENANCE.name(), "01", "00001")).isEmpty();
 
         // Updating price increments priceVersion
         ServiceOfferingResponse updatedP1 = service.saveOffering(

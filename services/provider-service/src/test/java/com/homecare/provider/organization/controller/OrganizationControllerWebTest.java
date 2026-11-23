@@ -73,8 +73,8 @@ class OrganizationControllerWebTest {
         String userId = "legacy-owner-" + UUID.randomUUID();
         String payload = """
                 {
-                  "name": "Cửa Hàng Linh Kiện Legacy",
-                  "type": "COMMERCE",
+                  "name": "Cửa Hàng Dịch Vụ Legacy",
+                  "type": "SERVICE",
                   "phone": "0901234568",
                   "city": "Đà Nẵng",
                   "address": "22 Bạch Đằng"
@@ -86,7 +86,7 @@ class OrganizationControllerWebTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.data.type").value("COMMERCE"))
+                .andExpect(jsonPath("$.data.type").value("SERVICE"))
                 .andExpect(jsonPath("$.data.legalEntityType").value(Matchers.nullValue()));
     }
 
@@ -166,13 +166,13 @@ class OrganizationControllerWebTest {
                 ownerId,
                 new RegisterOrganizationRequest(
                         "Tenant A Org",
-                        OrganizationType.BOTH,
+                        OrganizationType.SERVICE,
                         LegalEntityType.COMPANY,
                         "0311112222",
                         "0909111222",
                         "Hà Nội",
                         "1 Tràng Tiền",
-                        "Multi-capability"));
+                        "Service capability"));
         organizationService.approveOrganization(org.id(), "admin-1");
 
         mvc.perform(get("/api/v1/organizations/{id}", org.id())

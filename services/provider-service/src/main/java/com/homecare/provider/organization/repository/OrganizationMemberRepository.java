@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import com.homecare.provider.organization.entity.OrgRole;
 import com.homecare.provider.organization.entity.OrganizationMemberEntity;
 
 public interface OrganizationMemberRepository extends JpaRepository<OrganizationMemberEntity, UUID> {
@@ -17,6 +18,13 @@ public interface OrganizationMemberRepository extends JpaRepository<Organization
     List<OrganizationMemberEntity> findByUserIdAndStatus(String userId, String status);
 
     List<OrganizationMemberEntity> findByOrganizationIdOrderByJoinedAtAsc(UUID organizationId);
+
+    long countByOrganizationIdAndStatus(UUID organizationId, String status);
+
+    boolean existsByUserIdAndRoleAndStatus(String userId, OrgRole role, String status);
+
+    boolean existsByOrganizationIdAndRoleAndStatusAndUserIdNot(
+            UUID organizationId, OrgRole role, String status, String userId);
 
     @Query("""
             SELECT COUNT(m) FROM OrganizationMemberEntity m

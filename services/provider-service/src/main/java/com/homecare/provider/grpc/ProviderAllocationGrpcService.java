@@ -1,12 +1,16 @@
 package com.homecare.provider.grpc;
 
 import com.homecare.provider.dto.ProviderDtos.ServiceOfferingResponse;
+import com.homecare.provider.entity.ServiceCategory;
+import com.homecare.provider.organization.service.OrganizationDomainService;
 import com.homecare.provider.service.ProviderDomainService;
 import com.homecare.provider.service.ProviderDomainService.AllocationOutcome;
 import com.homecare.provider.v1.AllocateTechnicianRequest;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.GetBookingAllocationRequest;
 import com.homecare.provider.v1.GetBookingAllocationResponse;
+import com.homecare.provider.v1.IsUserMemberOfProviderRequest;
+import com.homecare.provider.v1.IsUserMemberOfProviderResponse;
 import com.homecare.provider.v1.ProviderAllocationServiceGrpc;
 import com.homecare.provider.v1.ReassignTechnicianRequest;
 import com.homecare.provider.v1.ReleaseBookingRequest;
@@ -27,6 +31,7 @@ import net.devh.boot.grpc.server.service.GrpcService;
 public class ProviderAllocationGrpcService extends ProviderAllocationServiceGrpc.ProviderAllocationServiceImplBase {
 
     private final ProviderDomainService domainService;
+    private final OrganizationDomainService organizationService;
 
     @Override
     public void verifyOffering(
@@ -36,15 +41,24 @@ public class ProviderAllocationGrpcService extends ProviderAllocationServiceGrpc
             UUID serviceId = UUID.fromString(request.getServiceId());
             ServiceOfferingResponse offering = domainService.getOffering(serviceId);
             boolean providerActive = domainService.isProviderActive(offering.providerId());
+            ServiceCategory cat = ServiceCategory.fromCode(offering.category()).orElse(null);
+            boolean requiresQual = cat != null && cat.requiresQualification();
+            boolean qualVerified = !requiresQual || domainService.isCategoryQualificationVerified(offering.providerId(), cat);
+            boolean identityVerified = domainService.isProviderIdentityVerified(offering.providerId());
             VerifyOfferingResponse response = VerifyOfferingResponse.newBuilder()
                     .setServiceId(offering.id().toString())
                     .setProviderId(offering.providerId().toString())
                     .setName(offering.name())
                     .setBasePrice(offering.basePrice())
-                    .setActive(offering.active() && providerActive)
+                    .setActive(offering.active() && providerActive && qualVerified)
                     .setCategory(offering.category())
                     .setEstimatedDurationMinutes(offering.estimatedDurationMinutes())
                     .setProviderName(offering.providerName())
+                    .setRequiresQualification(requiresQual)
+                    .setQualificationVerified(qualVerified)
+                    .setInspectionFeePolicy(offering.inspectionFeePolicy().name())
+                    .setWorkmanshipDurationDays(offering.workmanshipDurationDays())
+                    .setProviderIdentityVerified(identityVerified)
                     .build();
             responseObserver.onNext(response);
             responseObserver.onCompleted();
@@ -172,6 +186,21 @@ public class ProviderAllocationGrpcService extends ProviderAllocationServiceGrpc
                 .setRole(role.orElse(""))
                 .build();
         responseObserver.onNext(response);
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void isUserMemberOfProvider(
+            IsUserMemberOfProviderRequest request,
+            StreamObserver<IsUserMemberOfProviderResponse> responseObserver) {
+        UUID providerId = parseUuidOrNull(request.getProviderId());
+        UUID orgId = providerId != null
+                ? organizationService.findOrganizationIdIfUserIsMemberOfProvider(providerId, request.getUserId())
+                : null;
+        responseObserver.onNext(IsUserMemberOfProviderResponse.newBuilder()
+                .setMember(orgId != null)
+                .setOrganizationId(orgId != null ? orgId.toString() : "")
+                .build());
         responseObserver.onCompleted();
     }
 

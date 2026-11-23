@@ -50,6 +50,19 @@ public class ServiceOffering {
     @Column(name = "inspection_fee")
     private Long inspectionFee;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "inspection_fee_policy", nullable = false, length = 30)
+    @Builder.Default
+    private InspectionFeePolicy inspectionFeePolicy = InspectionFeePolicy.NO_FEE;
+
+    @Column(name = "inspection_fee_audit_flag", nullable = false)
+    @Builder.Default
+    private boolean inspectionFeeAuditFlag = false;
+
+    @Column(name = "workmanship_duration_days", nullable = false)
+    @Builder.Default
+    private int workmanshipDurationDays = 7;
+
     @Column(name = "price_version", nullable = false)
     @Builder.Default
     private int priceVersion = 1;

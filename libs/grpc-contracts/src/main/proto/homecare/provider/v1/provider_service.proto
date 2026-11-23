@@ -13,6 +13,7 @@ service ProviderAllocationService {
   rpc ReleaseBooking (ReleaseBookingRequest) returns (ReleaseBookingResponse);
   rpc GetBookingAllocation (GetBookingAllocationRequest) returns (GetBookingAllocationResponse);
   rpc VerifyOrganizationMembership (VerifyOrganizationMembershipRequest) returns (VerifyOrganizationMembershipResponse);
+  rpc IsUserMemberOfProvider (IsUserMemberOfProviderRequest) returns (IsUserMemberOfProviderResponse);
 }
 
 message VerifyOfferingRequest {
@@ -28,6 +29,11 @@ message VerifyOfferingResponse {
   string category = 6;
   int32 estimated_duration_minutes = 7;
   string provider_name = 8;
+  bool requires_qualification = 9;
+  bool qualification_verified = 10;
+  string inspection_fee_policy = 11;
+  int32 workmanship_duration_days = 12;
+  bool provider_identity_verified = 13;
 }
 
 message AllocateTechnicianRequest {
@@ -73,6 +79,16 @@ message VerifyOrganizationMembershipRequest {
 message VerifyOrganizationMembershipResponse {
   bool valid = 1;
   string role = 2;
+}
+
+message IsUserMemberOfProviderRequest {
+  string provider_id = 1;
+  string user_id = 2;
+}
+
+message IsUserMemberOfProviderResponse {
+  bool member = 1;
+  string organization_id = 2;
 }
 
 message ReassignTechnicianRequest {

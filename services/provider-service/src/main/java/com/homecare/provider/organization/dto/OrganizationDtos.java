@@ -26,7 +26,20 @@ public final class OrganizationDtos {
             @NotBlank String phone,
             @NotBlank String city,
             String address,
-            String description) {
+            String description,
+            String identityEvidenceRefs) {
+        public RegisterOrganizationRequest(
+                String name,
+                OrganizationType type,
+                LegalEntityType legalEntityType,
+                String taxCode,
+                String phone,
+                String city,
+                String address,
+                String description) {
+            this(name, type, legalEntityType, taxCode, phone, city, address, description, null);
+        }
+
         public RegisterOrganizationRequest(
                 String name,
                 OrganizationType type,
@@ -35,8 +48,19 @@ public final class OrganizationDtos {
                 String city,
                 String address,
                 String description) {
-            this(name, type, null, taxCode, phone, city, address, description);
+            this(name, type, null, taxCode, phone, city, address, description, null);
         }
+    }
+
+    public record ResubmitOrganizationRequest(
+            @NotBlank @Size(max = 255) String name,
+            LegalEntityType legalEntityType,
+            String taxCode,
+            @NotBlank @Size(max = 50) String phone,
+            @NotBlank @Size(max = 120) String city,
+            @Size(max = 500) String address,
+            @Size(max = 1500) String description,
+            String identityEvidenceRefs) {
     }
 
     public record UpdateOrganizationRequest(
@@ -54,6 +78,10 @@ public final class OrganizationDtos {
             LegalEntityType legalEntityType,
             OrganizationStatus status,
             String rejectReason,
+            int resubmitCount,
+            boolean identityVerified,
+            Instant identityVerifiedAt,
+            LegalEntityType pendingLegalEntityUpgrade,
             String taxCode,
             String phone,
             String city,
@@ -63,6 +91,26 @@ public final class OrganizationDtos {
             Long version,
             Instant createdAt,
             Instant updatedAt) {
+        public OrganizationResponse(
+                UUID id,
+                String name,
+                OrganizationType type,
+                LegalEntityType legalEntityType,
+                OrganizationStatus status,
+                String rejectReason,
+                String taxCode,
+                String phone,
+                String city,
+                String address,
+                String description,
+                String ownerUserId,
+                Long version,
+                Instant createdAt,
+                Instant updatedAt) {
+            this(id, name, type, legalEntityType, status, rejectReason, 0, false, null, null,
+                    taxCode, phone, city, address, description, ownerUserId, version, createdAt, updatedAt);
+        }
+
         public OrganizationResponse(
                 UUID id,
                 String name,
@@ -78,8 +126,8 @@ public final class OrganizationDtos {
                 Long version,
                 Instant createdAt,
                 Instant updatedAt) {
-            this(id, name, type, null, status, rejectReason, taxCode, phone, city, address, description,
-                    ownerUserId, version, createdAt, updatedAt);
+            this(id, name, type, null, status, rejectReason, 0, false, null, null,
+                    taxCode, phone, city, address, description, ownerUserId, version, createdAt, updatedAt);
         }
     }
 
@@ -141,5 +189,28 @@ public final class OrganizationDtos {
             String role,
             String status,
             Instant createdAt) {
+    }
+
+    public record OrganizationAppealResponse(
+            UUID id,
+            UUID organizationId,
+            UUID enforcementId,
+            int attemptNumber,
+            String appealReason,
+            String evidenceRefs,
+            String submittedBy,
+            Instant submittedAt,
+            Instant slaDueAt,
+            String status,
+            String reviewedByAdmin,
+            String reviewNote,
+            Instant reviewedAt) {
+        public static OrganizationAppealResponse from(
+                com.homecare.provider.organization.entity.OrganizationAppealEntity e) {
+            return new OrganizationAppealResponse(
+                    e.getId(), e.getOrganizationId(), e.getEnforcementId(), e.getAttemptNumber(),
+                    e.getAppealReason(), e.getEvidenceRefs(), e.getSubmittedBy(), e.getSubmittedAt(),
+                    e.getSlaDueAt(), e.getStatus(), e.getReviewedByAdmin(), e.getReviewNote(), e.getReviewedAt());
+        }
     }
 }

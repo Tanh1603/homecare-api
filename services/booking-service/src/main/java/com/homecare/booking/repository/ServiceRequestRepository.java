@@ -26,4 +26,8 @@ public interface ServiceRequestRepository extends JpaRepository<ServiceRequestEn
     Page<ServiceRequestEntity> findByAssignedProviderIdOrderByCreatedAtDesc(UUID assignedProviderId, Pageable pageable);
 
     List<ServiceRequestEntity> findByRequesterProfileIdOrderByCreatedAtDesc(String requesterProfileId);
+
+    List<ServiceRequestEntity> findByServiceOfferingIdAndStatusIn(UUID serviceOfferingId, List<String> statuses);
+
+    List<ServiceRequestEntity> findByAssignedProviderIdAndStatusIn(UUID assignedProviderId, List<String> statuses);
 }
