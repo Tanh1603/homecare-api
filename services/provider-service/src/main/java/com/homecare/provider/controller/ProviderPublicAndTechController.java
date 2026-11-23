@@ -10,6 +10,7 @@ import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
+import com.homecare.provider.dto.ProviderDtos.CoverageAreaItem;
 import com.homecare.provider.dto.ProviderDtos.CreateScheduleWindowRequest;
 import com.homecare.provider.dto.ProviderDtos.ProviderResponse;
 import com.homecare.provider.dto.ProviderDtos.ScheduleWindowResponse;
@@ -20,6 +21,7 @@ import com.homecare.provider.security.ProviderAccessPolicy;
 import com.homecare.provider.service.ProviderDomainService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -65,6 +67,28 @@ public class ProviderPublicAndTechController {
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
                 service.offeringsPage(category, effectiveProviderId, q, includeInactive, page, size),
+                httpRequest));
+    }
+
+    @GetMapping("/services/eligible")
+    public ResponseEntity<ApiResponse<List<ServiceOfferingResponse>>> listEligibleServices(
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String provinceCode,
+            @RequestParam(required = false) String wardCode,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.RETRIEVED,
+                service.listEligibleOfferings(category, provinceCode, wardCode),
+                httpRequest));
+    }
+
+    @GetMapping("/services/{serviceId}/coverage")
+    public ResponseEntity<ApiResponse<List<CoverageAreaItem>>> getServiceCoverage(
+            @PathVariable UUID serviceId,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.RETRIEVED,
+                service.getOfferingCoverage(serviceId),
                 httpRequest));
     }
 

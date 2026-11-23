@@ -36,6 +36,10 @@ public class OrganizationEntity {
     private OrganizationType type;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "legal_entity_type", length = 30)
+    private LegalEntityType legalEntityType;
+
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     @Builder.Default
     private OrganizationStatus status = OrganizationStatus.PENDING;

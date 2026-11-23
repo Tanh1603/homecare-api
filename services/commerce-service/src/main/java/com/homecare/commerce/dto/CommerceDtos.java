@@ -1,6 +1,8 @@
 package com.homecare.commerce.dto;
 
+import com.homecare.commerce.entity.DeviceEligibility;
 import com.homecare.commerce.entity.ProductType;
+import com.homecare.commerce.entity.WarrantyStartTrigger;
 import jakarta.validation.constraints.NotNull;
 
 import jakarta.validation.constraints.Min;
@@ -27,7 +29,19 @@ public final class CommerceDtos {
             @Size(max = 1500) String description,
             @Size(max = 255) String imageUrl,
             @Positive Long unitPrice,
-            @Pattern(regexp = "ACTIVE|INACTIVE") String status) {}
+            @Pattern(regexp = "ACTIVE|INACTIVE") String status,
+            @Size(max = 255) String model,
+            DeviceEligibility deviceEligibility,
+            WarrantyStartTrigger warrantyStartTrigger,
+            Boolean installable,
+            @Size(max = 255) String defaultInstallCategory) {
+        public ProductInput(UUID merchantId, String sku, String name, String category, String brand,
+                ProductType productType, Integer warrantyMonths, Integer returnWindowDays,
+                String description, String imageUrl, Long unitPrice, String status) {
+            this(merchantId, sku, name, category, brand, productType, warrantyMonths, returnWindowDays,
+                    description, imageUrl, unitPrice, status, null, null, null, false, null);
+        }
+    }
     public record InventoryInput(@NotNull @Min(0) Integer availableQty) {}
 
     private CommerceDtos() {
@@ -49,17 +63,77 @@ public final class CommerceDtos {
             long unitPrice,
             int availableQty,
             int reservedQty,
-            String status) {
+            String status,
+            String model,
+            String deviceEligibility,
+            String warrantyStartTrigger,
+            boolean installable,
+            String defaultInstallCategory) {
+        public ProductResponse(
+                UUID id,
+                UUID merchantId,
+                String merchantName,
+                String sku,
+                String name,
+                String category,
+                String brand,
+                String productType,
+                int warrantyMonths,
+                int returnWindowDays,
+                String description,
+                String imageUrl,
+                long unitPrice,
+                int availableQty,
+                int reservedQty,
+                String status) {
+            this(id, merchantId, merchantName, sku, name, category, brand, productType, warrantyMonths,
+                    returnWindowDays, description, imageUrl, unitPrice, availableQty, reservedQty, status,
+                    null, DeviceEligibility.NONE.name(), WarrantyStartTrigger.DELIVERY_DATE.name(), false, null);
+        }
     }
 
     public record OrderLineRequest(
             @NotNull UUID productId,
-            @Min(1) int quantity) {
+            @Min(1) int quantity,
+            UUID targetDeviceId,
+            String partSource) {
+        public OrderLineRequest(UUID productId, int quantity) {
+            this(productId, quantity, null, null);
+        }
+
+        public OrderLineRequest(UUID productId, int quantity, UUID targetDeviceId) {
+            this(productId, quantity, targetDeviceId, null);
+        }
     }
 
     public record CreateOrderRequest(
             @NotEmpty @Valid List<OrderLineRequest> items,
-            @NotBlank String shippingAddress) {
+            String shippingAddress,
+            UUID shippingAddressId,
+            UUID installOfferingId,
+            UUID serviceAddressId,
+            Instant preferredInstallStart) {
+        public CreateOrderRequest(List<OrderLineRequest> items, String shippingAddress) {
+            this(items, shippingAddress, null, null, null, null);
+        }
+
+        public CreateOrderRequest(List<OrderLineRequest> items, String shippingAddress, UUID shippingAddressId) {
+            this(items, shippingAddress, shippingAddressId, null, null, null);
+        }
+    }
+
+    public record ShippingAddressSnapshotResponse(
+            UUID addressId,
+            String recipientName,
+            String phoneNumber,
+            String addressLine,
+            String wardCode,
+            String wardName,
+            String provinceCode,
+            String provinceName,
+            String formattedAddress,
+            Double latitude,
+            Double longitude) {
     }
 
     public record OrderLineResponse(
@@ -69,7 +143,12 @@ public final class CommerceDtos {
             int quantity,
             long unitPrice,
             long lineTotal,
-            String fulfillmentStatus) {
+            String fulfillmentStatus,
+            UUID targetDeviceId) {
+        public OrderLineResponse(UUID id, UUID productId, String productName, int quantity,
+                long unitPrice, long lineTotal, String fulfillmentStatus) {
+            this(id, productId, productName, quantity, unitPrice, lineTotal, fulfillmentStatus, null);
+        }
     }
 
     public record CreatePaymentAttemptRequest(
@@ -101,13 +180,22 @@ public final class CommerceDtos {
             Instant createdAt,
             Instant updatedAt,
             List<OrderLineResponse> lines,
-            List<PaymentAttemptResponse> paymentAttempts) {
+            List<PaymentAttemptResponse> paymentAttempts,
+            ShippingAddressSnapshotResponse shippingAddressSnapshot) {
+        public OrderResponse(UUID id, String buyerProfileId, String buyerName, UUID merchantId,
+                String shippingAddress, long totalAmount, String status, String paymentStatus,
+                Instant quoteExpiresAt, Long version, Instant createdAt, Instant updatedAt,
+                List<OrderLineResponse> lines, List<PaymentAttemptResponse> paymentAttempts) {
+            this(id, buyerProfileId, buyerName, merchantId, shippingAddress, totalAmount, status, paymentStatus,
+                    quoteExpiresAt, version, createdAt, updatedAt, lines, paymentAttempts, null);
+        }
+
         public OrderResponse(UUID id, String buyerProfileId, UUID merchantId, String shippingAddress,
                 long totalAmount, String status, String paymentStatus, Instant quoteExpiresAt, Long version,
                 Instant createdAt, Instant updatedAt, List<OrderLineResponse> lines,
                 List<PaymentAttemptResponse> paymentAttempts) {
             this(id, buyerProfileId, null, merchantId, shippingAddress, totalAmount, status, paymentStatus,
-                    quoteExpiresAt, version, createdAt, updatedAt, lines, paymentAttempts);
+                    quoteExpiresAt, version, createdAt, updatedAt, lines, paymentAttempts, null);
         }
     }
 

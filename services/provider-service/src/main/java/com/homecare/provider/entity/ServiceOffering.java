@@ -5,6 +5,8 @@ import java.util.UUID;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
@@ -39,6 +41,18 @@ public class ServiceOffering {
 
     @Column(name = "base_price", nullable = false)
     private long basePrice;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "price_type", nullable = false, length = 30)
+    @Builder.Default
+    private ServicePriceType priceType = ServicePriceType.FIXED;
+
+    @Column(name = "inspection_fee")
+    private Long inspectionFee;
+
+    @Column(name = "price_version", nullable = false)
+    @Builder.Default
+    private int priceVersion = 1;
 
     @Column(name = "estimated_duration_minutes", nullable = false)
     private int estimatedDurationMinutes;

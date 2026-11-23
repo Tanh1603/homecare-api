@@ -34,6 +34,12 @@ public class WorkUpdateEntity {
     @Column(nullable = false)
     private String kind;
 
+    @Column(name = "part_source", length = 32)
+    private String partSource;
+
+    @Column(name = "part_order_line_id")
+    private UUID partOrderLineId;
+
     @Column(length = 1500)
     private String note;
 

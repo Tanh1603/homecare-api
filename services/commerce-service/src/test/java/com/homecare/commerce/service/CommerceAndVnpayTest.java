@@ -4,8 +4,10 @@ import com.homecare.common.error.DomainException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.when;
 
 import com.homecare.commerce.client.ProviderOrgClient;
+import com.homecare.commerce.client.HouseholdAddressClient;
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderRequest;
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderReturnRequest;
 import com.homecare.commerce.dto.CommerceDtos.OrderLineRequest;
@@ -15,25 +17,38 @@ import com.homecare.commerce.dto.CommerceDtos.PaymentAttemptResponse;
 import com.homecare.commerce.dto.CommerceDtos.ProductResponse;
 import com.homecare.commerce.dto.CommerceDtos.ResolveOrderReturnRequest;
 import com.homecare.commerce.entity.InventoryReservationEntity;
+import com.homecare.commerce.entity.PartCompatibilityEntity;
+import com.homecare.commerce.entity.PartCompatibilityEntity.CompatibilityStatus;
+import com.homecare.commerce.entity.CommerceOutboxEventEntity;
 import com.homecare.commerce.repository.CommerceOutboxEventRepository;
 import com.homecare.commerce.repository.InventoryReservationRepository;
 import com.homecare.commerce.repository.OrderReturnRequestRepository;
+import com.homecare.commerce.repository.PartCompatibilityRepository;
 import com.homecare.common.domain.EntityStatus;
+import com.homecare.common.event.DomainEventContracts;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest
 @ActiveProfiles("test")
 class CommerceAndVnpayTest {
     @MockitoBean
     private ProviderOrgClient providerOrgClient;
+
+    @MockitoBean
+    private HouseholdAddressClient householdAddressClient;
+
+    @Autowired
+    private PartCompatibilityRepository partCompatibilityRepository;
 
     @Autowired
     private CommerceDomainService service;
@@ -52,6 +67,74 @@ class CommerceAndVnpayTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Test
+    void productionOrderPathRejectsIncompatibleTargetDeviceLinkAndAllowsUnknown() {
+        UUID targetDeviceId = UUID.randomUUID();
+        when(householdAddressClient.verifyDevice(targetDeviceId, "buyer-compat"))
+                .thenReturn(new HouseholdAddressClient.ResolvedDevice(
+                        targetDeviceId, "AC", "Daikin", "FTKF25"));
+
+        partCompatibilityRepository.saveAndFlush(PartCompatibilityEntity.builder()
+                .id(UUID.randomUUID())
+                .partProductId(CommerceDataInitializer.PRODUCT_AC_FILTER_ID)
+                .deviceType("AC")
+                .deviceBrand("Daikin")
+                .deviceModel("FTKF25")
+                .compatibilityStatus(CompatibilityStatus.INCOMPATIBLE)
+                .source("TEST_CURATED")
+                .version("test")
+                .build());
+
+        assertThatThrownBy(() -> service.createOrder(
+                "buyer-compat",
+                new CreateOrderRequest(
+                        List.of(new OrderLineRequest(
+                                CommerceDataInitializer.PRODUCT_AC_FILTER_ID, 1, targetDeviceId)),
+                        "100 Nguyễn Thị Minh Khai, Q3")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("VALIDATION_FAILED");
+    }
+
+    @Test
+    void deliveredEventPreservesTargetDeviceLinkForPartOrders() throws Exception {
+        UUID targetDeviceId = UUID.randomUUID();
+        partCompatibilityRepository.deleteAll();
+        when(householdAddressClient.verifyDevice(targetDeviceId, "buyer-delivery-link"))
+                .thenReturn(new HouseholdAddressClient.ResolvedDevice(
+                        targetDeviceId, "AC", "Daikin", "FTKF25"));
+
+        OrderResponse order = service.createOrder(
+                "buyer-delivery-link",
+                new CreateOrderRequest(
+                        List.of(new OrderLineRequest(
+                                CommerceDataInitializer.PRODUCT_AC_FILTER_ID, 1, targetDeviceId)),
+                        "100 Nguyễn Thị Minh Khai, Q3"));
+        payOrderViaVnpay("buyer-delivery-link", order.id());
+        service.fulfillOrderLine("demo-organization", order.id(), order.lines().getFirst().id());
+
+        CommerceOutboxEventEntity delivered = outboxEventRepository.findAll().stream()
+                .filter(event -> order.id().equals(event.getAggregateId())
+                        && DomainEventContracts.ORDER_LINE_DELIVERED.equals(event.getEventType()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(new ObjectMapper().readTree(delivered.getPayloadJson())
+                .path("data").path("targetDeviceId").asText())
+                .isEqualTo(targetDeviceId.toString());
+    }
+
+    private void payOrderViaVnpay(String buyerProfileId, UUID orderId) {
+        var attempt = service.createPaymentAttempt(buyerProfileId, orderId);
+        var params = new HashMap<String, String>();
+        params.put("vnp_TxnRef", attempt.txnRef());
+        params.put("vnp_Amount", Long.toString(attempt.amount() * 100));
+        params.put("vnp_ResponseCode", "00");
+        params.put("vnp_TmnCode", "HOMECARE01");
+        params.put("vnp_SecureHash", vnpayStrategy.signParamsForTest(params));
+        assertThat(service.handleVnpayIpn(params).get("RspCode")).isEqualTo("00");
+    }
 
     @Test
     void enforcesSingleMerchantReservesStockVerifiesVnpayIpnAndFulfillsOrderLines() {

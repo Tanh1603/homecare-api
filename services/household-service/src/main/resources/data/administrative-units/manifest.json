@@ -1,0 +1,11 @@
+{
+  "sourceUrl": "https://provinces.open-api.vn/api/v2",
+  "apiVersion": "v2",
+  "retrievedAt": "2026-11-19T14:52:26.442701+00:00",
+  "provinceCount": 34,
+  "wardCount": 3321,
+  "failedRequests": [],
+  "checksum": "854c9e633eeb43bca97bb5efe9dbdd8d9189acccd0cb1a515eb42dcd4fadc44d",
+  "validationStatus": "PASSED",
+  "validationErrors": []
+}

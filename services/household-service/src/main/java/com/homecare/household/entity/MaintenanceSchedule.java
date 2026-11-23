@@ -38,6 +38,9 @@ public class MaintenanceSchedule {
     @Column(name = "cadence_months")
     private Integer cadenceMonths;
 
+    @Column(name = "policy_version")
+    private Integer policyVersion;
+
     @Column(name = "due_on", nullable = false)
     private LocalDate dueOn;
 
@@ -49,6 +52,9 @@ public class MaintenanceSchedule {
 
     @Column(name = "completed_at")
     private Instant completedAt;
+
+    @Column(name = "last_serviced_at")
+    private Instant lastServicedAt;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;

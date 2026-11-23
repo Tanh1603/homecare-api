@@ -16,6 +16,7 @@ public interface MaintenanceScheduleRepository extends JpaRepository<Maintenance
     void deleteByDeviceId(UUID deviceId);
     Page<MaintenanceSchedule> findByOwnerProfileId(String ownerProfileId, Pageable pageable);
     List<MaintenanceSchedule> findByDeviceIdOrderByDueOnAsc(UUID deviceId);
+    boolean existsByDeviceIdAndPolicyVersion(UUID deviceId, Integer policyVersion);
 
     @Lock(PESSIMISTIC_WRITE)
     List<MaintenanceSchedule> findByStatusAndNotifiedAtIsNullAndDueOnLessThanEqual(String status, LocalDate date);

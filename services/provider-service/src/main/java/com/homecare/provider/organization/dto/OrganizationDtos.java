@@ -3,6 +3,7 @@ package com.homecare.provider.organization.dto;
 import java.time.Instant;
 import java.util.UUID;
 
+import com.homecare.provider.organization.entity.LegalEntityType;
 import com.homecare.provider.organization.entity.OrgRole;
 import com.homecare.provider.organization.entity.OrganizationStatus;
 import com.homecare.provider.organization.entity.OrganizationType;
@@ -20,11 +21,22 @@ public final class OrganizationDtos {
     public record RegisterOrganizationRequest(
             @NotBlank String name,
             @NotNull OrganizationType type,
+            LegalEntityType legalEntityType,
             String taxCode,
             @NotBlank String phone,
             @NotBlank String city,
             String address,
             String description) {
+        public RegisterOrganizationRequest(
+                String name,
+                OrganizationType type,
+                String taxCode,
+                String phone,
+                String city,
+                String address,
+                String description) {
+            this(name, type, null, taxCode, phone, city, address, description);
+        }
     }
 
     public record UpdateOrganizationRequest(
@@ -39,6 +51,7 @@ public final class OrganizationDtos {
             UUID id,
             String name,
             OrganizationType type,
+            LegalEntityType legalEntityType,
             OrganizationStatus status,
             String rejectReason,
             String taxCode,
@@ -50,17 +63,48 @@ public final class OrganizationDtos {
             Long version,
             Instant createdAt,
             Instant updatedAt) {
+        public OrganizationResponse(
+                UUID id,
+                String name,
+                OrganizationType type,
+                OrganizationStatus status,
+                String rejectReason,
+                String taxCode,
+                String phone,
+                String city,
+                String address,
+                String description,
+                String ownerUserId,
+                Long version,
+                Instant createdAt,
+                Instant updatedAt) {
+            this(id, name, type, null, status, rejectReason, taxCode, phone, city, address, description,
+                    ownerUserId, version, createdAt, updatedAt);
+        }
     }
 
     public record MyOrganizationMembershipResponse(
             UUID organizationId,
             String organizationName,
             OrganizationType type,
+            LegalEntityType legalEntityType,
             OrganizationStatus organizationStatus,
             String rejectReason,
             OrgRole role,
             String memberStatus,
             Instant joinedAt) {
+        public MyOrganizationMembershipResponse(
+                UUID organizationId,
+                String organizationName,
+                OrganizationType type,
+                OrganizationStatus organizationStatus,
+                String rejectReason,
+                OrgRole role,
+                String memberStatus,
+                Instant joinedAt) {
+            this(organizationId, organizationName, type, null, organizationStatus, rejectReason,
+                    role, memberStatus, joinedAt);
+        }
     }
 
     public record AddMemberRequest(

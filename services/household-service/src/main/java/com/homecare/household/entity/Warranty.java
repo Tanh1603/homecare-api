@@ -7,6 +7,8 @@ import java.util.UUID;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -26,7 +28,7 @@ public class Warranty {
     @Id
     private UUID id;
 
-    @Column(name = "device_id", nullable = false)
+    @Column(name = "device_id")
     private UUID deviceId;
 
     @Column(name = "owner_profile_id", nullable = false, length = 255)
@@ -54,11 +56,32 @@ public class Warranty {
     @Column(name = "provider_name", nullable = false)
     private String providerName;
 
-    @Column(name = "starts_on", nullable = false)
+    @Column(name = "starts_on")
     private LocalDate startsOn;
 
-    @Column(name = "ends_on", nullable = false)
+    @Column(name = "ends_on")
     private LocalDate endsOn;
+
+    @Column(name = "unit_key", length = 128, unique = true)
+    private String unitKey;
+
+    @Column(name = "start_trigger", nullable = false, length = 40)
+    @Builder.Default
+    private String startTrigger = "DELIVERY_DATE";
+
+    @Column(name = "warranty_responsible_org_id")
+    private UUID warrantyResponsibleOrgId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "manufacturer_registration_status", nullable = false, length = 40)
+    @Builder.Default
+    private ManufacturerRegistrationStatus manufacturerRegistrationStatus = ManufacturerRegistrationStatus.NOT_VERIFIED;
+
+    @Column(name = "trigger_evidence_ref", length = 1000)
+    private String triggerEvidenceRef;
+
+    @Column(name = "coverage_months")
+    private Integer coverageMonths;
 
     @Column(length = 1000)
     private String notes;

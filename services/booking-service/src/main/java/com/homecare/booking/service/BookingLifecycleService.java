@@ -24,6 +24,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import com.homecare.booking.client.HouseholdVerificationClient;
 import com.homecare.booking.client.HouseholdVerificationClient.WarrantyVerificationResult;
 import com.homecare.booking.client.ProviderGrpcClientAdapter;
+import com.homecare.booking.dto.BookingDtos.AddressSnapshotResponse;
 import com.homecare.booking.dto.BookingDtos.ApproveExtraCostRequest;
 import com.homecare.booking.dto.BookingDtos.BookingHistoryResponse;
 import com.homecare.booking.dto.BookingDtos.BookingResponse;
@@ -39,6 +40,7 @@ import com.homecare.booking.entity.BookingEntity;
 import com.homecare.booking.entity.BookingStatus;
 import com.homecare.booking.entity.BookingHistoryEntry;
 import com.homecare.booking.entity.BookingOutboxEventEntity;
+import com.homecare.booking.entity.BookingPurpose;
 import com.homecare.booking.entity.WorkEvidenceEntity;
 import com.homecare.booking.entity.WorkUpdateEntity;
 import com.homecare.booking.exception.BookingErrorCode;
@@ -93,6 +95,18 @@ public class BookingLifecycleService {
     }
 
     public BookingResponse createBooking(String requesterProfileId, String requesterName, CreateBookingRequest request) {
+        if (request.serviceAddressId() == null && (request.address() == null || request.address().isBlank())) {
+            throw new DomainException(
+                    CommonErrorCode.VALIDATION_FAILED,
+                    "Either serviceAddressId or address is required.");
+        }
+        HouseholdVerificationClient.ResolvedServiceAddress resolvedAddress = request.serviceAddressId() != null
+                ? householdVerificationClient.resolveUserAddress(request.serviceAddressId(), requesterProfileId)
+                : null;
+        String canonicalAddress = resolvedAddress != null
+                ? resolvedAddress.formattedAddress()
+                : request.address().trim();
+
         Instant now = Instant.now();
         Instant preferredStart = request.preferredStart() != null
                 ? request.preferredStart()
@@ -206,12 +220,27 @@ public class BookingLifecycleService {
                     .providerId(providerId)
                     .preferredProviderId(request.preferredProviderId())
                     .bookingType(bookingType)
+                    .orderId(request.orderId())
+                    .orderLineId(request.orderLineId())
+                    .purpose(request.purpose() == null || request.purpose().isBlank()
+                            ? "REPAIR" : request.purpose().trim().toUpperCase())
                     .warrantyId(request.warrantyId())
                     .deviceId(finalDeviceId)
                     .deviceType(finalDeviceType)
                     .preferredStart(preferredStart)
                     .preferredEnd(preferredEnd)
-                    .address(request.address().trim())
+                    .address(canonicalAddress)
+                    .serviceAddressId(resolvedAddress != null ? resolvedAddress.addressId() : null)
+                    .recipientName(resolvedAddress != null ? resolvedAddress.recipientName() : null)
+                    .phoneNumber(resolvedAddress != null ? resolvedAddress.phoneNumber() : null)
+                    .addressLine(resolvedAddress != null ? resolvedAddress.addressLine() : null)
+                    .wardCode(resolvedAddress != null ? resolvedAddress.wardCode() : null)
+                    .wardName(resolvedAddress != null ? resolvedAddress.wardName() : null)
+                    .provinceCode(resolvedAddress != null ? resolvedAddress.provinceCode() : null)
+                    .provinceName(resolvedAddress != null ? resolvedAddress.provinceName() : null)
+                    .formattedAddress(resolvedAddress != null ? resolvedAddress.formattedAddress() : null)
+                    .latitude(resolvedAddress != null ? resolvedAddress.latitude() : null)
+                    .longitude(resolvedAddress != null ? resolvedAddress.longitude() : null)
                     .notes(request.notes())
                     .status("REQUESTED")
                     .allocationStatus("ALLOCATING")
@@ -409,7 +438,11 @@ public class BookingLifecycleService {
                 "CANCELLED",
                 actor.userId(),
                 request != null && request.reason() != null ? request.reason() : "Customer cancelled");
-        publishDomainEvent(DomainEventContracts.BOOKING_CANCELLED, saved);
+        publishDomainEvent(
+                BookingPurpose.INSTALLATION.name().equals(saved.getPurpose())
+                        ? "INSTALLATION_CANCELLED"
+                        : DomainEventContracts.BOOKING_CANCELLED,
+                saved);
         return toBookingResponse(saved);
     }
 
@@ -430,6 +463,10 @@ public class BookingLifecycleService {
                 if (!"ASSIGNED".equals(previous) && !"IN_PROGRESS".equals(previous)) {
                     throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
                 }
+                if (BookingPurpose.INSTALLATION.name().equals(booking.getPurpose()) && !booking.isProductReady()) {
+                    throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE,
+                            "Installation cannot start before product delivery.");
+                }
                 booking.setStatus("IN_PROGRESS");
                 recordHistory(bookingId, previous, "IN_PROGRESS", actor.userId(),
                         "[" + kind + "] " + (request.note() != null ? request.note() : ""));
@@ -442,6 +479,10 @@ public class BookingLifecycleService {
             case "COMPLETED" -> {
                 if (!"IN_PROGRESS".equals(previous)) {
                     throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
+                }
+                if (BookingPurpose.INSTALLATION.name().equals(booking.getPurpose()) && !booking.isProductReady()) {
+                    throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE,
+                            "Installation cannot complete before product delivery.");
                 }
                 if (workUpdateRepository.existsByBookingIdAndExtraCostStatus(bookingId, "PENDING_APPROVAL")) {
                     throw new DomainException(CommonErrorCode.CONFLICT);
@@ -457,6 +498,13 @@ public class BookingLifecycleService {
         if (hasExtraCost && !"DIAGNOSED".equals(kind) && !"NOTE".equals(kind)) {
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         }
+        String partSource = request.partSource() == null ? null : request.partSource().trim().toUpperCase();
+        if (partSource != null && !Set.of("CUSTOMER_SUPPLIED", "PROVIDER_STOCK", "HOMECARE_ORDER").contains(partSource)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        }
+        if (partSource == null && request.partOrderLineId() != null) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        }
 
         WorkUpdateEntity savedUpdate = workUpdateRepository.save(WorkUpdateEntity.builder()
                 .id(UUID.randomUUID())
@@ -464,6 +512,8 @@ public class BookingLifecycleService {
                 .technicianProfileId(actor.userId())
                 .kind(kind)
                 .note(request.note())
+                .partSource(partSource)
+                .partOrderLineId(request.partOrderLineId())
                 .extraCost(hasExtraCost ? extraCost : null)
                 .extraCostStatus(hasExtraCost ? "PENDING_APPROVAL" : "NONE")
                 .createdAt(Instant.now())
@@ -489,7 +539,11 @@ public class BookingLifecycleService {
         BookingEntity saved = bookingRepository.saveAndFlush(booking);
 
         if ("COMPLETED".equals(saved.getStatus())) {
-            publishDomainEvent(DomainEventContracts.BOOKING_COMPLETED, saved);
+            publishDomainEvent(
+                    BookingPurpose.INSTALLATION.name().equals(saved.getPurpose())
+                            ? "INSTALLATION_COMPLETED"
+                            : DomainEventContracts.BOOKING_COMPLETED,
+                    saved);
         }
         return toBookingResponse(saved);
     }
@@ -723,9 +777,9 @@ public class BookingLifecycleService {
         }
 
         if (result == null || !result.getAllocated()) {
+            String failReason = result != null ? result.getFailureReason() : "ALLOCATION_FAILED";
             tx.executeWithoutResult(status -> {
                 Instant now = Instant.now();
-                String failReason = result != null ? result.getFailureReason() : "ALLOCATION_FAILED";
                 int fenced = attemptRepository.transitionWithFence(
                         claim.operationId(), claim.claimToken(), "ALLOCATING", "FAILED", failReason, now);
                 if (fenced == 1) {
@@ -738,7 +792,14 @@ public class BookingLifecycleService {
                     });
                 }
             });
-            throw new DomainException(CommonErrorCode.CONFLICT);
+            String detailMessage = switch (failReason) {
+                case "NO_AVAILABLE_TECHNICIAN_IN_WARRANTY_ORGANIZATION", "NO_AVAILABLE_TECHNICIAN" ->
+                        "Technician has no available schedule window covering the booking time, or does not match the required specialty/provider.";
+                case "SERVICE_NOT_AVAILABLE" ->
+                        "Service offering or provider is no longer active.";
+                default -> null;
+            };
+            throw new DomainException(CommonErrorCode.CONFLICT, detailMessage);
         }
 
         if (!technicianId.toString().equals(result.getTechnicianId())
@@ -1048,6 +1109,21 @@ public class BookingLifecycleService {
         data.put("bookingType", booking.getBookingType());
         data.put("deviceId", booking.getDeviceId());
         data.put("warrantyId", booking.getWarrantyId());
+        data.put("purpose", booking.getPurpose());
+        data.put("orderId", booking.getOrderId());
+        data.put("orderLineId", booking.getOrderLineId());
+        if ("INSTALLATION_COMPLETED".equals(eventType)) {
+            List<String> evidenceRefs = workEvidenceRepository.findByBookingId(booking.getId()).stream()
+                    .map(e -> e.getId() + ":" + e.getObjectKey())
+                    .toList();
+            if (evidenceRefs.isEmpty()) {
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                        "Installation completion requires evidence.");
+            }
+            data.put("completedAt", now);
+            data.put("evidenceRefs", evidenceRefs);
+            data.put("executorOrgId", booking.getProviderId());
+        }
 
         Map<String, Object> envelope = new LinkedHashMap<>();
         envelope.put(DomainEventContracts.FIELD_EVENT_ID, eventId);
@@ -1147,6 +1223,8 @@ public class BookingLifecycleService {
                         u.getNote(),
                         u.getExtraCost(),
                         u.getExtraCostStatus() != null ? u.getExtraCostStatus() : "NONE",
+                        u.getPartSource(),
+                        u.getPartOrderLineId(),
                         finalEvidenceByUpdate.getOrDefault(u.getId(), List.of()),
                         u.getCreatedAt()))
                 .toList();
@@ -1158,6 +1236,9 @@ public class BookingLifecycleService {
                 b.getServiceName(),
                 b.getProviderId(),
                 b.getBookingType(),
+                b.getOrderId(),
+                b.getOrderLineId(),
+                b.getPurpose(),
                 b.getWarrantyId(),
                 b.getDeviceId(),
                 b.getDeviceType(),
@@ -1175,6 +1256,18 @@ public class BookingLifecycleService {
                 b.getCreatedAt(),
                 b.getUpdatedAt(),
                 history,
-                updates);
+                updates,
+                b.getServiceAddressId() == null ? null : new AddressSnapshotResponse(
+                        b.getServiceAddressId(),
+                        b.getRecipientName(),
+                        b.getPhoneNumber(),
+                        b.getAddressLine(),
+                        b.getWardCode(),
+                        b.getWardName(),
+                        b.getProvinceCode(),
+                        b.getProvinceName(),
+                        b.getFormattedAddress(),
+                        b.getLatitude(),
+                        b.getLongitude()));
     }
 }

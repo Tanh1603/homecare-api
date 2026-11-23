@@ -9,6 +9,7 @@ option java_outer_classname = "HouseholdServiceProto";
 service HouseholdVerificationService {
   rpc VerifyDeviceReference (VerifyDeviceReferenceRequest) returns (VerifyDeviceReferenceResponse);
   rpc VerifyWarranty (VerifyWarrantyRequest) returns (VerifyWarrantyResponse);
+  rpc ResolveUserAddress (ResolveUserAddressRequest) returns (ResolveUserAddressResponse);
 }
 
 message VerifyDeviceReferenceRequest {
@@ -23,6 +24,8 @@ message VerifyDeviceReferenceResponse {
   string device_type = 4;
   string device_name = 5;
   string status = 6;
+  string device_brand = 7;
+  string device_model = 8;
 }
 
 message VerifyWarrantyRequest {
@@ -40,4 +43,24 @@ message VerifyWarrantyResponse {
   string provider_name = 7;
   string ends_on_iso = 8;
   string status = 9;
+}
+
+message ResolveUserAddressRequest {
+  string address_id = 1;
+  string owner_profile_id = 2;
+}
+
+message ResolveUserAddressResponse {
+  string address_id = 1;
+  string recipient_name = 2;
+  string phone_number = 3;
+  string address_line = 4;
+  string ward_code = 5;
+  string ward_name = 6;
+  string province_code = 7;
+  string province_name = 8;
+  string formatted_address = 9;
+  bool has_coordinates = 10;
+  double latitude = 11;
+  double longitude = 12;
 }

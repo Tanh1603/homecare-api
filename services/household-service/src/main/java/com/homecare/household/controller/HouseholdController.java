@@ -10,6 +10,7 @@ import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import com.homecare.household.client.ProviderOrgClient;
+import com.homecare.household.dto.AddressDtos.AssignHouseholdServiceAddressRequest;
 import com.homecare.household.dto.HouseholdDtos.CareRecordResponse;
 import com.homecare.household.dto.HouseholdDtos.CreateCareRecordRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateDeviceRequest;
@@ -17,6 +18,8 @@ import com.homecare.household.dto.HouseholdDtos.CreateHouseholdRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateMaintenanceScheduleRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateWarrantyRequest;
 import com.homecare.household.dto.HouseholdDtos.DeviceResponse;
+import com.homecare.household.dto.HouseholdDtos.DeviceLifecycleResponse;
+import com.homecare.household.dto.HouseholdDtos.RegisterSerialRequest;
 import com.homecare.household.dto.HouseholdDtos.HouseholdResponse;
 import com.homecare.household.dto.HouseholdDtos.MaintenanceScheduleResponse;
 import com.homecare.household.dto.HouseholdDtos.UpdateCareRecordRequest;
@@ -41,6 +44,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -113,6 +117,19 @@ public class HouseholdController {
                 httpRequest));
     }
 
+    @PutMapping("/households/{householdId}/service-address")
+    public ResponseEntity<ApiResponse<HouseholdResponse>> assignHouseholdServiceAddress(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID householdId,
+            @Valid @RequestBody AssignHouseholdServiceAddressRequest request,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.UPDATED,
+                service.assignHouseholdServiceAddress(resolvePersonal(jwt, rawOrgId).userId(), householdId, request.addressId()),
+                httpRequest));
+    }
+
     @DeleteMapping("/households/{householdId}")
     public ResponseEntity<ApiResponse<Void>> deleteHousehold(
             @AuthenticationPrincipal Jwt jwt,
@@ -159,6 +176,31 @@ public class HouseholdController {
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(device.version()))
                 .body(responseFactory.ok(ApiMessages.RETRIEVED, device, httpRequest));
+    }
+
+    @GetMapping("/devices/{deviceId}/lifecycle")
+    public ResponseEntity<ApiResponse<DeviceLifecycleResponse>> getDeviceLifecycle(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID deviceId,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.RETRIEVED,
+                service.getDeviceLifecycle(resolvePersonal(jwt, rawOrgId).userId(), deviceId),
+                httpRequest));
+    }
+
+    @PostMapping("/devices/{deviceId}/serial")
+    public ResponseEntity<ApiResponse<DeviceResponse>> registerSerial(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID deviceId,
+            @Valid @RequestBody RegisterSerialRequest request,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.UPDATED,
+                service.registerSerial(resolvePersonal(jwt, rawOrgId).userId(), deviceId, request),
+                httpRequest));
     }
 
     @PatchMapping("/devices/{deviceId}")

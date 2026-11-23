@@ -14,6 +14,7 @@ services:
       PROVIDER_GRPC_ADDRESS: "static://provider-service:9083"
       HOMECARE_SECURITY_ENFORCE_GATEWAY: "true"
       INTERNAL_GATEWAY_SECRET: "homecare-internal-secret-2026"
+      FLYWAY_ENABLED: "true"
     expose:
       - "8082"
       - "9082"
@@ -44,6 +45,7 @@ services:
     environment:
       HOMECARE_SECURITY_ENFORCE_GATEWAY: "true"
       INTERNAL_GATEWAY_SECRET: "homecare-internal-secret-2026"
+      FLYWAY_ENABLED: "true"
     expose:
       - "8083"
       - "9083"
@@ -72,6 +74,7 @@ services:
     environment:
       HOMECARE_SECURITY_ENFORCE_GATEWAY: "true"
       INTERNAL_GATEWAY_SECRET: "homecare-internal-secret-2026"
+      FLYWAY_ENABLED: "true"
     expose:
       - "8084"
       - "9084"
@@ -104,6 +107,7 @@ services:
       PROVIDER_GRPC_ADDRESS: "static://provider-service:9083"
       HOMECARE_SECURITY_ENFORCE_GATEWAY: "true"
       INTERNAL_GATEWAY_SECRET: "homecare-internal-secret-2026"
+      FLYWAY_ENABLED: "true"
     expose:
       - "8085"
       - "9085"

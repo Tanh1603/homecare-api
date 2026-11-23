@@ -30,6 +30,7 @@ import com.homecare.commerce.dto.CommerceDtos.ProductResponse;
 import com.homecare.commerce.dto.CommerceDtos.ResolveOrderReturnRequest;
 import com.homecare.commerce.security.CommerceAccessPolicy;
 import com.homecare.commerce.service.CommerceDomainService;
+import com.homecare.commerce.service.PartCompatibilityService;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
 import com.homecare.common.idempotency.IdempotencyService;
@@ -54,6 +55,7 @@ import lombok.RequiredArgsConstructor;
 public class CommerceController {
 
     private final CommerceDomainService service;
+    private final PartCompatibilityService partCompatibilityService;
     private final ProviderOrgClient providerOrgClient;
     private final CommerceAccessPolicy accessPolicy;
     private final IdempotencyService idempotencyService;
@@ -98,6 +100,19 @@ public class CommerceController {
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
                 service.getProduct(productId),
+                httpRequest));
+    }
+
+    @GetMapping("/products/compatible")
+    public ResponseEntity<ApiResponse<PartCompatibilityService.CompatibilityResult>> getCompatibility(
+            @RequestParam UUID partProductId,
+            @RequestParam String deviceType,
+            @RequestParam String deviceBrand,
+            @RequestParam String deviceModel,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.RETRIEVED,
+                partCompatibilityService.resolve(partProductId, deviceType, deviceBrand, deviceModel),
                 httpRequest));
     }
 

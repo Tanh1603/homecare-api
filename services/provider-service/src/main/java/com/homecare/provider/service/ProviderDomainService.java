@@ -10,6 +10,7 @@ import com.homecare.common.security.ActorContext;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
 import com.homecare.provider.security.ProviderAccessPolicy;
+import com.homecare.provider.dto.ProviderDtos.CoverageAreaItem;
 import com.homecare.provider.dto.ProviderDtos.CreateScheduleWindowRequest;
 import com.homecare.provider.dto.ProviderDtos.OfferingInput;
 import com.homecare.provider.dto.ProviderDtos.ProviderInput;
@@ -19,11 +20,14 @@ import com.homecare.provider.dto.ProviderDtos.ServiceOfferingResponse;
 import com.homecare.provider.dto.ProviderDtos.TechnicianInput;
 import com.homecare.provider.dto.ProviderDtos.TechnicianResponse;
 import com.homecare.provider.dto.ProviderDtos.UpdateScheduleWindowRequest;
+import com.homecare.provider.dto.ProviderDtos.UpsertServiceCoverageRequest;
 import com.homecare.provider.entity.ProviderAllocationOperation;
 import com.homecare.provider.entity.ProviderEntity;
 import com.homecare.provider.entity.ScheduleWindow;
 import com.homecare.provider.entity.ScheduleWindowStatus;
+import com.homecare.provider.entity.ServiceCoverageAreaEntity;
 import com.homecare.provider.entity.ServiceOffering;
+import com.homecare.provider.entity.ServicePriceType;
 import com.homecare.provider.entity.Technician;
 import com.homecare.provider.entity.TechnicianAllocation;
 import com.homecare.provider.exception.ProviderErrorCode;
@@ -35,6 +39,7 @@ import com.homecare.provider.organization.repository.OrganizationRepository;
 import com.homecare.provider.repository.ProviderAllocationOperationRepository;
 import com.homecare.provider.repository.ProviderRepository;
 import com.homecare.provider.repository.ScheduleWindowRepository;
+import com.homecare.provider.repository.ServiceCoverageAreaRepository;
 import com.homecare.provider.repository.ServiceOfferingRepository;
 import com.homecare.provider.repository.TechnicianAllocationRepository;
 import com.homecare.provider.repository.TechnicianRepository;
@@ -125,6 +130,8 @@ public class ProviderDomainService {
         return toProviderResponse(providerRepository.save(p));
     }
 
+    public static final long MAX_INSPECTION_FEE_VND = 500_000L;
+
     @Transactional
     public ServiceOfferingResponse saveOffering(UUID id, OfferingInput input, ActorContext actor) {
         var item = id == null ? new ServiceOffering() : offeringRepository.findById(id).orElseThrow(() -> new DomainException(ProviderErrorCode.SERVICE_NOT_FOUND));
@@ -132,17 +139,144 @@ public class ProviderDomainService {
         if (provider == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         requireProviderManager(provider, actor);
         if (input.providerId() != null && !provider.equals(input.providerId())) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+        if (input.inspectionFee() != null && (input.inspectionFee() < 0 || input.inspectionFee() > MAX_INSPECTION_FEE_VND)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "inspectionFee must be within FeeBounds [0, " + MAX_INSPECTION_FEE_VND + "] VND.");
+        }
+        boolean priceChanged = false;
         if (id == null) {
             if (input.name() == null || input.category() == null || input.basePrice() == null || input.estimatedDurationMinutes() == null) throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
             item.setId(UUID.randomUUID()); item.setProviderId(provider); item.setActive(true); item.setCreatedAt(Instant.now());
+            item.setPriceType(ServicePriceType.FIXED);
+            item.setPriceVersion(1);
         }
         if (input.name() != null) item.setName(input.name());
         if (input.category() != null) item.setCategory(input.category());
         if (input.description() != null) item.setDescription(input.description());
-        if (input.basePrice() != null) item.setBasePrice(input.basePrice());
+        if (input.basePrice() != null) {
+            if (id != null && input.basePrice() != item.getBasePrice()) priceChanged = true;
+            item.setBasePrice(input.basePrice());
+        }
+        if (input.priceType() != null) {
+            if (id != null && input.priceType() != item.getPriceType()) priceChanged = true;
+            item.setPriceType(input.priceType());
+        }
+        if (input.inspectionFee() != null) {
+            if (id != null && !input.inspectionFee().equals(item.getInspectionFee())) priceChanged = true;
+            item.setInspectionFee(input.inspectionFee());
+        }
+        if (priceChanged) {
+            item.setPriceVersion(Math.max(1, item.getPriceVersion()) + 1);
+        }
         if (input.estimatedDurationMinutes() != null) item.setEstimatedDurationMinutes(input.estimatedDurationMinutes());
         if (input.active() != null) item.setActive(input.active());
         return toOfferingResponse(offeringRepository.save(item));
+    }
+
+    @Transactional
+    public List<CoverageAreaItem> replaceOfferingCoverage(UUID offeringId, UpsertServiceCoverageRequest request, ActorContext actor) {
+        ServiceOffering offering = offeringRepository.findById(offeringId)
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.SERVICE_NOT_FOUND));
+        requireProviderManager(offering.getProviderId(), actor);
+        List<CoverageAreaItem> areas = request != null && request.areas() != null ? request.areas() : List.of();
+        for (CoverageAreaItem a : areas) {
+            if (a == null || a.locationCode() == null || a.locationCode().isBlank()
+                    || a.level() == null || (!"PROVINCE".equalsIgnoreCase(a.level()) && !"WARD".equalsIgnoreCase(a.level()))) {
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Coverage area must have valid PROVINCE or WARD level and locationCode.");
+            }
+        }
+        coverageAreaRepository.deleteByServiceOfferingId(offeringId);
+        coverageAreaRepository.flush();
+        Instant now = Instant.now();
+        for (CoverageAreaItem a : areas) {
+            boolean isActive = a.active() == null || a.active();
+            if (!isActive) continue;
+            coverageAreaRepository.save(ServiceCoverageAreaEntity.builder()
+                    .id(UUID.randomUUID())
+                    .serviceOfferingId(offeringId)
+                    .providerId(offering.getProviderId())
+                    .locationCode(a.locationCode().trim())
+                    .level(a.level().trim().toUpperCase())
+                    .active(true)
+                    .createdAt(now)
+                    .build());
+        }
+        return getOfferingCoverage(offeringId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<CoverageAreaItem> getOfferingCoverage(UUID offeringId) {
+        return coverageAreaRepository.findByServiceOfferingIdAndActiveTrueOrderByLevelAscLocationCodeAsc(offeringId)
+                .stream()
+                .map(c -> new CoverageAreaItem(c.getLocationCode(), c.getLevel(), c.isActive()))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<ServiceOfferingResponse> listEligibleOfferings(String category, String provinceCode, String wardCode) {
+        String normCategory = blankToNull(category);
+        String normProvince = blankToNull(provinceCode);
+        String normWard = blankToNull(wardCode);
+        List<ServiceOffering> activeOfferings = offeringRepository.findAll().stream()
+                .filter(ServiceOffering::isActive)
+                .filter(o -> normCategory == null || normCategory.equalsIgnoreCase(o.getCategory()))
+                .toList();
+        if (activeOfferings.isEmpty()) {
+            return List.of();
+        }
+        Set<UUID> providerIds = activeOfferings.stream().map(ServiceOffering::getProviderId).collect(Collectors.toSet());
+        Map<UUID, ProviderEntity> activeProviders = providerRepository.findAllById(providerIds).stream()
+                .filter(p -> "ACTIVE".equalsIgnoreCase(p.getStatus()))
+                .collect(Collectors.toMap(ProviderEntity::getId, p -> p));
+
+        Map<UUID, List<ServiceCoverageAreaEntity>> coverageByOffering = coverageAreaRepository
+                .findByServiceOfferingIdInAndActiveTrue(
+                        activeOfferings.stream().map(ServiceOffering::getId).collect(Collectors.toSet()))
+                .stream()
+                .collect(Collectors.groupingBy(ServiceCoverageAreaEntity::getServiceOfferingId));
+
+        return activeOfferings.stream()
+                .filter(o -> activeProviders.containsKey(o.getProviderId()))
+                .filter(o -> matchesCoverage(coverageByOffering.getOrDefault(o.getId(), List.of()), normProvince, normWard))
+                .sorted(Comparator
+                        .comparingInt((ServiceOffering o) -> coverageRank(coverageByOffering.getOrDefault(o.getId(), List.of()), normProvince, normWard))
+                        .thenComparing(Comparator.comparingDouble((ServiceOffering o) -> activeProviders.get(o.getProviderId()).getRatingAvg()).reversed())
+                        .thenComparing(ServiceOffering::getId))
+                .map(o -> toOfferingResponse(o, activeProviders.get(o.getProviderId()).getName()))
+                .toList();
+    }
+
+    private boolean matchesCoverage(List<ServiceCoverageAreaEntity> areas, String provinceCode, String wardCode) {
+        if (provinceCode == null && wardCode == null) {
+            return true;
+        }
+        if (areas == null || areas.isEmpty()) {
+            return false;
+        }
+        for (ServiceCoverageAreaEntity a : areas) {
+            if (!a.isActive()) continue;
+            if (wardCode != null && "WARD".equalsIgnoreCase(a.getLevel()) && wardCode.equalsIgnoreCase(a.getLocationCode())) {
+                return true;
+            }
+            if (provinceCode != null && "PROVINCE".equalsIgnoreCase(a.getLevel()) && provinceCode.equalsIgnoreCase(a.getLocationCode())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private int coverageRank(List<ServiceCoverageAreaEntity> areas, String provinceCode, String wardCode) {
+        if (areas != null && wardCode != null) {
+            boolean wardMatch = areas.stream()
+                    .anyMatch(a -> a.isActive() && "WARD".equalsIgnoreCase(a.getLevel()) && wardCode.equalsIgnoreCase(a.getLocationCode()));
+            if (wardMatch) return 0;
+        }
+        if (areas != null && provinceCode != null) {
+            boolean provinceMatch = areas.stream()
+                    .anyMatch(a -> a.isActive() && "PROVINCE".equalsIgnoreCase(a.getLevel()) && provinceCode.equalsIgnoreCase(a.getLocationCode()));
+            if (provinceMatch) return 1;
+        }
+        return 2;
     }
 
     @Transactional
@@ -199,6 +333,7 @@ public class ProviderDomainService {
 
     private final ProviderRepository providerRepository;
     private final ServiceOfferingRepository offeringRepository;
+    private final ServiceCoverageAreaRepository coverageAreaRepository;
     private final TechnicianRepository technicianRepository;
     private final ScheduleWindowRepository scheduleWindowRepository;
     private final TechnicianAllocationRepository allocationRepository;
@@ -965,6 +1100,7 @@ public class ProviderDomainService {
     }
 
     private ServiceOfferingResponse toOfferingResponse(ServiceOffering o, String providerName) {
+        List<CoverageAreaItem> areas = o.getId() != null ? getOfferingCoverage(o.getId()) : List.of();
         return new ServiceOfferingResponse(
                 o.getId(),
                 o.getProviderId(),
@@ -974,7 +1110,11 @@ public class ProviderDomainService {
                 o.getDescription(),
                 o.getBasePrice(),
                 o.getEstimatedDurationMinutes(),
-                o.isActive());
+                o.isActive(),
+                o.getPriceType() != null ? o.getPriceType() : ServicePriceType.FIXED,
+                o.getInspectionFee(),
+                o.getPriceVersion() > 0 ? o.getPriceVersion() : 1,
+                areas);
     }
 
     private ProviderResponse toProviderResponse(ProviderEntity p) {

@@ -35,6 +35,9 @@ public class Household {
     @Column(nullable = false)
     private String address;
 
+    @Column(name = "default_service_address_id")
+    private UUID defaultServiceAddressId;
+
     @Column(nullable = false)
     private String timezone;
 

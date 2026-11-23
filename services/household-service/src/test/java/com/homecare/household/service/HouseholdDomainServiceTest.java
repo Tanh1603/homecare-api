@@ -183,7 +183,7 @@ class HouseholdDomainServiceTest {
         UUID productId = UUID.randomUUID();
 
         String deliveredEventJson = """
-                {"eventId":"%s","eventType":"order.line.delivered.v1","data":{"orderId":"%s","orderLineId":"%s","buyerProfileId":"%s","organizationId":"%s","merchantName":"Điện Lạnh Bách Khoa Sài Gòn","productId":"%s","productName":"Màng lọc RO DOW Filmtec 100GPD","category":"WATER_PURIFIER","brand":"Filmtec","productType":"MAJOR_PART","warrantyMonths":12,"returnWindowDays":15}}
+                {"eventId":"%s","eventType":"order.line.delivered.v1","data":{"orderId":"%s","orderLineId":"%s","buyerProfileId":"%s","organizationId":"%s","merchantName":"Điện Lạnh Bách Khoa Sài Gòn","productId":"%s","productName":"Màng lọc RO DOW Filmtec 100GPD","category":"WATER_PURIFIER","brand":"Filmtec","productType":"MAJOR_PART","deviceEligibility":"REQUIRED","warrantyMonths":12,"returnWindowDays":15}}
                 """.formatted(UUID.randomUUID(), orderId, orderLineId, buyer, orgId, productId).strip();
 
         eventConsumer.onDomainEvent(deliveredEventJson);
@@ -253,7 +253,7 @@ class HouseholdDomainServiceTest {
         // Auto-activated store warranty cannot be updated or deleted by owner
         UUID storeOrgId = UUID.randomUUID();
         String deliveredEventJson = """
-                {"eventId":"%s","eventType":"order.line.delivered.v1","data":{"orderId":"%s","orderLineId":"%s","buyerProfileId":"%s","organizationId":"%s","merchantName":"Store X","productId":"%s","productName":"Filter","category":"WATER_PURIFIER","brand":"B","productType":"MAJOR_PART","warrantyMonths":12,"returnWindowDays":15}}
+                {"eventId":"%s","eventType":"order.line.delivered.v1","data":{"orderId":"%s","orderLineId":"%s","buyerProfileId":"%s","organizationId":"%s","merchantName":"Store X","productId":"%s","productName":"Filter","category":"WATER_PURIFIER","brand":"B","productType":"MAJOR_PART","deviceEligibility":"REQUIRED","warrantyMonths":12,"returnWindowDays":15}}
                 """.formatted(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), owner, storeOrgId, UUID.randomUUID()).strip();
         eventConsumer.onDomainEvent(deliveredEventJson);
 
@@ -349,5 +349,80 @@ class HouseholdDomainServiceTest {
         var dPage = service.devicesPage(user, null, 1, 1);
         assertThat(dPage.items()).hasSize(1);
         assertThat(dPage.pagination().totalItems()).isEqualTo(2);
+    }
+
+    @Test
+    void targetedPartDeliveryDoesNotCreateReplacementDevice() {
+        String buyer = "targeted-part-" + UUID.randomUUID();
+        UUID targetDeviceId = UUID.randomUUID();
+        String deliveredEventJson = """
+                {"eventId":"%s","eventType":"order.line.delivered.v1","data":{"orderId":"%s","orderLineId":"%s","targetDeviceId":"%s","buyerProfileId":"%s","organizationId":"%s","merchantName":"Điện Lạnh Bách Khoa","productId":"%s","productName":"Lưới lọc Daikin","category":"AC","brand":"Daikin","productType":"SMALL_PART","model":"FTKF25","deviceEligibility":"REQUIRED","warrantyStartTrigger":"DELIVERY_DATE","warrantyMonths":12,"quantityDelivered":1,"unitKeys":["%s:1"]}}
+                """.formatted(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), targetDeviceId,
+                        buyer, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()).strip();
+
+        eventConsumer.onDomainEvent(deliveredEventJson);
+
+        assertThat(service.devicesPage(buyer, null, 1, 20).items()).isEmpty();
+    }
+
+    @Test
+    void unitLevelOrderLineDeliveredRespectsDeviceEligibilityModelAndWarrantyStartTriggers() {
+        String buyer = "kc-buyer-mvp0-" + UUID.randomUUID();
+        UUID orgId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        UUID lineRequired = UUID.randomUUID();
+        UUID productRequired = UUID.randomUUID();
+
+        // 1. quantity=2, deviceEligibility=REQUIRED, model="Daikin-FTKY25" replayed 3 times -> 2 Devices + 2 Warranties
+        String requiredEventJson = """
+                {"eventId":"%s","eventType":"order.line.delivered.v1","data":{"orderId":"%s","orderLineId":"%s","buyerProfileId":"%s","organizationId":"%s","merchantName":"Điện Lạnh Sài Gòn","productId":"%s","productName":"Máy lạnh Daikin Inverter","category":"AC","brand":"Daikin","productType":"LARGE_APPLIANCE","model":"Daikin-FTKY25","deviceEligibility":"REQUIRED","warrantyStartTrigger":"DELIVERY_DATE","warrantyMonths":24,"quantityDelivered":2,"unitKeys":["%s:1","%s:2"],"shippingWardName":"Phường Bến Nghé","shippingProvinceName":"TP. Hồ Chí Minh"}}
+                """.formatted(UUID.randomUUID(), orderId, lineRequired, buyer, orgId, productRequired, lineRequired, lineRequired).strip();
+
+        eventConsumer.onDomainEvent(requiredEventJson);
+        eventConsumer.onDomainEvent(requiredEventJson);
+        eventConsumer.onDomainEvent(requiredEventJson);
+
+        List<DeviceResponse> buyerDevices = service.devicesPage(buyer, null, 1, 20).items();
+        assertThat(buyerDevices).hasSize(2);
+        assertThat(buyerDevices).extracting(DeviceResponse::model).containsOnly("Daikin-FTKY25");
+        assertThat(warranties.findAllByOrderLineId(lineRequired)).hasSize(2);
+        assertThat(service.householdsPage(buyer, 1, 10).items().getFirst().address())
+                .isEqualTo("Phường Bến Nghé, TP. Hồ Chí Minh");
+
+        // 2. deviceEligibility=NONE, warrantyMonths=6 -> 0 new Devices, 1 OrderLine-linked Warranty (deviceId == null)
+        UUID linePart = UUID.randomUUID();
+        String partEventJson = """
+                {"eventId":"%s","eventType":"order.line.delivered.v1","data":{"orderId":"%s","orderLineId":"%s","buyerProfileId":"%s","organizationId":"%s","merchantName":"Điện Lạnh Sài Gòn","productId":"%s","productName":"Tụ điện 35uF","category":"AC","brand":"Panasonic","productType":"SMALL_PART","deviceEligibility":"NONE","warrantyStartTrigger":"DELIVERY_DATE","warrantyMonths":6,"quantityDelivered":3,"unitKeys":["%s:1","%s:2","%s:3"]}}
+                """.formatted(UUID.randomUUID(), orderId, linePart, buyer, orgId, UUID.randomUUID(), linePart, linePart, linePart).strip();
+
+        eventConsumer.onDomainEvent(partEventJson);
+        eventConsumer.onDomainEvent(partEventJson);
+
+        assertThat(service.devicesPage(buyer, null, 1, 20).items()).hasSize(2);
+        var partWarranties = warranties.findAllByOrderLineId(linePart);
+        assertThat(partWarranties).hasSize(1);
+        assertThat(partWarranties.getFirst().getDeviceId()).isNull();
+        assertThat(partWarranties.getFirst().getStatus()).isEqualTo(EntityStatus.ACTIVE.name());
+
+        // 3. warrantyStartTrigger=INSTALLATION_COMPLETED -> Warranty stays PENDING_TRIGGER with null dates
+        UUID lineInstallTrigger = UUID.randomUUID();
+        String installTriggerJson = """
+                {"eventId":"%s","eventType":"order.line.delivered.v1","data":{"orderId":"%s","orderLineId":"%s","buyerProfileId":"%s","organizationId":"%s","merchantName":"Điện Lạnh Sài Gòn","productId":"%s","productName":"Máy nước nóng Ariston","category":"WATER_HEATER","brand":"Ariston","productType":"LARGE_APPLIANCE","model":"AN2-30RS","deviceEligibility":"REQUIRED","warrantyStartTrigger":"INSTALLATION_COMPLETED","warrantyMonths":18,"quantityDelivered":1,"unitKeys":["%s:1"]}}
+                """.formatted(UUID.randomUUID(), orderId, lineInstallTrigger, buyer, orgId, UUID.randomUUID(), lineInstallTrigger).strip();
+
+        eventConsumer.onDomainEvent(installTriggerJson);
+
+        var pendingWarranties = warranties.findAllByOrderLineId(lineInstallTrigger);
+        assertThat(pendingWarranties).hasSize(1);
+        var pendingW = pendingWarranties.getFirst();
+        assertThat(pendingW.getStatus()).isEqualTo("PENDING_TRIGGER");
+        assertThat(pendingW.getStartsOn()).isNull();
+        assertThat(pendingW.getEndsOn()).isNull();
+        assertThat(pendingW.getWarrantyResponsibleOrgId()).isEqualTo(orgId);
+
+        VerifyWarrantyResponse verifyPending = service.verifyWarrantyEligibility(pendingW.getId(), buyer);
+        assertThat(verifyPending.valid()).isFalse();
+        assertThat(verifyPending.expired()).isFalse();
+        assertThat(verifyPending.status()).isEqualTo("PENDING_TRIGGER");
     }
 }

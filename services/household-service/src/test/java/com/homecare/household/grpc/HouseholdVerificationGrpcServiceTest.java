@@ -15,6 +15,7 @@ import com.homecare.grpc.interceptor.WorkloadAuthClientInterceptor;
 import com.homecare.grpc.interceptor.WorkloadAuthServerInterceptor;
 import com.homecare.household.dto.HouseholdDtos.VerifyDeviceReferenceResponse;
 import com.homecare.household.dto.HouseholdDtos.VerifyWarrantyResponse;
+import com.homecare.household.service.AddressBookService;
 import com.homecare.household.service.HouseholdDomainService;
 import com.homecare.household.v1.VerifyDeviceReferenceRequest;
 import com.homecare.household.v1.VerifyWarrantyRequest;
@@ -33,7 +34,7 @@ class HouseholdVerificationGrpcServiceTest {
     @BeforeEach
     void setUp() {
         domainService = mock(HouseholdDomainService.class);
-        grpcService = new HouseholdVerificationGrpcService(domainService);
+        grpcService = new HouseholdVerificationGrpcService(domainService, mock(AddressBookService.class));
         serverInterceptor = new WorkloadAuthServerInterceptor(EXPECTED_WORKLOAD_TOKEN);
     }
 
@@ -45,7 +46,8 @@ class HouseholdVerificationGrpcServiceTest {
 
         when(domainService.verifyDeviceReference(eq(deviceId), eq(requester)))
                 .thenReturn(new VerifyDeviceReferenceResponse(
-                        true, deviceId, householdId, "AIR_CONDITIONER", "Panasonic Inverter", EntityStatus.ACTIVE.name()));
+                        true, deviceId, householdId, "AIR_CONDITIONER", "Panasonic Inverter",
+                        EntityStatus.ACTIVE.name(), "Panasonic", "FTKF25"));
 
         final com.homecare.household.v1.VerifyDeviceReferenceResponse[] holder = new com.homecare.household.v1.VerifyDeviceReferenceResponse[1];
 

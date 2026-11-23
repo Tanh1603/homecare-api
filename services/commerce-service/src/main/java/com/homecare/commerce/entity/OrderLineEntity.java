@@ -31,6 +31,9 @@ public class OrderLineEntity {
     @Column(name = "product_id", nullable = false)
     private UUID productId;
 
+    @Column(name = "target_device_id")
+    private UUID targetDeviceId;
+
     @Column(name = "product_name", nullable = false)
     private String productName;
 

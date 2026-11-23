@@ -20,8 +20,11 @@ spring:
         driver-class-name: org.postgresql.Driver
     jpa:
         hibernate:
-            ddl-auto: update
+            ddl-auto: ${JPA_DDL_AUTO:update}
         open-in-view: false
+    flyway:
+        enabled: ${FLYWAY_ENABLED:false}
+        baseline-on-migrate: true
     data:
         redis:
             host: ${REDIS_HOST:localhost}

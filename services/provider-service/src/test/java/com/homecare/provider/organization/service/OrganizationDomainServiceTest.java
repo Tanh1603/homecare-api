@@ -14,6 +14,8 @@ import com.homecare.provider.organization.dto.OrganizationDtos.AddMemberRequest;
 import com.homecare.provider.organization.dto.OrganizationDtos.MyOrganizationMembershipResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.RegisterOrganizationRequest;
+import com.homecare.provider.organization.dto.OrganizationDtos.UpdateOrganizationRequest;
+import com.homecare.provider.organization.entity.LegalEntityType;
 import com.homecare.provider.organization.entity.OrganizationStatus;
 import com.homecare.provider.organization.entity.OrganizationType;
 import com.homecare.provider.organization.entity.OrgRole;
@@ -23,6 +25,7 @@ import com.homecare.provider.organization.repository.ProviderOutboxEventReposito
 import com.homecare.provider.organization.security.OrgContext;
 import com.homecare.provider.repository.ProviderRepository;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -196,5 +199,123 @@ class OrganizationDomainServiceTest {
         } finally {
             OrgContext.clear();
         }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void registerOrganizationPersistsCapabilityAndLegalEntityType() throws Exception {
+        String ownerId = "supabase-legal-" + UUID.randomUUID();
+        OrganizationResponse created = organizationService.registerOrganization(
+                ownerId,
+                new RegisterOrganizationRequest(
+                        "Công Ty Cơ Điện Lạnh Minh Khôi",
+                        OrganizationType.SERVICE,
+                        LegalEntityType.COMPANY,
+                        "0319998887",
+                        "0903334445",
+                        "TP. Hồ Chí Minh",
+                        "99 Nguyễn Huệ",
+                        "Bảo trì điều hòa"));
+
+        assertThat(created.type()).isEqualTo(OrganizationType.SERVICE);
+        assertThat(created.legalEntityType()).isEqualTo(LegalEntityType.COMPANY);
+
+        List<MyOrganizationMembershipResponse> memberships = organizationService.listMyOrganizations(ownerId);
+        assertThat(memberships).hasSize(1);
+        assertThat(memberships.getFirst().type()).isEqualTo(OrganizationType.SERVICE);
+        assertThat(memberships.getFirst().legalEntityType()).isEqualTo(LegalEntityType.COMPANY);
+
+        organizationService.approveOrganization(created.id(), "admin-1");
+        ProviderOutboxEventEntity approvedEvent = outboxRepository.findAll().stream()
+                .filter(e -> e.getAggregateId().equals(created.id())
+                        && OrganizationDomainService.EVT_APPROVED.equals(e.getEventType()))
+                .findFirst()
+                .orElseThrow();
+        Map<String, Object> envelope = objectMapper.readValue(approvedEvent.getPayloadJson(), Map.class);
+        Map<String, Object> data = (Map<String, Object>) envelope.get("data");
+        assertThat(data.get("type")).isEqualTo("SERVICE");
+        assertThat(data.get("legalEntityType")).isEqualTo("COMPANY");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void registerOrganizationSupportsLegacy7ArgRequestWithoutLegalEntityType() throws Exception {
+        String ownerId = "supabase-legacy-" + UUID.randomUUID();
+        OrganizationResponse created = organizationService.registerOrganization(
+                ownerId,
+                new RegisterOrganizationRequest(
+                        "Cửa Hàng Vật Tư Cũ",
+                        OrganizationType.COMMERCE,
+                        null,
+                        "0904445556",
+                        "Hải Phòng",
+                        "20 Lạch Tray",
+                        null));
+
+        assertThat(created.type()).isEqualTo(OrganizationType.COMMERCE);
+        assertThat(created.legalEntityType()).isNull();
+
+        List<MyOrganizationMembershipResponse> memberships = organizationService.listMyOrganizations(ownerId);
+        assertThat(memberships).hasSize(1);
+        assertThat(memberships.getFirst().type()).isEqualTo(OrganizationType.COMMERCE);
+        assertThat(memberships.getFirst().legalEntityType()).isNull();
+
+        organizationService.approveOrganization(created.id(), "admin-1");
+        ProviderOutboxEventEntity approvedEvent = outboxRepository.findAll().stream()
+                .filter(e -> e.getAggregateId().equals(created.id())
+                        && OrganizationDomainService.EVT_APPROVED.equals(e.getEventType()))
+                .findFirst()
+                .orElseThrow();
+        Map<String, Object> envelope = objectMapper.readValue(approvedEvent.getPayloadJson(), Map.class);
+        Map<String, Object> data = (Map<String, Object>) envelope.get("data");
+        assertThat(data.get("type")).isEqualTo("COMMERCE");
+        assertThat(data.containsKey("legalEntityType")).isFalse();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void bothCapabilityPreservesTypeInOutboxAndEnforcesTenantIsolation() throws Exception {
+        String ownerId = "supabase-both-" + UUID.randomUUID();
+        String outsiderId = "supabase-outsider-" + UUID.randomUUID();
+        OrganizationResponse created = organizationService.registerOrganization(
+                ownerId,
+                new RegisterOrganizationRequest(
+                        "Hộ Kinh Doanh Toàn Diện",
+                        OrganizationType.BOTH,
+                        LegalEntityType.HOUSEHOLD_BUSINESS,
+                        "0315556667",
+                        "0905556667",
+                        "Đà Nẵng",
+                        "55 Trần Phú",
+                        "Dịch vụ và bán linh kiện"));
+
+        organizationService.approveOrganization(created.id(), "admin-1");
+        assertThat(providerRepository.findByOrganizationId(created.id()))
+                .isPresent()
+                .get()
+                .extracting(ProviderEntity::getStatus)
+                .isEqualTo(EntityStatus.ACTIVE.name());
+
+        OrganizationResponse updated = organizationService.updateCurrentOrganization(
+                created.id(),
+                null,
+                new UpdateOrganizationRequest("Hộ Kinh Doanh Toàn Diện Plus", null, null, null, null));
+        assertThat(updated.type()).isEqualTo(OrganizationType.BOTH);
+        assertThat(updated.legalEntityType()).isEqualTo(LegalEntityType.HOUSEHOLD_BUSINESS);
+
+        ProviderOutboxEventEntity updatedEvent = outboxRepository.findAll().stream()
+                .filter(e -> e.getAggregateId().equals(created.id())
+                        && OrganizationDomainService.EVT_UPDATED.equals(e.getEventType()))
+                .findFirst()
+                .orElseThrow();
+        Map<String, Object> envelope = objectMapper.readValue(updatedEvent.getPayloadJson(), Map.class);
+        Map<String, Object> data = (Map<String, Object>) envelope.get("data");
+        assertThat(data.get("type")).isEqualTo("BOTH");
+        assertThat(data.get("legalEntityType")).isEqualTo("HOUSEHOLD_BUSINESS");
+
+        assertThatThrownBy(() -> organizationService.getOrganizationDetail(created.id(), outsiderId, false))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).errorCode())
+                .isEqualTo(ProviderErrorCode.ORG_MEMBERSHIP_REQUIRED.name());
     }
 }

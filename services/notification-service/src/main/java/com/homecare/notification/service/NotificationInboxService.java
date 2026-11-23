@@ -98,6 +98,7 @@ public class NotificationInboxService {
                         .eventType(eventType)
                         .title(title)
                         .body(body)
+                        .deeplink(extraData != null ? extraData.get("deeplink") : null)
                         .read(false)
                         .createdAt(now)
                         .build());
@@ -225,6 +226,7 @@ public class NotificationInboxService {
                 n.getEventType(),
                 n.getTitle(),
                 n.getBody(),
+                n.getDeeplink(),
                 n.isRead(),
                 n.getReadAt(),
                 n.getCreatedAt());

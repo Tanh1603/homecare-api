@@ -10,6 +10,9 @@ public enum HouseholdErrorCode implements ApiErrorCodeContract {
     WARRANTY_NOT_FOUND(HttpStatus.NOT_FOUND, "error.warranty.not-found", "Warranty not found."),
     SCHEDULE_NOT_FOUND(HttpStatus.NOT_FOUND, "error.schedule.not-found", "Maintenance schedule not found."),
     CARE_RECORD_NOT_FOUND(HttpStatus.NOT_FOUND, "error.care-record.not-found", "Care record not found."),
+    LOCATION_NOT_FOUND(HttpStatus.NOT_FOUND, "error.location.not-found", "Location not found."),
+    ADDRESS_NOT_FOUND(HttpStatus.NOT_FOUND, "error.address.not-found", "Address not found."),
+    DEFAULT_ADDRESS_CONFLICT(HttpStatus.CONFLICT, "error.address.default-conflict", "Concurrent default address update conflict. Please retry."),
     DATE_ORDER_INVALID(HttpStatus.CONFLICT, "error.warranty.date-order-invalid", "Warranty start date must be before end date."),
     SCHEDULE_ALREADY_NOTIFIED(HttpStatus.CONFLICT, "error.schedule.already-notified", "Schedule window has already been notified.");
 
