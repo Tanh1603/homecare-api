@@ -777,9 +777,9 @@ public class BookingLifecycleService {
         }
 
         if (result == null || !result.getAllocated()) {
+            String failReason = result != null ? result.getFailureReason() : "ALLOCATION_FAILED";
             tx.executeWithoutResult(status -> {
                 Instant now = Instant.now();
-                String failReason = result != null ? result.getFailureReason() : "ALLOCATION_FAILED";
                 int fenced = attemptRepository.transitionWithFence(
                         claim.operationId(), claim.claimToken(), "ALLOCATING", "FAILED", failReason, now);
                 if (fenced == 1) {
@@ -792,7 +792,14 @@ public class BookingLifecycleService {
                     });
                 }
             });
-            throw new DomainException(CommonErrorCode.CONFLICT);
+            String detailMessage = switch (failReason) {
+                case "NO_AVAILABLE_TECHNICIAN_IN_WARRANTY_ORGANIZATION", "NO_AVAILABLE_TECHNICIAN" ->
+                        "Technician has no available schedule window covering the booking time, or does not match the required specialty/provider.";
+                case "SERVICE_NOT_AVAILABLE" ->
+                        "Service offering or provider is no longer active.";
+                default -> null;
+            };
+            throw new DomainException(CommonErrorCode.CONFLICT, detailMessage);
         }
 
         if (!technicianId.toString().equals(result.getTechnicianId())
