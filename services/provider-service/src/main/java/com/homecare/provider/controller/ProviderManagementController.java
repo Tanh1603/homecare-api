@@ -14,10 +14,13 @@ import com.homecare.provider.dto.ProviderDtos.ServiceOfferingResponse;
 import com.homecare.provider.dto.ProviderDtos.TechnicianInput;
 import com.homecare.provider.dto.ProviderDtos.TechnicianResponse;
 import com.homecare.provider.dto.ProviderDtos.UpsertServiceCoverageRequest;
+import com.homecare.provider.entity.ServiceCategory;
+import com.homecare.provider.organization.controller.AdminProviderQualificationController.CategoryQualificationResponse;
 import com.homecare.provider.security.ProviderAccessPolicy;
 import com.homecare.provider.service.ProviderDomainService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -161,5 +164,33 @@ public class ProviderManagementController {
             @AuthenticationPrincipal Jwt jwt) {
         service.deleteSchedule(id, windowId, resolveActor(jwt, rawOrgId), ifMatch);
         return ResponseEntity.noContent().build();
+    }
+
+    public record SubmitQualificationRequest(@NotBlank String evidenceRefs) {}
+
+    @GetMapping("/providers/current/qualifications")
+    public ResponseEntity<ApiResponse<List<CategoryQualificationResponse>>> listCurrentQualifications(
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest request) {
+        ActorContext actor = resolveActor(jwt, rawOrgId);
+        List<CategoryQualificationResponse> items = actor.organizationId() == null
+                ? List.of()
+                : service.listCategoryQualifications(actor.organizationId()).stream()
+                        .map(CategoryQualificationResponse::from)
+                        .toList();
+        return ResponseEntity.ok(responses.ok(ApiMessages.RETRIEVED, items, request));
+    }
+
+    @PostMapping("/providers/current/qualifications/{category}")
+    public ResponseEntity<ApiResponse<CategoryQualificationResponse>> submitQualification(
+            @PathVariable ServiceCategory category,
+            @Valid @RequestBody SubmitQualificationRequest body,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest request) {
+        CategoryQualificationResponse saved = CategoryQualificationResponse.from(
+                service.submitCategoryQualification(category, body.evidenceRefs(), resolveActor(jwt, rawOrgId)));
+        return ResponseEntity.ok(responses.ok(ApiMessages.UPDATED, saved, request));
     }
 }

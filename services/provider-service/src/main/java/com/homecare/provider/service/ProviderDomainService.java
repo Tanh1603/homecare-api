@@ -8,6 +8,7 @@ import com.homecare.common.error.DomainException;
 import com.homecare.common.event.DomainEventContracts;
 import com.homecare.common.security.AccessMode;
 import com.homecare.common.security.ActorContext;
+import com.homecare.common.security.RbacConstants;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
 import com.homecare.provider.security.ProviderAccessPolicy;
@@ -269,11 +270,57 @@ public class ProviderDomainService {
         return getOfferingCoverage(offeringId);
     }
 
+    @Transactional(readOnly = true)
+    public List<CategoryQualificationEntity> listCategoryQualifications(UUID providerOrOrgId) {
+        return providerRepository.findById(providerOrOrgId)
+                .or(() -> providerRepository.findByOrganizationId(providerOrOrgId))
+                .map(p -> categoryQualificationRepository.findByProviderId(p.getId()))
+                .orElse(List.of());
+    }
+
+    @Transactional
+    public CategoryQualificationEntity submitCategoryQualification(
+            ServiceCategory category, String evidenceRefs, ActorContext actor) {
+        if (actor == null || actor.mode() != AccessMode.ORGANIZATION || actor.organizationId() == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Organization context is required.");
+        }
+        if (!actor.hasOrgPermission(RbacConstants.PERM_SERVICE_MANAGE)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Missing service manage permission.");
+        }
+        if (!category.requiresQualification()) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Category " + category.name() + " does not require qualification verification.");
+        }
+        if (evidenceRefs == null || evidenceRefs.isBlank()) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Qualification evidenceRefs is required.");
+        }
+        ProviderEntity provider = providerRepository.findByOrganizationId(actor.organizationId())
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.PROVIDER_NOT_FOUND));
+        Instant now = Instant.now();
+        CategoryQualificationEntity qual = categoryQualificationRepository
+                .findByProviderIdAndCategory(provider.getId(), category)
+                .orElse(CategoryQualificationEntity.builder()
+                        .id(UUID.randomUUID())
+                        .providerId(provider.getId())
+                        .category(category)
+                        .createdAt(now)
+                        .build());
+        qual.setEvidenceRefs(evidenceRefs.trim());
+        qual.setStatus(CategoryQualificationStatus.UNVERIFIED);
+        qual.setReason(null);
+        qual.setVerifiedBy(null);
+        qual.setVerifiedAt(null);
+        qual.setUpdatedAt(now);
+        return categoryQualificationRepository.save(qual);
+    }
+
     @Transactional
     public CategoryQualificationEntity verifyCategoryQualification(
-            UUID providerId, ServiceCategory category, CategoryQualificationStatus decision, String reason, String adminUserId) {
-        providerRepository.findById(providerId)
+            UUID providerOrOrgId, ServiceCategory category, CategoryQualificationStatus decision, String reason, String adminUserId) {
+        ProviderEntity provider = providerRepository.findById(providerOrOrgId)
+                .or(() -> providerRepository.findByOrganizationId(providerOrOrgId))
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.PROVIDER_NOT_FOUND));
+        UUID providerId = provider.getId();
         if (decision == null || decision == CategoryQualificationStatus.UNVERIFIED) {
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Decision must be VERIFIED, REJECTED, or REVOKED.");
         }

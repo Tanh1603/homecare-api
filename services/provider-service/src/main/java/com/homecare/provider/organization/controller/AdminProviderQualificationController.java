@@ -12,6 +12,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -19,6 +20,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -44,14 +46,25 @@ public class AdminProviderQualificationController {
             UUID providerId,
             ServiceCategory category,
             CategoryQualificationStatus status,
+            String evidenceRefs,
             String reason,
             String verifiedBy,
             Instant verifiedAt) {
-        static CategoryQualificationResponse from(CategoryQualificationEntity e) {
+        public static CategoryQualificationResponse from(CategoryQualificationEntity e) {
             return new CategoryQualificationResponse(
                     e.getId(), e.getProviderId(), e.getCategory(), e.getStatus(),
-                    e.getReason(), e.getVerifiedBy(), e.getVerifiedAt());
+                    e.getEvidenceRefs(), e.getReason(), e.getVerifiedBy(), e.getVerifiedAt());
         }
+    }
+
+    @GetMapping("/{providerId}/qualifications")
+    public ResponseEntity<ApiResponse<List<CategoryQualificationResponse>>> listQualifications(
+            @PathVariable UUID providerId,
+            HttpServletRequest httpRequest) {
+        List<CategoryQualificationResponse> list = providerService.listCategoryQualifications(providerId).stream()
+                .map(CategoryQualificationResponse::from)
+                .toList();
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.RETRIEVED, list, httpRequest));
     }
 
     @PostMapping("/{providerId}/qualifications/{category}/verify")

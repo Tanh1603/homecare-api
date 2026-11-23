@@ -83,6 +83,25 @@ public class OrganizationController {
         return ResponseEntity.ok().build();
     }
 
+    @GetMapping("/{id}/evidence/signed-url")
+    public ResponseEntity<ApiResponse<java.util.Map<String, String>>> getEvidenceSignedUrl(
+            @PathVariable UUID id,
+            @RequestParam @NotBlank String objectKey,
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest httpRequest) {
+        if (objectKey.contains("..") || !objectKey.startsWith("organizations/")) {
+            return ResponseEntity.badRequest().build();
+        }
+        boolean isAdmin = SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ORGANIZATION_REVIEW, RbacConstants.PERM_ADMIN_ALL);
+        organizationService.getOrganizationDetail(id, jwt.getSubject(), isAdmin);
+        String signedUrl = evidenceStorageService.createSignedReadUrl(objectKey);
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.RETRIEVED,
+                java.util.Map.of("signedUrl", signedUrl != null ? signedUrl : ""),
+                httpRequest));
+    }
+
     @PostMapping
     public ResponseEntity<ApiResponse<OrganizationResponse>> registerOrganization(
             @AuthenticationPrincipal Jwt jwt,

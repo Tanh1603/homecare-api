@@ -91,6 +91,28 @@ class OrganizationControllerWebTest {
     }
 
     @Test
+    void postOrganizationEvidencePresignReturnsUploadMetadata() throws Exception {
+        String userId = "presign-owner-" + UUID.randomUUID();
+        String payload = """
+                {
+                  "fileName": "business-license.pdf",
+                  "contentType": "application/pdf",
+                  "documentType": "COMPANY"
+                }
+                """;
+
+        mvc.perform(post("/api/v1/organizations/evidence/presign")
+                        .with(jwt().jwt(j -> j.subject(userId)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.uploadUrl").isNotEmpty())
+                .andExpect(jsonPath("$.data.objectKey").isNotEmpty())
+                .andExpect(jsonPath("$.data.method").value("PUT"));
+    }
+
+    @Test
     void postOrganizationRejectsUnknownOrganizationTypeWith400Not500() throws Exception {
         String userId = "bad-type-" + UUID.randomUUID();
         String payload = """
@@ -185,5 +207,43 @@ class OrganizationControllerWebTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Hijacked Name\"}"))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void getEvidenceSignedUrlAndSubmitQualificationFlow() throws Exception {
+        String ownerId = "qual-owner-" + UUID.randomUUID();
+        OrganizationResponse org = organizationService.registerOrganization(
+                ownerId,
+                new RegisterOrganizationRequest(
+                        "Điện Lạnh Qual Pro",
+                        OrganizationType.SERVICE,
+                        LegalEntityType.COMPANY,
+                        "0311113333",
+                        "0909111333",
+                        "Hà Nội",
+                        "2 Tràng Tiền",
+                        "Service capability"));
+        organizationService.approveOrganization(org.id(), "admin-1");
+
+        mvc.perform(get("/api/v1/organizations/{id}/evidence/signed-url", org.id())
+                        .with(jwt().jwt(j -> j.subject(ownerId)))
+                        .param("objectKey", "organizations/" + ownerId + "/cert.pdf"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.signedUrl").isNotEmpty());
+
+        mvc.perform(post("/api/v1/providers/current/qualifications/ELECTRICAL_REPAIR")
+                        .with(jwt().jwt(j -> j.subject(ownerId)))
+                        .header("X-Organization-Id", org.id().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"evidenceRefs\":\"[{\\\"objectKey\\\":\\\"organizations/" + ownerId + "/cert.pdf\\\"}]\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.category").value("ELECTRICAL_REPAIR"))
+                .andExpect(jsonPath("$.data.status").value("UNVERIFIED"));
+
+        mvc.perform(get("/api/v1/providers/current/qualifications")
+                        .with(jwt().jwt(j -> j.subject(ownerId)))
+                        .header("X-Organization-Id", org.id().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].category").value("ELECTRICAL_REPAIR"));
     }
 }

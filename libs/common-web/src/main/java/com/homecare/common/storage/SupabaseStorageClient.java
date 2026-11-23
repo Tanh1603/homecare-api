@@ -9,6 +9,7 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 /**
@@ -87,26 +88,66 @@ public class SupabaseStorageClient {
                     true);
         }
         try {
-            Map<String, Object> response = restClient.post()
-                    .uri(URI.create(supabaseUrl + "/storage/v1/object/upload/sign/" + bucket + "/" + objectKey))
-                    .header("apikey", secretKey)
-                    .header("Authorization", "Bearer " + secretKey)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("upsert", false))
-                    .retrieve()
-                    .body(Map.class);
-            if (response != null && response.get("url") instanceof String signedPath) {
-                String uploadUrl = signedPath.startsWith("http")
-                        ? signedPath
-                        : supabaseUrl + "/storage/v1" + signedPath;
-                String token = response.get("token") instanceof String t ? t : null;
-                return new PresignedUploadResult(
-                        uploadUrl, bucket, objectKey, token, expiresInSeconds, "PUT", false);
+            return requestPresignedUpload(bucket, objectKey, expiresInSeconds);
+        } catch (HttpClientErrorException ex) {
+            String body = ex.getResponseBodyAsString();
+            if (body.contains("The related resource does not exist") || body.contains("Bucket not found")) {
+                ensurePrivateBucketExists(bucket);
+                try {
+                    return requestPresignedUpload(bucket, objectKey, expiresInSeconds);
+                } catch (Exception retryEx) {
+                    log.warn("Failed to create presigned upload URL after creating bucket {}/{}: {}",
+                            bucket, objectKey, retryEx.getMessage());
+                    throw new IllegalStateException("Failed to create presigned upload URL", retryEx);
+                }
             }
-            throw new IllegalStateException("Supabase storage did not return a signed upload URL.");
+            log.warn("Failed to create presigned upload URL for {}/{}: {}", bucket, objectKey, ex.getMessage());
+            throw new IllegalStateException("Failed to create presigned upload URL", ex);
         } catch (Exception ex) {
             log.warn("Failed to create presigned upload URL for {}/{}: {}", bucket, objectKey, ex.getMessage());
             throw new IllegalStateException("Failed to create presigned upload URL", ex);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private PresignedUploadResult requestPresignedUpload(
+            String bucket,
+            String objectKey,
+            int expiresInSeconds) {
+        Map<String, Object> response = restClient.post()
+                .uri(URI.create(supabaseUrl + "/storage/v1/object/upload/sign/" + bucket + "/" + objectKey))
+                .header("apikey", secretKey)
+                .header("Authorization", "Bearer " + secretKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("upsert", false))
+                .retrieve()
+                .body(Map.class);
+        if (response != null && response.get("url") instanceof String signedPath) {
+            String uploadUrl = signedPath.startsWith("http")
+                    ? signedPath
+                    : supabaseUrl + "/storage/v1" + signedPath;
+            String token = response.get("token") instanceof String t ? t : null;
+            return new PresignedUploadResult(
+                    uploadUrl, bucket, objectKey, token, expiresInSeconds, "PUT", false);
+        }
+        throw new IllegalStateException("Supabase storage did not return a signed upload URL.");
+    }
+
+    private void ensurePrivateBucketExists(String bucket) {
+        try {
+            restClient.post()
+                    .uri(URI.create(supabaseUrl + "/storage/v1/bucket"))
+                    .header("apikey", secretKey)
+                    .header("Authorization", "Bearer " + secretKey)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("id", bucket, "name", bucket, "public", false))
+                    .retrieve()
+                    .toBodilessEntity();
+            log.info("Created missing Supabase storage bucket '{}'", bucket);
+        } catch (HttpClientErrorException.Conflict ignored) {
+            // Bucket already exists concurrently.
+        } catch (Exception ex) {
+            log.warn("Could not auto-create Supabase storage bucket '{}': {}", bucket, ex.getMessage());
         }
     }
 

@@ -65,6 +65,14 @@ public class OrganizationEvidenceStorageService {
                 result.localFallback());
     }
 
+    public String createSignedReadUrl(String objectKey) {
+        return storageClient.createSignedReadUrl(
+                bucket,
+                objectKey,
+                "/api/gateway/organizations/evidence/local/" + objectKey,
+                PRESIGN_EXPIRES_IN_SECONDS);
+    }
+
     public boolean isConfigured() {
         return storageClient.isConfigured();
     }
