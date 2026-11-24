@@ -73,6 +73,10 @@ public class OrganizationEvidenceStorageService {
                 PRESIGN_EXPIRES_IN_SECONDS);
     }
 
+    public void deleteObject(String objectKey) {
+        storageClient.deleteObject(bucket, objectKey);
+    }
+
     public boolean isConfigured() {
         return storageClient.isConfigured();
     }

@@ -108,9 +108,11 @@ public class AdminUserController {
         }
     }
 
+    public record UserStatusResponse(UUID id, String status) {}
+
     @PatchMapping("/{userId}/status")
     @PreAuthorize("hasRole('ADMIN') or hasAuthority('admin:all')")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> updateStatus(@PathVariable UUID userId,
+    public ResponseEntity<ApiResponse<UserStatusResponse>> updateStatus(@PathVariable UUID userId,
             @Valid @RequestBody StatusRequest input,
             @AuthenticationPrincipal Jwt jwt,
             HttpServletRequest request) {
@@ -142,7 +144,7 @@ public class AdminUserController {
                 publishUserSuspendedEvent(userId, reason, now);
             }
         }
-        return ResponseEntity.ok(responseFactory.ok(ApiMessages.UPDATED, Map.of("id", userId, "status", input.status()), request));
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.UPDATED, new UserStatusResponse(userId, input.status()), request));
     }
 
     private void publishUserSuspendedEvent(UUID userId, String reason, Instant now) {
@@ -161,6 +163,7 @@ public class AdminUserController {
                     .aggregateType("User")
                     .aggregateId(userId)
                     .eventType(DomainEventContracts.USER_SUSPENDED)
+                    .routingKey(DomainEventContracts.USER_SUSPENDED)
                     .payloadJson(objectMapper.writeValueAsString(envelope))
                     .status(EntityStatus.PENDING.name())
                     .retryCount(0)
@@ -195,13 +198,23 @@ public class AdminUserController {
 
     @GetMapping
     public ResponseEntity<ApiResponse<PageResponse<AdminUserResponse>>> listUsers(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String role,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(required = false) String sortDir,
+            @RequestParam(defaultValue = "false") boolean excludeSelf,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
+            @AuthenticationPrincipal Jwt jwt,
             HttpServletRequest httpRequest) {
         PageResponse.validate(page, size);
+        String effectiveSearch = (q != null && !q.isBlank()) ? q : search;
+        String excludeUserId = (excludeSelf && jwt != null) ? jwt.getSubject() : null;
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                supabaseRoleClient.listUsers(page, size),
+                supabaseRoleClient.listUsers(page, size, effectiveSearch, role, status, sortBy, sortDir, excludeUserId),
                 httpRequest));
     }
 }

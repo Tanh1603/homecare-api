@@ -21,13 +21,13 @@ public final class OrganizationDtos {
     public record RegisterOrganizationRequest(
             @NotBlank String name,
             @NotNull OrganizationType type,
-            LegalEntityType legalEntityType,
+            @NotNull LegalEntityType legalEntityType,
             String taxCode,
             @NotBlank String phone,
             @NotBlank String city,
             String address,
             String description,
-            String identityEvidenceRefs) {
+            @NotBlank String identityEvidenceRefs) {
         public RegisterOrganizationRequest(
                 String name,
                 OrganizationType type,
@@ -54,13 +54,13 @@ public final class OrganizationDtos {
 
     public record ResubmitOrganizationRequest(
             @NotBlank @Size(max = 255) String name,
-            LegalEntityType legalEntityType,
+            @NotNull LegalEntityType legalEntityType,
             String taxCode,
             @NotBlank @Size(max = 50) String phone,
             @NotBlank @Size(max = 120) String city,
             @Size(max = 500) String address,
             @Size(max = 1500) String description,
-            String identityEvidenceRefs) {
+            @NotBlank String identityEvidenceRefs) {
     }
 
     public record UpdateOrganizationRequest(

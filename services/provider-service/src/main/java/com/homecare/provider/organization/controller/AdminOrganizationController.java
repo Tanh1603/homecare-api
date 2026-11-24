@@ -24,6 +24,7 @@ import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationAppealResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.RejectOrganizationRequest;
+import com.homecare.provider.organization.entity.LegalEntityType;
 import com.homecare.provider.organization.entity.OrganizationAppealEntity;
 import com.homecare.provider.organization.entity.OrganizationStatus;
 import com.homecare.provider.organization.service.OrganizationDomainService;
@@ -46,13 +47,20 @@ public class AdminOrganizationController {
     @GetMapping
     public ResponseEntity<ApiResponse<PageResponse<OrganizationResponse>>> listOrganizations(
             @RequestParam(required = false) OrganizationStatus status,
+            @RequestParam(required = false) LegalEntityType legalEntityType,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(required = false) String sortDir,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
         PageResponse.validate(page, size);
+        String effectiveSearch = (q != null && !q.isBlank()) ? q : search;
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                organizationService.listAllForAdminPage(status, page, size),
+                organizationService.listAllForAdminPage(
+                        status, legalEntityType, effectiveSearch, sortBy, sortDir, page, size),
                 httpRequest));
     }
 
@@ -78,15 +86,17 @@ public class AdminOrganizationController {
     public ResponseEntity<ApiResponse<OrganizationResponse>> rejectOrganization(
             @PathVariable UUID id,
             @Valid @RequestBody RejectOrganizationRequest request,
+            @AuthenticationPrincipal Jwt jwt,
             HttpServletRequest httpRequest) {
-        OrganizationResponse rejected = organizationService.rejectOrganization(id, request.reason());
+        String adminId = jwt != null ? jwt.getSubject() : "ADMIN";
+        OrganizationResponse rejected = organizationService.rejectOrganization(id, request.reason(), adminId);
         return ResponseEntity.ok(responseFactory.ok(ApiMessages.REJECTED, rejected, httpRequest));
     }
 
     public record SanctionOrganizationRequest(
             @NotBlank String reason,
             String evidenceRefs,
-            boolean safetyInterventionFlag) {}
+            Boolean safetyInterventionFlag) {}
 
     public record ResolveAppealRequest(
             boolean approved,
@@ -96,14 +106,13 @@ public class AdminOrganizationController {
     @PostMapping("/{id}/suspend")
     public ResponseEntity<ApiResponse<OrganizationResponse>> suspendOrganization(
             @PathVariable UUID id,
-            @Valid @RequestBody(required = false) SanctionOrganizationRequest request,
+            @Valid @RequestBody SanctionOrganizationRequest request,
             @AuthenticationPrincipal Jwt jwt,
             HttpServletRequest httpRequest) {
-        String reason = request != null ? request.reason() : "Admin suspension";
-        String evidence = request != null ? request.evidenceRefs() : null;
-        boolean safety = request != null && request.safetyInterventionFlag();
         String adminId = jwt != null ? jwt.getSubject() : "ADMIN";
-        OrganizationResponse suspended = organizationService.suspendOrganization(id, reason, evidence, safety, adminId);
+        OrganizationResponse suspended = organizationService.suspendOrganization(
+                id, request.reason(), request.evidenceRefs(),
+                Boolean.TRUE.equals(request.safetyInterventionFlag()), adminId);
         return ResponseEntity.ok(responseFactory.ok(ApiMessages.SUSPENDED, suspended, httpRequest));
     }
 
@@ -114,7 +123,8 @@ public class AdminOrganizationController {
             @AuthenticationPrincipal Jwt jwt,
             HttpServletRequest httpRequest) {
         OrganizationResponse banned = organizationService.banOrganization(
-                id, request.reason(), request.evidenceRefs(), request.safetyInterventionFlag(), jwt.getSubject());
+                id, request.reason(), request.evidenceRefs(),
+                Boolean.TRUE.equals(request.safetyInterventionFlag()), jwt.getSubject());
         return ResponseEntity.ok(responseFactory.ok(ApiMessages.SUSPENDED, banned, httpRequest));
     }
 

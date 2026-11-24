@@ -193,4 +193,13 @@ public class ProviderManagementController {
                 service.submitCategoryQualification(category, body.evidenceRefs(), resolveActor(jwt, rawOrgId)));
         return ResponseEntity.ok(responses.ok(ApiMessages.UPDATED, saved, request));
     }
+
+    @DeleteMapping("/providers/current/qualifications/{category}")
+    public ResponseEntity<Void> deleteQualification(
+            @PathVariable ServiceCategory category,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @AuthenticationPrincipal Jwt jwt) {
+        service.deleteCategoryQualification(category, resolveActor(jwt, rawOrgId));
+        return ResponseEntity.noContent().build();
+    }
 }

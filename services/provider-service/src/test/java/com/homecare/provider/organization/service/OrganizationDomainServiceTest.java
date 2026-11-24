@@ -72,11 +72,13 @@ class OrganizationDomainServiceTest {
                 new RegisterOrganizationRequest(
                         "Điện Lạnh An Tâm",
                         OrganizationType.SERVICE,
+                        LegalEntityType.COMPANY,
                         "0300112233",
                         "0901234999",
                         "Đà Nẵng",
                         "12 Lê Duẩn",
-                        "Sửa chữa điện lạnh"));
+                        "Sửa chữa điện lạnh",
+                        "[\"dkkd.pdf\"]"));
         assertThat(pending.status()).isEqualTo(OrganizationStatus.PENDING);
 
         List<MyOrganizationMembershipResponse> myOrgs = organizationService.listMyOrganizations(ownerId);
@@ -114,11 +116,13 @@ class OrganizationDomainServiceTest {
                 new RegisterOrganizationRequest(
                         "Cửa Hàng Chưa Đủ Điều Kiện",
                         OrganizationType.SERVICE,
+                        LegalEntityType.INDIVIDUAL,
                         null,
                         "0908887776",
                         "Cần Thơ",
                         null,
-                        null));
+                        null,
+                        "[\"cccd.pdf\"]"));
 
         OrganizationResponse rejected = organizationService.rejectOrganization(
                 pending.id(),
@@ -132,10 +136,10 @@ class OrganizationDomainServiceTest {
         String multiOrgUser = "supabase-multi-" + UUID.randomUUID();
         OrganizationResponse orgA = organizationService.registerOrganization(
                 multiOrgUser,
-                new RegisterOrganizationRequest("Org A", OrganizationType.SERVICE, null, "0901", "HCM", null, null));
+                new RegisterOrganizationRequest("Org A", OrganizationType.SERVICE, LegalEntityType.COMPANY, "0312345601", "0901234501", "HCM", null, null, "[\"dkkd-a.pdf\"]"));
         OrganizationResponse orgB = organizationService.registerOrganization(
                 "other-owner-" + UUID.randomUUID(),
-                new RegisterOrganizationRequest("Org B", OrganizationType.SERVICE, null, "0902", "HN", null, null));
+                new RegisterOrganizationRequest("Org B", OrganizationType.SERVICE, LegalEntityType.COMPANY, "0312345602", "0901234502", "HN", null, null, "[\"dkkd-b.pdf\"]"));
 
         organizationService.approveOrganization(orgA.id(), "admin-1");
         organizationService.approveOrganization(orgB.id(), "admin-1");
@@ -165,7 +169,7 @@ class OrganizationDomainServiceTest {
         String ownerId = "supabase-owner-" + UUID.randomUUID();
         OrganizationResponse org = organizationService.registerOrganization(
                 ownerId,
-                new RegisterOrganizationRequest("Protected Org", OrganizationType.SERVICE, null, "0903", "HCM", null, null));
+                new RegisterOrganizationRequest("Protected Org", OrganizationType.SERVICE, LegalEntityType.INDIVIDUAL, null, "0901234503", "HCM", null, null, "[\"cccd.pdf\"]"));
 
         assertThatThrownBy(() -> organizationService.updateMemberRole(org.id(), ownerId, OrgRole.ORG_STAFF))
                 .isInstanceOf(DomainException.class)
@@ -189,7 +193,7 @@ class OrganizationDomainServiceTest {
         String ownerId = "supabase-owner-" + UUID.randomUUID();
         OrganizationResponse org = organizationService.registerOrganization(
                 ownerId,
-                new RegisterOrganizationRequest("Role Guard Org", OrganizationType.SERVICE, null, "0904", "HCM", null, null));
+                new RegisterOrganizationRequest("Role Guard Org", OrganizationType.SERVICE, LegalEntityType.COMPANY, "0312345604", "0901234504", "HCM", null, null, "[\"dkkd.pdf\"]"));
         organizationService.approveOrganization(org.id(), "admin-1");
 
         String targetUser = "supabase-admin-" + UUID.randomUUID();
@@ -231,7 +235,8 @@ class OrganizationDomainServiceTest {
                         "0903334445",
                         "TP. Hồ Chí Minh",
                         "99 Nguyễn Huệ",
-                        "Bảo trì điều hòa"));
+                        "Bảo trì điều hòa",
+                        "[\"dkkd.pdf\"]"));
 
         assertThat(created.type()).isEqualTo(OrganizationType.SERVICE);
         assertThat(created.legalEntityType()).isEqualTo(LegalEntityType.COMPANY);
@@ -254,38 +259,67 @@ class OrganizationDomainServiceTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
-    void registerOrganizationSupportsLegacy7ArgRequestWithoutLegalEntityType() throws Exception {
-        String ownerId = "supabase-legacy-" + UUID.randomUUID();
-        OrganizationResponse created = organizationService.registerOrganization(
+    void rejectsMissingLegalEntityTypeEvidencePhoneAndInvalidTaxCodePerEntityType() {
+        String ownerId = "supabase-validation-" + UUID.randomUUID();
+
+        // Missing legalEntityType
+        assertThatThrownBy(() -> organizationService.registerOrganization(
                 ownerId,
                 new RegisterOrganizationRequest(
-                        "Cửa Hàng Dịch Vụ Cũ",
-                        OrganizationType.SERVICE,
-                        null,
-                        "0904445556",
-                        "Hải Phòng",
-                        "20 Lạch Tray",
-                        null));
+                        "Org Missing Legal", OrganizationType.SERVICE, null,
+                        "0319998887", "0904445556", "Hải Phòng", "20 Lạch Tray", null, "[\"doc.pdf\"]")))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).errorCode())
+                .isEqualTo(CommonErrorCode.VALIDATION_FAILED.name());
 
-        assertThat(created.type()).isEqualTo(OrganizationType.SERVICE);
-        assertThat(created.legalEntityType()).isNull();
+        // Missing identityEvidenceRefs
+        assertThatThrownBy(() -> organizationService.registerOrganization(
+                ownerId,
+                new RegisterOrganizationRequest(
+                        "Org Missing Evidence", OrganizationType.SERVICE, LegalEntityType.COMPANY,
+                        "0319998887", "0904445556", "Hải Phòng", "20 Lạch Tray", null, "  ")))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).errorCode())
+                .isEqualTo(CommonErrorCode.VALIDATION_FAILED.name());
 
-        List<MyOrganizationMembershipResponse> memberships = organizationService.listMyOrganizations(ownerId);
-        assertThat(memberships).hasSize(1);
-        assertThat(memberships.getFirst().type()).isEqualTo(OrganizationType.SERVICE);
-        assertThat(memberships.getFirst().legalEntityType()).isNull();
+        // Invalid VN phone
+        assertThatThrownBy(() -> organizationService.registerOrganization(
+                ownerId,
+                new RegisterOrganizationRequest(
+                        "Org Bad Phone", OrganizationType.SERVICE, LegalEntityType.INDIVIDUAL,
+                        null, "12345", "Hải Phòng", "20 Lạch Tray", null, "[\"cccd.pdf\"]")))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).errorCode())
+                .isEqualTo(CommonErrorCode.VALIDATION_FAILED.name());
 
-        organizationService.approveOrganization(created.id(), "admin-1");
-        ProviderOutboxEventEntity approvedEvent = outboxRepository.findAll().stream()
-                .filter(e -> e.getAggregateId().equals(created.id())
-                        && OrganizationDomainService.EVT_APPROVED.equals(e.getEventType()))
-                .findFirst()
-                .orElseThrow();
-        Map<String, Object> envelope = objectMapper.readValue(approvedEvent.getPayloadJson(), Map.class);
-        Map<String, Object> data = (Map<String, Object>) envelope.get("data");
-        assertThat(data.get("type")).isEqualTo("SERVICE");
-        assertThat(data.containsKey("legalEntityType")).isFalse();
+        // COMPANY requires 10-digit taxCode
+        assertThatThrownBy(() -> organizationService.registerOrganization(
+                ownerId,
+                new RegisterOrganizationRequest(
+                        "Company Bad MST", OrganizationType.SERVICE, LegalEntityType.COMPANY,
+                        "001090012345", "0904445556", "Hải Phòng", "20 Lạch Tray", null, "[\"dkkd.pdf\"]")))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).errorCode())
+                .isEqualTo(CommonErrorCode.VALIDATION_FAILED.name());
+
+        // HOUSEHOLD_BUSINESS requires 12-digit personal ID
+        assertThatThrownBy(() -> organizationService.registerOrganization(
+                ownerId,
+                new RegisterOrganizationRequest(
+                        "Household Bad ID", OrganizationType.SERVICE, LegalEntityType.HOUSEHOLD_BUSINESS,
+                        "0319998887", "0904445556", "Hải Phòng", "20 Lạch Tray", null, "[\"hkd.pdf\"]")))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).errorCode())
+                .isEqualTo(CommonErrorCode.VALIDATION_FAILED.name());
+
+        // INDIVIDUAL optional taxCode passes when omitted, fails when malformed
+        OrganizationResponse ind = organizationService.registerOrganization(
+                ownerId,
+                new RegisterOrganizationRequest(
+                        "Thợ Cá Nhân", OrganizationType.SERVICE, LegalEntityType.INDIVIDUAL,
+                        null, "+84 904 445 556", "Hải Phòng", "20 Lạch Tray", null, "[\"cccd.pdf\"]"));
+        assertThat(ind.phone()).isEqualTo("+84904445556");
+        assertThat(ind.taxCode()).isNull();
     }
 
     @Test
@@ -299,11 +333,12 @@ class OrganizationDomainServiceTest {
                         "Hộ Kinh Doanh Toàn Diện",
                         OrganizationType.SERVICE,
                         LegalEntityType.HOUSEHOLD_BUSINESS,
-                        "0315556667",
+                        "001090012345",
                         "0905556667",
                         "Đà Nẵng",
                         "55 Trần Phú",
-                        "Dịch vụ bảo trì điều hòa"));
+                        "Dịch vụ bảo trì điều hòa",
+                        "[\"hkd.pdf\"]"));
 
         organizationService.approveOrganization(created.id(), "admin-1");
         assertThat(providerRepository.findByOrganizationId(created.id()))
@@ -367,7 +402,7 @@ class OrganizationDomainServiceTest {
                     ownerId,
                     new RegisterOrganizationRequest(
                             "Đơn Vị Sửa Chữa A", OrganizationType.SERVICE, LegalEntityType.HOUSEHOLD_BUSINESS,
-                            "031000111", "0903334445", "HCM", "10 Lê Lợi", "Sửa máy lạnh"));
+                            "001090012345", "0903334445", "HCM", "10 Lê Lợi", "Sửa máy lạnh", "[\"doc-0\"]"));
             assertThat(org.identityVerified()).isFalse();
             assertThat(org.resubmitCount()).isZero();
 
@@ -377,7 +412,7 @@ class OrganizationDomainServiceTest {
                     org.id(), ownerId, null,
                     new ResubmitOrganizationRequest(
                             "Đơn Vị Sửa Chữa A", LegalEntityType.HOUSEHOLD_BUSINESS,
-                            "031000111", "0903334445", "HCM", "10 Lê Lợi", "Sửa máy lạnh", "[\"doc-1\"]"));
+                            "001090012345", "0903334445", "HCM", "10 Lê Lợi", "Sửa máy lạnh", "[\"doc-1\"]"));
             assertThat(r1.status()).isEqualTo(OrganizationStatus.PENDING);
             assertThat(r1.resubmitCount()).isEqualTo(1);
 
@@ -387,7 +422,7 @@ class OrganizationDomainServiceTest {
                     org.id(), ownerId, null,
                     new ResubmitOrganizationRequest(
                             "Đơn Vị Sửa Chữa A", LegalEntityType.HOUSEHOLD_BUSINESS,
-                            "031000111", "0903334445", "HCM", "10 Lê Lợi", "Sửa máy lạnh", "[\"doc-2\"]"));
+                            "001090012345", "0903334445", "HCM", "10 Lê Lợi", "Sửa máy lạnh", "[\"doc-2\"]"));
             assertThat(r2.resubmitCount()).isEqualTo(2);
 
             // Reject #3 -> Resubmit #3 blocked by configured limit (2)
@@ -396,7 +431,7 @@ class OrganizationDomainServiceTest {
                     org.id(), ownerId, null,
                     new ResubmitOrganizationRequest(
                             "Đơn Vị Sửa Chữa A", LegalEntityType.HOUSEHOLD_BUSINESS,
-                            "031000111", "0903334445", "HCM", "10 Lê Lợi", "Sửa máy lạnh", "[\"doc-3\"]")))
+                            "001090012345", "0903334445", "HCM", "10 Lê Lợi", "Sửa máy lạnh", "[\"doc-3\"]")))
                     .isInstanceOf(DomainException.class)
                     .extracting(ex -> ((DomainException) ex).errorCode())
                     .isEqualTo(ProviderErrorCode.INVALID_ORGANIZATION_STATE.name());
@@ -413,7 +448,7 @@ class OrganizationDomainServiceTest {
                 ownerId,
                 new RegisterOrganizationRequest(
                         "Công Ty Bị Khóa", OrganizationType.SERVICE, LegalEntityType.COMPANY,
-                        "031222333", "0902223334", "HCM", "20 Nguyễn Trãi", "Sửa chữa"));
+                        "0312223334", "0902223334", "HCM", "20 Nguyễn Trãi", "Sửa chữa", "[\"dkkd.pdf\"]"));
 
         // PENDING -> SUSPENDED and PENDING -> BANNED must be rejected
         assertThatThrownBy(() -> organizationService.suspendOrganization(
@@ -466,17 +501,36 @@ class OrganizationDomainServiceTest {
                 indOwner,
                 new RegisterOrganizationRequest(
                         "Thợ Độc Lập Tuấn", OrganizationType.SERVICE, LegalEntityType.INDIVIDUAL,
-                        null, "0907778889", "HCM", "100 CMT8", "Thợ điện lạnh"));
+                        null, "0907778889", "HCM", "100 CMT8", "Thợ điện lạnh", "[\"cccd.pdf\"]"));
         organizationService.approveOrganization(indOrg.id(), "admin-1");
+
+        // Upgrade requires valid taxCode & new evidenceRefs
+        assertThatThrownBy(() -> organizationService.requestLegalEntityUpgrade(
+                indOrg.id(), indOwner, LegalEntityType.HOUSEHOLD_BUSINESS, "031888999", "[\"hkd.pdf\"]", null))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).errorCode())
+                .isEqualTo(CommonErrorCode.VALIDATION_FAILED.name());
+        assertThatThrownBy(() -> organizationService.requestLegalEntityUpgrade(
+                indOrg.id(), indOwner, LegalEntityType.HOUSEHOLD_BUSINESS, "079090001234", " ", null))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).errorCode())
+                .isEqualTo(CommonErrorCode.VALIDATION_FAILED.name());
 
         // INDIVIDUAL org capped at 1 member even while upgrade is pending
         organizationService.requestLegalEntityUpgrade(
-                indOrg.id(), indOwner, LegalEntityType.HOUSEHOLD_BUSINESS, "031888999", null, null);
+                indOrg.id(), indOwner, LegalEntityType.HOUSEHOLD_BUSINESS, "079090001234", "[\"hkd-upgrade.pdf\"]", null);
         assertThatThrownBy(() -> organizationService.addMember(
                 indOrg.id(), new AddMemberRequest("extra-user", OrgRole.ORG_STAFF)))
                 .isInstanceOf(DomainException.class)
                 .extracting(ex -> ((DomainException) ex).errorCode())
                 .isEqualTo(ProviderErrorCode.ORG_ROLE_FORBIDDEN.name());
+
+        // Profile update enforces Vietnamese phone format
+        assertThatThrownBy(() -> organizationService.updateCurrentOrganization(
+                indOrg.id(), null, new UpdateOrganizationRequest(null, "12345", null, null, null)))
+                .isInstanceOf(DomainException.class)
+                .extracting(ex -> ((DomainException) ex).errorCode())
+                .isEqualTo(CommonErrorCode.VALIDATION_FAILED.name());
 
         // 1:1 active ORG_TECHNICIAN across orgs
         String techUser = "tech-1to1-" + UUID.randomUUID();
@@ -484,12 +538,12 @@ class OrganizationDomainServiceTest {
                 "owner-a-" + UUID.randomUUID(),
                 new RegisterOrganizationRequest(
                         "Công Ty A", OrganizationType.SERVICE, LegalEntityType.COMPANY,
-                        "031111", "090111", "HCM", null, null));
+                        "0311110001", "0901110001", "HCM", null, null, "[\"dkkd-a.pdf\"]"));
         OrganizationResponse compB = organizationService.registerOrganization(
                 "owner-b-" + UUID.randomUUID(),
                 new RegisterOrganizationRequest(
                         "Công Ty B", OrganizationType.SERVICE, LegalEntityType.COMPANY,
-                        "031222", "090222", "HCM", null, null));
+                        "0312220002", "0902220002", "HCM", null, null, "[\"dkkd-b.pdf\"]"));
         organizationService.addMember(compA.id(), new AddMemberRequest(techUser, OrgRole.ORG_TECHNICIAN));
         assertThatThrownBy(() -> organizationService.addMember(
                 compB.id(), new AddMemberRequest(techUser, OrgRole.ORG_TECHNICIAN)))
@@ -501,5 +555,55 @@ class OrganizationDomainServiceTest {
         organizationService.handleOwnerUserSuspended(indOwner, "Vi phạm tài khoản", "admin-1");
         assertThat(organizationService.getOrganizationDetail(indOrg.id(), "admin-1", true).status())
                 .isEqualTo(OrganizationStatus.SUSPENDED);
+    }
+
+    @Test
+    void rejectPreservesHistoryAndEnqueuesOutboxAndApproveUpgradeEmitsUpdated() {
+        String ownerId = "reject-hist-" + UUID.randomUUID();
+        OrganizationResponse org = organizationService.registerOrganization(
+                ownerId,
+                new RegisterOrganizationRequest(
+                        "Tổ Chức Test Lịch Sử", OrganizationType.SERVICE, LegalEntityType.INDIVIDUAL,
+                        null, "0908887766", "Hà Nội", "12 Lý Thường Kiệt", "Thợ sửa chữa", "[\"cccd.pdf\"]"));
+
+        organizationService.rejectOrganization(org.id(), "Thiếu ảnh mặt sau CCCD", "admin-r1");
+        organizationService.resubmitOrganization(
+                org.id(), ownerId, null,
+                new ResubmitOrganizationRequest(
+                        "Tổ Chức Test Lịch Sử", LegalEntityType.INDIVIDUAL,
+                        null, "0908887766", "Hà Nội", "12 Lý Thường Kiệt", "Thợ sửa chữa", "[\"cccd-v2.pdf\"]"));
+        organizationService.rejectOrganization(org.id(), "Ảnh mờ không đọc được", "admin-r2");
+
+        List<OrganizationEnforcementEntity> history =
+                enforcementRepository.findByOrganizationIdOrderByIssuedAtDesc(org.id());
+        assertThat(history).hasSize(2);
+        assertThat(history).extracting(OrganizationEnforcementEntity::getActionType)
+                .containsOnly("REJECTED");
+        assertThat(history).extracting(OrganizationEnforcementEntity::getReason)
+                .containsExactlyInAnyOrder("Thiếu ảnh mặt sau CCCD", "Ảnh mờ không đọc được");
+
+        List<ProviderOutboxEventEntity> rejectedEvents = outboxRepository.findAll().stream()
+                .filter(e -> org.id().equals(e.getAggregateId())
+                        && OrganizationDomainService.EVT_REJECTED.equals(e.getEventType()))
+                .toList();
+        assertThat(rejectedEvents).hasSize(2);
+
+        // Resubmit, approve, request upgrade, approve upgrade -> emits ORG_UPDATED
+        organizationService.resubmitOrganization(
+                org.id(), ownerId, null,
+                new ResubmitOrganizationRequest(
+                        "Tổ Chức Test Lịch Sử", LegalEntityType.INDIVIDUAL,
+                        null, "0908887766", "Hà Nội", "12 Lý Thường Kiệt", "Thợ sửa chữa", "[\"cccd-v3.pdf\"]"));
+        organizationService.approveOrganization(org.id(), "admin-a1");
+        organizationService.requestLegalEntityUpgrade(
+                org.id(), ownerId, LegalEntityType.COMPANY, "0319998887", "[\"gpkd-new.pdf\"]", null);
+        OrganizationResponse upgraded = organizationService.approveLegalEntityUpgrade(org.id(), "admin-a2");
+        assertThat(upgraded.legalEntityType()).isEqualTo(LegalEntityType.COMPANY);
+        assertThat(upgraded.pendingLegalEntityUpgrade()).isNull();
+
+        boolean hasUpdatedEvent = outboxRepository.findAll().stream()
+                .anyMatch(e -> org.id().equals(e.getAggregateId())
+                        && OrganizationDomainService.EVT_UPDATED.equals(e.getEventType()));
+        assertThat(hasUpdatedEvent).isTrue();
     }
 }

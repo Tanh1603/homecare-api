@@ -315,6 +315,30 @@ public class ProviderDomainService {
     }
 
     @Transactional
+    public void deleteCategoryQualification(ServiceCategory category, ActorContext actor) {
+        if (actor == null || actor.mode() != AccessMode.ORGANIZATION || actor.organizationId() == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Organization context is required.");
+        }
+        if (!actor.hasOrgPermission(RbacConstants.PERM_SERVICE_MANAGE)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Missing service manage permission.");
+        }
+        ProviderEntity provider = providerRepository.findByOrganizationId(actor.organizationId())
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.PROVIDER_NOT_FOUND));
+        if (category.requiresQualification()) {
+            List<ServiceOffering> activeInCat = offeringRepository.findByProviderIdAndActiveTrue(provider.getId()).stream()
+                    .filter(o -> category.name().equalsIgnoreCase(o.getCategory()))
+                    .toList();
+            for (ServiceOffering o : activeInCat) {
+                o.setActive(false);
+                offeringRepository.save(o);
+                enqueueOfferingDeactivatedEvent(o, "QUALIFICATION_REMOVED");
+            }
+        }
+        categoryQualificationRepository.findByProviderIdAndCategory(provider.getId(), category)
+                .ifPresent(categoryQualificationRepository::delete);
+    }
+
+    @Transactional
     public CategoryQualificationEntity verifyCategoryQualification(
             UUID providerOrOrgId, ServiceCategory category, CategoryQualificationStatus decision, String reason, String adminUserId) {
         ProviderEntity provider = providerRepository.findById(providerOrOrgId)
@@ -371,6 +395,7 @@ public class ProviderDomainService {
                     .aggregateType("ServiceOffering")
                     .aggregateId(offering.getId())
                     .eventType(DomainEventContracts.OFFERING_DEACTIVATED)
+                    .routingKey(DomainEventContracts.OFFERING_DEACTIVATED)
                     .payloadJson(objectMapper.writeValueAsString(envelope))
                     .status(EntityStatus.PENDING.name())
                     .retryCount(0)

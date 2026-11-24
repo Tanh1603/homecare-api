@@ -115,4 +115,76 @@ class SupabaseUserStatusTest {
         controller.updateStatus(target, new com.homecare.provider.organization.controller.AdminUserController.StatusRequest("ACTIVE"), jwt, req);
         org.mockito.Mockito.verify(redis).delete("auth:blacklist:user:" + target);
     }
+
+    @Test
+    void filterSortAndPaginateUsersFindsMatchBeyondPageOneAndExcludesSelf() {
+        java.time.Instant base = java.time.Instant.parse("2026-01-01T00:00:00Z");
+        java.util.List<com.homecare.provider.organization.dto.OrganizationDtos.AdminUserResponse> all = new java.util.ArrayList<>();
+        all.add(new com.homecare.provider.organization.dto.OrganizationDtos.AdminUserResponse(
+                "admin-self", "Quản Trị Chính", "admin@homecare.vn", "ADMIN", "ACTIVE", base.plusSeconds(100)));
+        for (int i = 1; i <= 25; i++) {
+            all.add(new com.homecare.provider.organization.dto.OrganizationDtos.AdminUserResponse(
+                    "user-" + i,
+                    i == 24 ? "Nguyễn Thanh Sơn Target" : "Người Dùng " + i,
+                    i == 24 ? "son.target@homecare.vn" : "user" + i + "@homecare.vn",
+                    i == 24 ? "TECHNICIAN" : "CUSTOMER",
+                    i == 24 ? "SUSPENDED" : "ACTIVE",
+                    base.plusSeconds(i)));
+        }
+
+        // Page 1 size 10 without filter excludes self -> 25 total users, 3 pages
+        var unfiltered = SupabaseRoleClient.filterSortAndPaginateUsers(
+                all, 1, 10, null, null, null, "createdAt", "desc", "admin-self");
+        assertThat(unfiltered.items()).hasSize(10);
+        assertThat(unfiltered.pagination().totalItems()).isEqualTo(25);
+        assertThat(unfiltered.pagination().totalPages()).isEqualTo(3);
+        assertThat(unfiltered.items()).noneMatch(u -> "admin-self".equals(u.id()));
+
+        // Search + role + status finds record #24 (which would be outside page 1) on page 1
+        var filtered = SupabaseRoleClient.filterSortAndPaginateUsers(
+                all, 1, 10, "son.target", "TECHNICIAN", "SUSPENDED", "fullName", "asc", "admin-self");
+        assertThat(filtered.items()).hasSize(1);
+        assertThat(filtered.items().get(0).id()).isEqualTo("user-24");
+        assertThat(filtered.pagination().totalItems()).isEqualTo(1);
+        assertThat(filtered.pagination().totalPages()).isEqualTo(1);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void suspendUserPersistsOutboxEventWithNonNullRoutingKey() {
+        var roleClient = org.mockito.Mockito.mock(SupabaseRoleClient.class);
+        var redisProvider = org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+        var outboxRepo = org.mockito.Mockito.mock(com.homecare.provider.organization.repository.ProviderOutboxEventRepository.class);
+        var outboxProvider = org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+        org.mockito.Mockito.when(outboxProvider.getIfAvailable()).thenReturn(outboxRepo);
+
+        var controller = new com.homecare.provider.organization.controller.AdminUserController(
+                roleClient,
+                new com.homecare.common.web.servlet.ServletApiResponseFactory(),
+                redisProvider,
+                new com.homecare.provider.config.ProviderAuthProperties(),
+                null,
+                null,
+                outboxProvider,
+                null);
+        UUID target = UUID.randomUUID();
+        var jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("tok")
+                .header("alg", "none").subject("admin-1").build();
+        var req = new org.springframework.mock.web.MockHttpServletRequest();
+        req.setAttribute(com.homecare.common.web.CorrelationIdSupport.REQUEST_ATTRIBUTE, "test-trace-id");
+
+        var response = controller.updateStatus(
+                target,
+                new com.homecare.provider.organization.controller.AdminUserController.StatusRequest("SUSPENDED", "Vi phạm"),
+                jwt,
+                req);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().data().id()).isEqualTo(target);
+        assertThat(response.getBody().data().status()).isEqualTo("SUSPENDED");
+
+        var captor = org.mockito.ArgumentCaptor.forClass(com.homecare.provider.organization.entity.ProviderOutboxEventEntity.class);
+        org.mockito.Mockito.verify(outboxRepo).save(captor.capture());
+        assertThat(captor.getValue().getRoutingKey())
+                .isEqualTo(com.homecare.common.event.DomainEventContracts.USER_SUSPENDED);
+    }
 }

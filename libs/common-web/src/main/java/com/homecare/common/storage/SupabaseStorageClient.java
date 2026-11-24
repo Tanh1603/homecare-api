@@ -179,4 +179,20 @@ public class SupabaseStorageClient {
         }
         return null;
     }
+
+    public void deleteObject(String bucket, String objectKey) {
+        if (!isConfigured() || objectKey == null || objectKey.isBlank()) {
+            return;
+        }
+        try {
+            restClient.delete()
+                    .uri(URI.create(supabaseUrl + "/storage/v1/object/" + bucket + "/" + objectKey))
+                    .header("apikey", secretKey)
+                    .header("Authorization", "Bearer " + secretKey)
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (Exception ex) {
+            log.warn("Failed to delete Supabase storage object {}/{}: {}", bucket, objectKey, ex.getMessage());
+        }
+    }
 }

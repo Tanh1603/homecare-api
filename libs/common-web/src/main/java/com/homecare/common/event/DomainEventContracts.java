@@ -23,6 +23,7 @@ public final class DomainEventContracts {
 
     // Organization & Provider governance lifecycle events
     public static final String ORG_APPROVED = "organization.approved.v1";
+    public static final String ORG_REJECTED = "organization.rejected.v1";
     public static final String ORG_UPDATED = "organization.updated.v1";
     public static final String ORG_SUSPENDED = "organization.suspended.v1";
     public static final String ORG_BANNED = "organization.banned.v1";

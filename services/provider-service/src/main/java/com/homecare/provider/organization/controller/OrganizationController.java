@@ -1,6 +1,7 @@
 package com.homecare.provider.organization.controller;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.http.HttpStatus;
@@ -84,22 +85,37 @@ public class OrganizationController {
     }
 
     @GetMapping("/{id}/evidence/signed-url")
-    public ResponseEntity<ApiResponse<java.util.Map<String, String>>> getEvidenceSignedUrl(
+    public ResponseEntity<ApiResponse<Map<String, String>>> getEvidenceSignedUrl(
             @PathVariable UUID id,
             @RequestParam @NotBlank String objectKey,
             @AuthenticationPrincipal Jwt jwt,
             HttpServletRequest httpRequest) {
-        if (objectKey.contains("..") || !objectKey.startsWith("organizations/")) {
+        if (!OrganizationDomainService.isSafeEvidenceObjectKey(objectKey)) {
             return ResponseEntity.badRequest().build();
         }
         boolean isAdmin = SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
                 jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ORGANIZATION_REVIEW, RbacConstants.PERM_ADMIN_ALL);
-        organizationService.getOrganizationDetail(id, jwt.getSubject(), isAdmin);
+        organizationService.assertEvidenceObjectKeyAuthorized(id, jwt.getSubject(), isAdmin, objectKey);
         String signedUrl = evidenceStorageService.createSignedReadUrl(objectKey);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                java.util.Map.of("signedUrl", signedUrl != null ? signedUrl : ""),
+                Map.of("signedUrl", signedUrl != null ? signedUrl : ""),
                 httpRequest));
+    }
+
+    @DeleteMapping("/{id}/evidence")
+    public ResponseEntity<Void> deleteEvidenceObject(
+            @PathVariable UUID id,
+            @RequestParam @NotBlank String objectKey,
+            @AuthenticationPrincipal Jwt jwt) {
+        if (!OrganizationDomainService.isSafeEvidenceObjectKey(objectKey)) {
+            return ResponseEntity.badRequest().build();
+        }
+        boolean isAdmin = SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ORGANIZATION_REVIEW, RbacConstants.PERM_ADMIN_ALL);
+        organizationService.assertEvidenceObjectKeyAuthorized(id, jwt.getSubject(), isAdmin, objectKey);
+        evidenceStorageService.deleteObject(objectKey);
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping
@@ -114,8 +130,8 @@ public class OrganizationController {
 
     public record UpgradeLegalEntityRequest(
             @NotNull LegalEntityType targetLegalEntityType,
-            String taxCode,
-            String identityEvidenceRefs) {}
+            @NotBlank String taxCode,
+            @NotBlank String identityEvidenceRefs) {}
 
     @PostMapping("/{id}/upgrade-legal-entity")
     public ResponseEntity<ApiResponse<OrganizationResponse>> upgradeLegalEntity(
