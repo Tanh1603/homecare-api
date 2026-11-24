@@ -5,6 +5,7 @@ import com.homecare.booking.entity.BookingEntity;
 import static jakarta.persistence.LockModeType.PESSIMISTIC_WRITE;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -16,6 +17,15 @@ import org.springframework.data.repository.query.Param;
 
 public interface BookingRepository extends JpaRepository<BookingEntity, UUID>, JpaSpecificationExecutor<BookingEntity> {
     Optional<BookingEntity> findByOrderLineIdAndPurpose(UUID orderLineId, String purpose);
+
+    List<BookingEntity> findByProviderIdAndStatusIn(UUID providerId, List<String> statuses);
+
+    @Query("""
+        select b from BookingEntity b
+        where b.status in :statuses
+          and (b.requesterProfileId = :userId or b.assignedTechnicianProfileId = :userId)
+        """)
+    List<BookingEntity> findOpenBookingsForUser(@Param("userId") String userId, @Param("statuses") List<String> statuses);
     @Lock(PESSIMISTIC_WRITE)
     @Query("select b from BookingEntity b where b.id = :id")
     Optional<BookingEntity> lockById(UUID id);

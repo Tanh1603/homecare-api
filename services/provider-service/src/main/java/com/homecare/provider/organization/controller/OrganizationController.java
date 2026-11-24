@@ -1,6 +1,7 @@
 package com.homecare.provider.organization.controller;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.http.HttpStatus;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -27,20 +29,29 @@ import com.homecare.common.web.PageResponse;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import com.homecare.provider.organization.dto.OrganizationDtos.AddMemberRequest;
 import com.homecare.provider.organization.dto.OrganizationDtos.MyOrganizationMembershipResponse;
+import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationAppealResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationMemberResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationResponse;
+import com.homecare.provider.organization.dto.OrganizationDtos.PresignEvidenceUploadRequest;
+import com.homecare.provider.organization.dto.OrganizationDtos.PresignedEvidenceUploadResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.RegisterOrganizationRequest;
+import com.homecare.provider.organization.dto.OrganizationDtos.ResubmitOrganizationRequest;
 import com.homecare.provider.organization.dto.OrganizationDtos.UpdateMemberRoleRequest;
 import com.homecare.provider.organization.dto.OrganizationDtos.UpdateOrganizationRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.RequestHeader;
+import com.homecare.provider.organization.entity.LegalEntityType;
 import com.homecare.provider.organization.entity.OrgRole;
+import com.homecare.provider.organization.entity.OrganizationAppealEntity;
 import com.homecare.provider.organization.security.OrgContext;
 import com.homecare.provider.organization.security.RequireOrgRole;
 import com.homecare.provider.organization.service.OrganizationDomainService;
+import com.homecare.provider.organization.service.OrganizationEvidenceStorageService;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 
 @RestController
@@ -50,7 +61,62 @@ import lombok.RequiredArgsConstructor;
 public class OrganizationController {
 
     private final OrganizationDomainService organizationService;
+    private final OrganizationEvidenceStorageService evidenceStorageService;
     private final ServletApiResponseFactory responseFactory;
+
+    @PostMapping("/evidence/presign")
+    public ResponseEntity<ApiResponse<PresignedEvidenceUploadResponse>> presignEvidenceUpload(
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody PresignEvidenceUploadRequest request,
+            HttpServletRequest httpRequest) {
+        PresignedEvidenceUploadResponse presigned = evidenceStorageService.createPresignedUpload(
+                jwt.getSubject(), request.fileName(), request.contentType());
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.CREATED, presigned, httpRequest));
+    }
+
+    @PutMapping("/evidence/local/**")
+    public ResponseEntity<Void> uploadEvidenceLocalFallback(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestBody(required = false) byte[] payload) {
+        if (evidenceStorageService.isConfigured()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/{id}/evidence/signed-url")
+    public ResponseEntity<ApiResponse<Map<String, String>>> getEvidenceSignedUrl(
+            @PathVariable UUID id,
+            @RequestParam @NotBlank String objectKey,
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest httpRequest) {
+        if (!OrganizationDomainService.isSafeEvidenceObjectKey(objectKey)) {
+            return ResponseEntity.badRequest().build();
+        }
+        boolean isAdmin = SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ORGANIZATION_REVIEW, RbacConstants.PERM_ADMIN_ALL);
+        organizationService.assertEvidenceObjectKeyAuthorized(id, jwt.getSubject(), isAdmin, objectKey);
+        String signedUrl = evidenceStorageService.createSignedReadUrl(objectKey);
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.RETRIEVED,
+                Map.of("signedUrl", signedUrl != null ? signedUrl : ""),
+                httpRequest));
+    }
+
+    @DeleteMapping("/{id}/evidence")
+    public ResponseEntity<Void> deleteEvidenceObject(
+            @PathVariable UUID id,
+            @RequestParam @NotBlank String objectKey,
+            @AuthenticationPrincipal Jwt jwt) {
+        if (!OrganizationDomainService.isSafeEvidenceObjectKey(objectKey)) {
+            return ResponseEntity.badRequest().build();
+        }
+        boolean isAdmin = SupabaseJwtConverterSupport.hasAnyRoleOrPermission(
+                jwt, new String[]{RbacConstants.ROLE_ADMIN}, RbacConstants.PERM_ORGANIZATION_REVIEW, RbacConstants.PERM_ADMIN_ALL);
+        organizationService.assertEvidenceObjectKeyAuthorized(id, jwt.getSubject(), isAdmin, objectKey);
+        evidenceStorageService.deleteObject(objectKey);
+        return ResponseEntity.noContent().build();
+    }
 
     @PostMapping
     public ResponseEntity<ApiResponse<OrganizationResponse>> registerOrganization(
@@ -60,6 +126,57 @@ public class OrganizationController {
         OrganizationResponse created = organizationService.registerOrganization(jwt.getSubject(), request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
+    }
+
+    public record UpgradeLegalEntityRequest(
+            @NotNull LegalEntityType targetLegalEntityType,
+            @NotBlank String taxCode,
+            @NotBlank String identityEvidenceRefs) {}
+
+    @PostMapping("/{id}/upgrade-legal-entity")
+    public ResponseEntity<ApiResponse<OrganizationResponse>> upgradeLegalEntity(
+            @PathVariable UUID id,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody UpgradeLegalEntityRequest request,
+            HttpServletRequest httpRequest) {
+        OrganizationResponse updated = organizationService.requestLegalEntityUpgrade(
+                id, jwt.getSubject(), request.targetLegalEntityType(),
+                request.taxCode(), request.identityEvidenceRefs(), ifMatch);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    public record SubmitAppealRequest(
+            @NotNull UUID enforcementId,
+            @NotBlank String appealReason,
+            String evidenceRefs) {}
+
+    @PostMapping("/{id}/appeals")
+    public ResponseEntity<ApiResponse<OrganizationAppealResponse>> submitAppeal(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody SubmitAppealRequest request,
+            HttpServletRequest httpRequest) {
+        OrganizationAppealEntity created = organizationService.submitAppeal(
+                id, jwt.getSubject(), request.enforcementId(), request.appealReason(), request.evidenceRefs());
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(responseFactory.created(ApiMessages.CREATED, OrganizationAppealResponse.from(created), httpRequest));
+    }
+
+    @PutMapping("/{id}/resubmit")
+    public ResponseEntity<ApiResponse<OrganizationResponse>> resubmitOrganization(
+            @PathVariable UUID id,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @AuthenticationPrincipal Jwt jwt,
+            @Valid @RequestBody ResubmitOrganizationRequest request,
+            HttpServletRequest httpRequest) {
+        OrganizationResponse updated = organizationService.resubmitOrganization(
+                id, jwt.getSubject(), ifMatch, request);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
     }
 
     @GetMapping("/my")

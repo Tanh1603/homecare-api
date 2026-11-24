@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import com.homecare.commerce.client.HouseholdAddressClient;
 import com.homecare.commerce.client.ProviderOrgClient;
 import com.homecare.commerce.client.ProviderOfferingClient;
+import com.homecare.common.security.RbacConstants;
 import com.homecare.commerce.dto.CommerceDtos.ShippingAddressSnapshotResponse;
 import com.homecare.commerce.dto.CommerceDtos.ConfirmManualRefundRequest;
 import com.homecare.commerce.dto.CommerceDtos.CreateOrderRequest;
@@ -1089,7 +1090,14 @@ public class CommerceDomainService {
         if (actor.mode() != AccessMode.ORGANIZATION) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
+        if (!actor.hasOrgPermission(RbacConstants.PERM_ORDER_READ)
+                && !actor.hasOrgPermission(RbacConstants.PERM_ORDER_RETURN_RESOLVE)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
         MerchantEntity merchant = merchantRepository.findByOrganizationId(actor.organizationId()).orElse(null);
+        if (merchant == null) {
+            return PageResponse.of(List.of(), page, size, 0L);
+        }
         accessPolicy.assertCanReadMerchantReturns(actor, merchant);
         Pageable pageable = PageRequest.of(page - 1, size, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by("id")));
         String normalizedStatus = status != null && !status.isBlank() ? status.trim().toUpperCase() : null;

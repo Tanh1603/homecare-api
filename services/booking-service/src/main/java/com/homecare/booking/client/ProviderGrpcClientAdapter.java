@@ -10,6 +10,8 @@ import com.homecare.provider.v1.AllocateTechnicianRequest;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.GetBookingAllocationRequest;
 import com.homecare.provider.v1.GetBookingAllocationResponse;
+import com.homecare.provider.v1.IsUserMemberOfProviderRequest;
+import com.homecare.provider.v1.IsUserMemberOfProviderResponse;
 import com.homecare.provider.v1.ProviderAllocationServiceGrpc;
 import com.homecare.provider.v1.ReassignTechnicianRequest;
 import com.homecare.provider.v1.ReleaseBookingRequest;
@@ -192,6 +194,19 @@ public class ProviderGrpcClientAdapter implements OrganizationMembershipVerifier
                 .getBookingAllocation(GetBookingAllocationRequest.newBuilder()
                         .setBookingId(bookingId.toString())
                         .build());
+    }
+
+    public boolean isUserMemberOfProvider(UUID providerId, String userId) {
+        if (providerId == null || userId == null || userId.isBlank()) {
+            return false;
+        }
+        IsUserMemberOfProviderResponse resp = withInternalMetadata(providerStub)
+                .withDeadlineAfter(3, TimeUnit.SECONDS)
+                .isUserMemberOfProvider(IsUserMemberOfProviderRequest.newBuilder()
+                        .setProviderId(providerId.toString())
+                        .setUserId(userId)
+                        .build());
+        return resp.getMember();
     }
 
     private ProviderAllocationServiceGrpc.ProviderAllocationServiceBlockingStub withInternalMetadata(

@@ -49,6 +49,12 @@ configure(subprojects.findAll { it.path.startsWith(':services:') }) {
 
 	tasks.withType(Test).configureEach {
 		useJUnitPlatform()
+		doFirst {
+			def agent = classpath.find { it.name.startsWith('byte-buddy-agent') }
+			if (agent != null) {
+				jvmArgs "-javaagent:${agent.absolutePath}", "-XX:+EnableDynamicAgentLoading"
+			}
+		}
 	}
 
 	tasks.register('integrationTest', Test) {

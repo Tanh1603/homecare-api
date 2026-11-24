@@ -140,6 +140,13 @@ public class BookingEntity {
     @Column(name = "quoted_price", nullable = false)
     private long quotedPrice;
 
+    @Column(name = "admin_review_flagged", nullable = false)
+    @Builder.Default
+    private boolean adminReviewFlagged = false;
+
+    @Column(name = "admin_review_reason", length = 1000)
+    private String adminReviewReason;
+
     @Version
     private Long version;
 

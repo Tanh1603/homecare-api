@@ -1,5 +1,6 @@
 package com.homecare.provider.dto;
 
+import com.homecare.provider.entity.InspectionFeePolicy;
 import com.homecare.provider.entity.ServicePriceType;
 import jakarta.validation.constraints.NotNull;
 
@@ -22,7 +23,22 @@ public final class ProviderDtos {
             @Positive Integer estimatedDurationMinutes,
             Boolean active,
             ServicePriceType priceType,
-            @PositiveOrZero Long inspectionFee) {
+            @PositiveOrZero Long inspectionFee,
+            InspectionFeePolicy inspectionFeePolicy,
+            @PositiveOrZero Integer workmanshipDurationDays) {
+        public OfferingInput(UUID providerId,
+                String name,
+                String category,
+                String description,
+                Long basePrice,
+                Integer estimatedDurationMinutes,
+                Boolean active,
+                ServicePriceType priceType,
+                Long inspectionFee) {
+            this(providerId, name, category, description, basePrice, estimatedDurationMinutes, active,
+                    priceType, inspectionFee, null, null);
+        }
+
         public OfferingInput(UUID providerId,
                 String name,
                 String category,
@@ -30,7 +46,8 @@ public final class ProviderDtos {
                 Long basePrice,
                 Integer estimatedDurationMinutes,
                 Boolean active) {
-            this(providerId, name, category, description, basePrice, estimatedDurationMinutes, active, null, null);
+            this(providerId, name, category, description, basePrice, estimatedDurationMinutes, active,
+                    null, null, null, null);
         }
     }
 
@@ -75,6 +92,10 @@ public final class ProviderDtos {
             boolean active,
             ServicePriceType priceType,
             Long inspectionFee,
+            InspectionFeePolicy inspectionFeePolicy,
+            boolean inspectionFeeAuditFlag,
+            String inspectionFeeWarning,
+            int workmanshipDurationDays,
             int priceVersion,
             List<CoverageAreaItem> coverageAreas) {
         public ServiceOfferingResponse(
@@ -86,9 +107,27 @@ public final class ProviderDtos {
                 String description,
                 long basePrice,
                 int estimatedDurationMinutes,
+                boolean active,
+                ServicePriceType priceType,
+                Long inspectionFee,
+                int priceVersion,
+                List<CoverageAreaItem> coverageAreas) {
+            this(id, providerId, providerName, name, category, description, basePrice, estimatedDurationMinutes, active,
+                    priceType, inspectionFee, InspectionFeePolicy.NO_FEE, false, null, 7, priceVersion, coverageAreas);
+        }
+
+        public ServiceOfferingResponse(
+                UUID id,
+                UUID providerId,
+                String providerName,
+                String name,
+                String category,
+                String description,
+                long basePrice,
+                int estimatedDurationMinutes,
                 boolean active) {
             this(id, providerId, providerName, name, category, description, basePrice, estimatedDurationMinutes, active,
-                    ServicePriceType.FIXED, null, 1, List.of());
+                    ServicePriceType.FIXED, null, InspectionFeePolicy.NO_FEE, false, null, 7, 1, List.of());
         }
     }
 

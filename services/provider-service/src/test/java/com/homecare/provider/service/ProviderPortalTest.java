@@ -76,7 +76,7 @@ class ProviderPortalTest {
     @Test
     void rejectsForeignOrganizationAndInvalidOffering() throws Exception {
         String body = """
-                {"providerId":"%s","name":"Portal offering","category":"AC","basePrice":100,"estimatedDurationMinutes":30}
+                {"providerId":"%s","name":"Portal offering","category":"AC_CLEANING_MAINTENANCE","basePrice":100,"estimatedDurationMinutes":30}
                 """
                 .formatted(ProviderDataInitializer.PROVIDER_1_ID);
         mvc.perform(post("/api/v1/services").with(jwt().jwt(j -> j.subject("outsider")))
@@ -105,7 +105,7 @@ class ProviderPortalTest {
         var auth = jwt().jwt(j -> j.subject("admin").claim("user_roles", List.of("ADMIN")));
         var mapper = new ObjectMapper();
         String offering = """
-                {"providerId":"%s","name":"MVP offering","category":"AC","basePrice":100,"estimatedDurationMinutes":30}
+                {"providerId":"%s","name":"MVP offering","category":"AC_CLEANING_MAINTENANCE","basePrice":100,"estimatedDurationMinutes":30}
                 """.formatted(ProviderDataInitializer.PROVIDER_1_ID);
         var created = mvc
                 .perform(post("/api/v1/services").with(auth).contentType(MediaType.APPLICATION_JSON).content(offering))

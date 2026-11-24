@@ -6,6 +6,7 @@ import com.homecare.common.error.DomainException;
 import com.homecare.common.event.DomainEventContracts;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
+import com.homecare.provider.entity.CategoryQualificationEntity;
 import com.homecare.provider.entity.ProviderEntity;
 import com.homecare.provider.exception.ProviderErrorCode;
 import com.homecare.provider.organization.dto.OrganizationDtos.AddMemberRequest;
@@ -13,25 +14,38 @@ import com.homecare.provider.organization.dto.OrganizationDtos.MyOrganizationMem
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationMemberResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.OrganizationResponse;
 import com.homecare.provider.organization.dto.OrganizationDtos.RegisterOrganizationRequest;
+import com.homecare.provider.organization.dto.OrganizationDtos.ResubmitOrganizationRequest;
 import com.homecare.provider.organization.dto.OrganizationDtos.UpdateOrganizationRequest;
+import com.homecare.provider.organization.entity.LegalEntityType;
+import com.homecare.provider.organization.entity.OrganizationAppealEntity;
+import com.homecare.provider.organization.entity.OrganizationEnforcementEntity;
 import com.homecare.provider.organization.entity.OrganizationEntity;
 import com.homecare.provider.organization.entity.OrganizationMemberEntity;
 import com.homecare.provider.organization.entity.OrganizationStatus;
 import com.homecare.provider.organization.entity.OrganizationType;
 import com.homecare.provider.organization.entity.OrgRole;
 import com.homecare.provider.organization.entity.ProviderOutboxEventEntity;
+import com.homecare.provider.organization.repository.OrganizationAppealRepository;
+import com.homecare.provider.organization.repository.OrganizationEnforcementRepository;
 import com.homecare.provider.organization.repository.OrganizationMemberRepository;
 import com.homecare.provider.organization.repository.OrganizationRepository;
 import com.homecare.provider.organization.repository.ProviderOutboxEventRepository;
 import com.homecare.provider.organization.security.OrgContext;
+import com.homecare.provider.repository.CategoryQualificationRepository;
 import com.homecare.provider.repository.ProviderRepository;
+import com.homecare.provider.service.PlatformGovernanceService;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
@@ -42,19 +56,55 @@ public class OrganizationDomainService {
 
     public static final String EXCHANGE = DomainEventContracts.EXCHANGE;
     public static final String EVT_APPROVED = DomainEventContracts.ORG_APPROVED;
+    public static final String EVT_REJECTED = DomainEventContracts.ORG_REJECTED;
     public static final String EVT_UPDATED = DomainEventContracts.ORG_UPDATED;
     public static final String EVT_SUSPENDED = DomainEventContracts.ORG_SUSPENDED;
+    public static final String EVT_BANNED = DomainEventContracts.ORG_BANNED;
     public static final String EVT_MEMBER_CHANGED = DomainEventContracts.ORG_MEMBER_CHANGED;
 
     private final OrganizationRepository organizationRepository;
     private final OrganizationMemberRepository memberRepository;
+    private final OrganizationEnforcementRepository enforcementRepository;
+    private final OrganizationAppealRepository appealRepository;
     private final ProviderOutboxEventRepository outboxRepository;
     private final ProviderRepository providerRepository;
+    private final CategoryQualificationRepository categoryQualificationRepository;
     private final SupabaseRoleClient supabaseRoleClient;
+    private final PlatformGovernanceService governanceService;
     private final ObjectMapper objectMapper;
+
+    private static final Pattern VN_PHONE_PATTERN =
+            Pattern.compile("^(0|\\+84)(2\\d{8,9}|[35789]\\d{8})$");
+    private static final Pattern COMPANY_TAX_CODE_PATTERN =
+            Pattern.compile("^\\d{10}$");
+    private static final Pattern HOUSEHOLD_PERSONAL_ID_PATTERN =
+            Pattern.compile("^\\d{12}$");
+    private static final Pattern INDIVIDUAL_TAX_OR_ID_PATTERN =
+            Pattern.compile("^(\\d{10}|\\d{12})$");
+    private static final Pattern SAFE_EVIDENCE_OBJECT_KEY_PATTERN =
+            Pattern.compile("^organizations/[a-zA-Z0-9_-]+/[a-zA-Z0-9._-]+$");
+
+    public static boolean isSafeEvidenceObjectKey(String objectKey) {
+        return objectKey != null
+                && !objectKey.contains("..")
+                && SAFE_EVIDENCE_OBJECT_KEY_PATTERN.matcher(objectKey).matches();
+    }
 
     @Transactional
     public OrganizationResponse registerOrganization(String userId, RegisterOrganizationRequest req) {
+        if (req.type() != OrganizationType.SERVICE) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Only SERVICE organizations are accepted in v0.1.");
+        }
+        if (organizationRepository.existsByOwnerUserIdAndStatus(userId, OrganizationStatus.BANNED)) {
+            throw new DomainException(CommonErrorCode.OPERATION_FORBIDDEN,
+                    "Permanently banned organization owners cannot register a new organization.");
+        }
+        ValidatedSubmissionFields validated = validateSubmissionFields(
+                req.legalEntityType(),
+                req.taxCode(),
+                req.phone(),
+                req.identityEvidenceRefs());
         Instant now = Instant.now();
         UUID orgId = UUID.randomUUID();
 
@@ -64,8 +114,11 @@ public class OrganizationDomainService {
                 .type(req.type())
                 .legalEntityType(req.legalEntityType())
                 .status(OrganizationStatus.PENDING)
-                .taxCode(req.taxCode() != null ? req.taxCode().trim() : null)
-                .phone(req.phone().trim())
+                .resubmitCount(0)
+                .identityVerified(false)
+                .identityEvidenceRefs(validated.identityEvidenceRefs())
+                .taxCode(validated.taxCode())
+                .phone(validated.phone())
                 .city(req.city().trim())
                 .address(req.address() != null ? req.address().trim() : null)
                 .description(req.description() != null ? req.description().trim() : null)
@@ -87,6 +140,112 @@ public class OrganizationDomainService {
         return toOrgResponse(org);
     }
 
+    @Transactional
+    public OrganizationResponse resubmitOrganization(
+            UUID orgId, String userId, String ifMatch, ResubmitOrganizationRequest req) {
+        OrganizationEntity org = organizationRepository.findById(orgId)
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
+        if (!org.getOwnerUserId().equals(userId)) {
+            throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN,
+                    "Only the organization owner can resubmit a rejected organization.");
+        }
+        if (org.getStatus() != OrganizationStatus.REJECTED) {
+            throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE,
+                    "Only REJECTED organizations can be resubmitted.");
+        }
+        if (ifMatch != null && !ifMatch.isBlank()) {
+            EtagSupport.verifyIfMatch(ifMatch, org.getVersion());
+        }
+        int maxResubmit = governanceService.getOrganizationMaxResubmitCount();
+        if (org.getResubmitCount() >= maxResubmit) {
+            throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE,
+                    "Maximum resubmission limit (" + maxResubmit + ") reached.");
+        }
+        ValidatedSubmissionFields validated = validateSubmissionFields(
+                req.legalEntityType(),
+                req.taxCode(),
+                req.phone(),
+                req.identityEvidenceRefs());
+        org.setName(req.name().trim());
+        org.setLegalEntityType(req.legalEntityType());
+        org.setTaxCode(validated.taxCode());
+        org.setPhone(validated.phone());
+        org.setCity(req.city().trim());
+        org.setAddress(req.address() != null ? req.address().trim() : null);
+        org.setDescription(req.description() != null ? req.description().trim() : null);
+        org.setIdentityEvidenceRefs(validated.identityEvidenceRefs());
+        org.setStatus(OrganizationStatus.PENDING);
+        org.setResubmitCount(org.getResubmitCount() + 1);
+        org.setUpdatedAt(Instant.now());
+        return toOrgResponse(organizationRepository.save(org));
+    }
+
+    private ValidatedSubmissionFields validateSubmissionFields(
+            LegalEntityType legalEntityType,
+            String rawTaxCode,
+            String rawPhone,
+            String rawIdentityEvidenceRefs) {
+        if (legalEntityType == null) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Legal entity type is required.");
+        }
+        if (rawIdentityEvidenceRefs == null || rawIdentityEvidenceRefs.isBlank()) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Identity evidence documents are required.");
+        }
+        String normalizedPhone = normalizeAndValidatePhone(rawPhone);
+        String normalizedTaxCode = validateTaxCodeForLegalEntity(legalEntityType, rawTaxCode);
+        return new ValidatedSubmissionFields(
+                normalizedTaxCode,
+                normalizedPhone,
+                rawIdentityEvidenceRefs.trim());
+    }
+
+    private static String normalizeAndValidatePhone(String rawPhone) {
+        String normalizedPhone = rawPhone == null ? "" : rawPhone.replaceAll("[\\s.-]+", "");
+        if (!VN_PHONE_PATTERN.matcher(normalizedPhone).matches()) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Phone number must be a valid Vietnamese phone number.");
+        }
+        return normalizedPhone;
+    }
+
+    private static String validateTaxCodeForLegalEntity(LegalEntityType legalEntityType, String rawTaxCode) {
+        String trimmedTaxCode = rawTaxCode == null ? "" : rawTaxCode.trim();
+        return switch (legalEntityType) {
+            case COMPANY -> {
+                if (!COMPANY_TAX_CODE_PATTERN.matcher(trimmedTaxCode).matches()) {
+                    throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                            "COMPANY requires a 10-digit enterprise tax code.");
+                }
+                yield trimmedTaxCode;
+            }
+            case HOUSEHOLD_BUSINESS -> {
+                if (!HOUSEHOLD_PERSONAL_ID_PATTERN.matcher(trimmedTaxCode).matches()) {
+                    throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                            "HOUSEHOLD_BUSINESS requires a 12-digit personal identification number.");
+                }
+                yield trimmedTaxCode;
+            }
+            case INDIVIDUAL -> {
+                if (trimmedTaxCode.isEmpty()) {
+                    yield null;
+                }
+                if (INDIVIDUAL_TAX_OR_ID_PATTERN.matcher(trimmedTaxCode).matches()) {
+                    yield trimmedTaxCode;
+                }
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                        "INDIVIDUAL taxCode/personal identification must be 10 or 12 digits when provided.");
+            }
+        };
+    }
+
+    private record ValidatedSubmissionFields(
+            String taxCode,
+            String phone,
+            String identityEvidenceRefs) {
+    }
+
     @Transactional(readOnly = true)
     public PageResponse<MyOrganizationMembershipResponse> listMyOrganizationsPage(String userId, int page, int size) {
         return slicePage(listMyOrganizations(userId), page, size);
@@ -94,7 +253,44 @@ public class OrganizationDomainService {
 
     @Transactional(readOnly = true)
     public PageResponse<OrganizationResponse> listAllForAdminPage(OrganizationStatus statusFilter, int page, int size) {
-        return slicePage(listAllForAdmin(statusFilter), page, size);
+        return listAllForAdminPage(statusFilter, null, null, null, null, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<OrganizationResponse> listAllForAdminPage(
+            OrganizationStatus statusFilter,
+            LegalEntityType legalEntityType,
+            String search,
+            String sortBy,
+            String sortDir,
+            int page,
+            int size) {
+        PageResponse.validate(page, size);
+        String searchPattern = (search == null || search.isBlank())
+                ? null
+                : "%" + search.trim().toLowerCase(Locale.ROOT) + "%";
+        String sortField = resolveOrganizationSortField(sortBy);
+        Sort.Direction direction = "asc".equalsIgnoreCase(sortDir) ? Sort.Direction.ASC : Sort.Direction.DESC;
+        Page<OrganizationEntity> result = organizationRepository.searchForAdmin(
+                statusFilter,
+                legalEntityType,
+                searchPattern,
+                PageRequest.of(page - 1, size, Sort.by(direction, sortField)));
+        List<OrganizationResponse> items = result.getContent().stream().map(this::toOrgResponse).toList();
+        return PageResponse.of(items, page, size, result.getTotalElements());
+    }
+
+    private static String resolveOrganizationSortField(String sortBy) {
+        if (sortBy == null || sortBy.isBlank()) {
+            return "createdAt";
+        }
+        return switch (sortBy.trim()) {
+            case "name" -> "name";
+            case "status" -> "status";
+            case "city" -> "city";
+            case "createdAt" -> "createdAt";
+            default -> "createdAt";
+        };
     }
 
     @Transactional(readOnly = true)
@@ -140,6 +336,38 @@ public class OrganizationDomainService {
 
     @Transactional(readOnly = true)
     public OrganizationResponse getOrganizationDetail(UUID orgId, String userId, boolean isAdmin) {
+        return toOrgResponse(loadAuthorizedOrganization(orgId, userId, isAdmin));
+    }
+
+    @Transactional(readOnly = true)
+    public void assertEvidenceObjectKeyAuthorized(UUID orgId, String userId, boolean isAdmin, String objectKey) {
+        if (!isSafeEvidenceObjectKey(objectKey)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Invalid evidence object key.");
+        }
+        OrganizationEntity org = loadAuthorizedOrganization(orgId, userId, isAdmin);
+        if (containsEvidenceKey(org.getIdentityEvidenceRefs(), objectKey)) {
+            return;
+        }
+        boolean matchedQualification = providerRepository.findByOrganizationId(orgId)
+                .map(provider -> categoryQualificationRepository.findByProviderId(provider.getId()).stream()
+                        .anyMatch(q -> containsEvidenceKey(q.getEvidenceRefs(), objectKey)))
+                .orElse(false);
+        if (matchedQualification) {
+            return;
+        }
+        String safeCallerPrefix = "organizations/" + sanitizeUserPrefix(userId) + "/";
+        if (!isAdmin && objectKey.startsWith(safeCallerPrefix)) {
+            return;
+        }
+        String safeOwnerPrefix = "organizations/" + sanitizeUserPrefix(org.getOwnerUserId()) + "/";
+        if (isAdmin && objectKey.startsWith(safeOwnerPrefix)) {
+            return;
+        }
+        throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN,
+                "Evidence object does not belong to this organization.");
+    }
+
+    private OrganizationEntity loadAuthorizedOrganization(UUID orgId, String userId, boolean isAdmin) {
         OrganizationEntity org = organizationRepository.findById(orgId)
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
         if (!isAdmin) {
@@ -149,7 +377,20 @@ public class OrganizationDomainService {
                 throw new DomainException(ProviderErrorCode.ORG_MEMBERSHIP_REQUIRED);
             }
         }
-        return toOrgResponse(org);
+        return org;
+    }
+
+    private static boolean containsEvidenceKey(String refs, String objectKey) {
+        if (refs == null || refs.isBlank() || objectKey == null || objectKey.isBlank()) {
+            return false;
+        }
+        return refs.trim().equals(objectKey) || refs.contains("\"" + objectKey + "\"");
+    }
+
+    private static String sanitizeUserPrefix(String userId) {
+        return (userId == null || userId.isBlank())
+                ? "anonymous"
+                : userId.replaceAll("[^a-zA-Z0-9_-]", "_");
     }
 
     @Transactional(readOnly = true)
@@ -171,12 +412,17 @@ public class OrganizationDomainService {
             });
             return toOrgResponse(org);
         }
-        if (org.getStatus() == OrganizationStatus.REJECTED) {
+        if (org.getStatus() == OrganizationStatus.REJECTED
+                || org.getStatus() == OrganizationStatus.BANNED
+                || org.getStatus() == OrganizationStatus.SUSPENDED) {
             throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE);
         }
 
         Instant now = Instant.now();
         org.setStatus(OrganizationStatus.APPROVED);
+        org.setIdentityVerified(true);
+        org.setIdentityVerifiedBy(adminUserId);
+        org.setIdentityVerifiedAt(now);
         org.setRejectReason(null);
         org.setUpdatedAt(now);
         OrganizationEntity saved = organizationRepository.save(org);
@@ -228,24 +474,67 @@ public class OrganizationDomainService {
 
     @Transactional
     public OrganizationResponse rejectOrganization(UUID orgId, String reason) {
+        return rejectOrganization(orgId, reason, "ADMIN");
+    }
+
+    @Transactional
+    public OrganizationResponse rejectOrganization(UUID orgId, String reason, String adminUserId) {
+        if (reason == null || reason.isBlank()) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Rejection reason is required.");
+        }
         OrganizationEntity org = organizationRepository.findById(orgId)
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
         if (org.getStatus() != OrganizationStatus.PENDING) {
             throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE,
                     "Only PENDING organizations can be rejected.");
         }
+        Instant now = Instant.now();
+        String trimmedReason = reason.trim();
         org.setStatus(OrganizationStatus.REJECTED);
-        org.setRejectReason(reason != null ? reason.trim() : null);
-        org.setUpdatedAt(Instant.now());
-        return toOrgResponse(organizationRepository.save(org));
+        org.setRejectReason(trimmedReason);
+        org.setUpdatedAt(now);
+        OrganizationEntity saved = organizationRepository.save(org);
+
+        String effectiveAdmin = (adminUserId != null && !adminUserId.isBlank()) ? adminUserId : "ADMIN";
+        enforcementRepository.save(OrganizationEnforcementEntity.builder()
+                .id(UUID.randomUUID())
+                .organizationId(orgId)
+                .actionType("REJECTED")
+                .reason(trimmedReason)
+                .issuedByAdmin(effectiveAdmin)
+                .issuedAt(now)
+                .build());
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("organizationId", saved.getId().toString());
+        data.put("name", saved.getName());
+        data.put("ownerUserId", saved.getOwnerUserId());
+        data.put("reason", trimmedReason);
+        data.put("rejectedBy", effectiveAdmin);
+        enqueueOutbox(saved.getId(), EVT_REJECTED, data, now);
+
+        return toOrgResponse(saved);
     }
 
     @Transactional
     public OrganizationResponse suspendOrganization(UUID orgId) {
+        return suspendOrganization(orgId, "Admin administrative suspension", null, false, "SYSTEM");
+    }
+
+    @Transactional
+    public OrganizationResponse suspendOrganization(
+            UUID orgId, String reason, String evidenceRefs, boolean safetyInterventionFlag, String adminUserId) {
+        if (reason == null || reason.isBlank()) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Suspension reason is required.");
+        }
         OrganizationEntity org = organizationRepository.findById(orgId)
                 .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
         if (org.getStatus() == OrganizationStatus.SUSPENDED) {
             return toOrgResponse(org);
+        }
+        if (org.getStatus() != OrganizationStatus.APPROVED) {
+            throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE,
+                    "Only APPROVED organizations can be suspended.");
         }
 
         Instant now = Instant.now();
@@ -258,6 +547,17 @@ public class OrganizationDomainService {
             providerRepository.save(provider);
         });
 
+        enforcementRepository.save(OrganizationEnforcementEntity.builder()
+                .id(UUID.randomUUID())
+                .organizationId(orgId)
+                .actionType("SUSPENDED")
+                .reason(reason.trim())
+                .evidenceRefs(evidenceRefs)
+                .safetyInterventionFlag(safetyInterventionFlag)
+                .issuedByAdmin(adminUserId)
+                .issuedAt(now)
+                .build());
+
         List<String> activeMemberIds = memberRepository.findByOrganizationIdOrderByJoinedAtAsc(orgId)
                 .stream()
                 .filter(m -> EntityStatus.ACTIVE.name().equalsIgnoreCase(m.getStatus()))
@@ -266,10 +566,155 @@ public class OrganizationDomainService {
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("organizationId", saved.getId().toString());
+        data.put("providerId", saved.getId().toString());
+        data.put("reason", reason.trim());
+        data.put("safetyInterventionFlag", safetyInterventionFlag);
         data.put("affectedUserIds", activeMemberIds);
 
         enqueueOutbox(saved.getId(), EVT_SUSPENDED, data, now);
         return toOrgResponse(saved);
+    }
+
+    @Transactional
+    public OrganizationResponse banOrganization(
+            UUID orgId, String reason, String evidenceRefs, boolean safetyInterventionFlag, String adminUserId) {
+        if (reason == null || reason.isBlank()) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Ban reason is required.");
+        }
+        OrganizationEntity org = organizationRepository.findById(orgId)
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
+        if (org.getStatus() == OrganizationStatus.BANNED) {
+            return toOrgResponse(org);
+        }
+        if (org.getStatus() != OrganizationStatus.APPROVED && org.getStatus() != OrganizationStatus.SUSPENDED) {
+            throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE,
+                    "Only APPROVED or SUSPENDED organizations can be permanently banned.");
+        }
+
+        Instant now = Instant.now();
+        org.setStatus(OrganizationStatus.BANNED);
+        org.setUpdatedAt(now);
+        OrganizationEntity saved = organizationRepository.save(org);
+
+        providerRepository.findByOrganizationId(orgId).ifPresent(provider -> {
+            provider.setStatus(EntityStatus.INACTIVE.name());
+            providerRepository.save(provider);
+        });
+
+        enforcementRepository.save(OrganizationEnforcementEntity.builder()
+                .id(UUID.randomUUID())
+                .organizationId(orgId)
+                .actionType("BANNED")
+                .reason(reason.trim())
+                .evidenceRefs(evidenceRefs)
+                .safetyInterventionFlag(safetyInterventionFlag)
+                .issuedByAdmin(adminUserId)
+                .issuedAt(now)
+                .build());
+
+        List<String> activeMemberIds = memberRepository.findByOrganizationIdOrderByJoinedAtAsc(orgId)
+                .stream()
+                .filter(m -> EntityStatus.ACTIVE.name().equalsIgnoreCase(m.getStatus()))
+                .map(OrganizationMemberEntity::getUserId)
+                .toList();
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("organizationId", saved.getId().toString());
+        data.put("providerId", saved.getId().toString());
+        data.put("reason", reason.trim());
+        data.put("safetyInterventionFlag", safetyInterventionFlag);
+        data.put("affectedUserIds", activeMemberIds);
+
+        enqueueOutbox(saved.getId(), EVT_BANNED, data, now);
+        return toOrgResponse(saved);
+    }
+
+    @Transactional
+    public OrganizationAppealEntity submitAppeal(
+            UUID orgId, String userId, UUID enforcementId, String appealReason, String evidenceRefs) {
+        OrganizationEntity org = organizationRepository.findById(orgId)
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
+        if (!org.getOwnerUserId().equals(userId)) {
+            throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN,
+                    "Only ORG_OWNER can submit an enforcement appeal.");
+        }
+        if (appealReason == null || appealReason.isBlank()) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Appeal reason is required.");
+        }
+        OrganizationEnforcementEntity enforcement = enforcementRepository.findById(enforcementId)
+                .orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_NOT_FOUND, "Enforcement record not found."));
+        if (!enforcement.getOrganizationId().equals(orgId)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Enforcement does not belong to this organization.");
+        }
+        Instant now = Instant.now();
+        if (now.isAfter(enforcement.getIssuedAt().plusSeconds(14L * 86_400L))) {
+            throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE,
+                    "Appeal window (14 calendar days) has expired.");
+        }
+        long existingCount = appealRepository.countByEnforcementId(enforcementId);
+        boolean hasNewEvidence = evidenceRefs != null && !evidenceRefs.isBlank();
+        if (existingCount >= 1 && !hasNewEvidence) {
+            throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE,
+                    "Maximum 1 appeal per enforcement decision unless new evidence is attached.");
+        }
+        Instant slaDueAt = now.plusSeconds(7L * 86_400L); // 5 business days conservative calendar bound
+        return appealRepository.save(OrganizationAppealEntity.builder()
+                .id(UUID.randomUUID())
+                .organizationId(orgId)
+                .enforcementId(enforcementId)
+                .attemptNumber((int) existingCount + 1)
+                .appealReason(appealReason.trim())
+                .evidenceRefs(evidenceRefs)
+                .submittedBy(userId)
+                .submittedAt(now)
+                .slaDueAt(slaDueAt)
+                .status("SUBMITTED")
+                .build());
+    }
+
+    @Transactional
+    public OrganizationAppealEntity resolveAppeal(
+            UUID orgId, UUID appealId, boolean approved, String reviewNote, OrganizationStatus targetStatus, String adminUserId) {
+        OrganizationAppealEntity appeal = appealRepository.findById(appealId)
+                .orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_NOT_FOUND, "Appeal not found."));
+        if (!appeal.getOrganizationId().equals(orgId)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Appeal does not belong to this organization.");
+        }
+        if (!"SUBMITTED".equals(appeal.getStatus())) {
+            throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE, "Appeal is already resolved.");
+        }
+        OrganizationEnforcementEntity enforcement = enforcementRepository.findById(appeal.getEnforcementId())
+                .orElseThrow(() -> new DomainException(CommonErrorCode.RESOURCE_NOT_FOUND, "Enforcement record not found."));
+        if (approved && "BANNED".equals(enforcement.getActionType())
+                && adminUserId.equals(enforcement.getIssuedByAdmin())) {
+            throw new DomainException(CommonErrorCode.OPERATION_FORBIDDEN,
+                    "A permanent ban can only be reversed by a different Admin (D-25).");
+        }
+        Instant now = Instant.now();
+        appeal.setStatus(approved ? "APPROVED" : "REJECTED");
+        appeal.setReviewNote(reviewNote != null ? reviewNote.trim() : null);
+        appeal.setReviewedByAdmin(adminUserId);
+        appeal.setReviewedAt(now);
+        OrganizationAppealEntity savedAppeal = appealRepository.save(appeal);
+
+        if (approved) {
+            OrganizationEntity org = organizationRepository.findById(orgId)
+                    .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
+            OrganizationStatus next = targetStatus != null ? targetStatus : OrganizationStatus.APPROVED;
+            if (next != OrganizationStatus.APPROVED && next != OrganizationStatus.SUSPENDED) {
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Appeal targetStatus must be APPROVED or SUSPENDED.");
+            }
+            org.setStatus(next);
+            org.setUpdatedAt(now);
+            organizationRepository.save(org);
+            if (next == OrganizationStatus.APPROVED) {
+                providerRepository.findByOrganizationId(orgId).ifPresent(provider -> {
+                    provider.setStatus(EntityStatus.ACTIVE.name());
+                    providerRepository.save(provider);
+                });
+            }
+        }
+        return savedAppeal;
     }
 
     @Transactional
@@ -328,7 +773,7 @@ public class OrganizationDomainService {
             EtagSupport.verifyIfMatch(ifMatch, org.getVersion());
         }
         if (req.name() != null) org.setName(req.name().trim());
-        if (req.phone() != null) org.setPhone(req.phone().trim());
+        if (req.phone() != null) org.setPhone(normalizeAndValidatePhone(req.phone()));
         if (req.city() != null) org.setCity(req.city().trim());
         if (req.address() != null) org.setAddress(req.address().trim());
         if (req.description() != null) org.setDescription(req.description().trim());
@@ -384,8 +829,23 @@ public class OrganizationDomainService {
         if (request.role() == OrgRole.ORG_OWNER) {
             throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN, "Cannot assign ORG_OWNER role.");
         }
+        OrganizationEntity org = organizationRepository.findById(orgId)
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
+        if (org.getLegalEntityType() == LegalEntityType.INDIVIDUAL) {
+            long activeCount = memberRepository.countByOrganizationIdAndStatus(orgId, EntityStatus.ACTIVE.name());
+            if (activeCount >= 1) {
+                throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN,
+                        "INDIVIDUAL organizations are capped at 1 active member. Upgrade to HOUSEHOLD_BUSINESS or COMPANY first.");
+            }
+        }
         Instant now = Instant.now();
         String targetUserId = request.userId().trim();
+        if (request.role() == OrgRole.ORG_TECHNICIAN
+                && memberRepository.existsByUserIdAndRoleAndStatus(
+                        targetUserId, OrgRole.ORG_TECHNICIAN, EntityStatus.ACTIVE.name())) {
+            throw new DomainException(ProviderErrorCode.MEMBER_ALREADY_EXISTS,
+                    "User is already an active ORG_TECHNICIAN in another organization (1:1 limit in v0.1).");
+        }
         OrganizationMemberEntity existing = memberRepository.findByOrganizationIdAndUserId(orgId, targetUserId)
                 .orElse(null);
 
@@ -432,8 +892,103 @@ public class OrganizationDomainService {
             throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN, "Cannot modify your own organization role.");
         }
         OrganizationMemberEntity member = requireActiveModifiableMember(orgId, targetUserId);
+        if (newRole == OrgRole.ORG_TECHNICIAN && member.getRole() != OrgRole.ORG_TECHNICIAN
+                && memberRepository.existsByUserIdAndRoleAndStatus(
+                        targetUserId, OrgRole.ORG_TECHNICIAN, EntityStatus.ACTIVE.name())) {
+            throw new DomainException(ProviderErrorCode.MEMBER_ALREADY_EXISTS,
+                    "User is already an active ORG_TECHNICIAN in another organization (1:1 limit in v0.1).");
+        }
         member.setRole(newRole);
         return toMemberResponse(memberRepository.save(member));
+    }
+
+    @Transactional
+    public OrganizationResponse requestLegalEntityUpgrade(
+            UUID orgId, String userId, LegalEntityType targetType, String taxCode, String identityEvidenceRefs, String ifMatch) {
+        OrganizationEntity org = organizationRepository.findById(orgId)
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
+        if (!org.getOwnerUserId().equals(userId)) {
+            throw new DomainException(ProviderErrorCode.ORG_ROLE_FORBIDDEN, "Only ORG_OWNER can request a legal entity upgrade.");
+        }
+        if (org.getStatus() != OrganizationStatus.APPROVED || org.getLegalEntityType() != LegalEntityType.INDIVIDUAL) {
+            throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE,
+                    "Only APPROVED INDIVIDUAL organizations can request a legal entity upgrade.");
+        }
+        if (targetType != LegalEntityType.HOUSEHOLD_BUSINESS && targetType != LegalEntityType.COMPANY) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Target legalEntityType must be HOUSEHOLD_BUSINESS or COMPANY.");
+        }
+        if (ifMatch != null && !ifMatch.isBlank()) {
+            EtagSupport.verifyIfMatch(ifMatch, org.getVersion());
+        }
+        if (identityEvidenceRefs == null || identityEvidenceRefs.isBlank()) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Updated identity evidence documents are required for legal entity upgrade.");
+        }
+        String validatedTaxCode = validateTaxCodeForLegalEntity(targetType, taxCode);
+        org.setPendingLegalEntityUpgrade(targetType);
+        org.setTaxCode(validatedTaxCode);
+        org.setIdentityEvidenceRefs(identityEvidenceRefs.trim());
+        org.setUpdatedAt(Instant.now());
+        return toOrgResponse(organizationRepository.save(org));
+    }
+
+    @Transactional
+    public OrganizationResponse approveLegalEntityUpgrade(UUID orgId, String adminUserId) {
+        OrganizationEntity org = organizationRepository.findById(orgId)
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.ORGANIZATION_NOT_FOUND));
+        if (org.getStatus() != OrganizationStatus.APPROVED) {
+            throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE,
+                    "Only APPROVED organizations can complete a legal entity upgrade.");
+        }
+        LegalEntityType targetType = org.getPendingLegalEntityUpgrade();
+        if (targetType == null) {
+            throw new DomainException(ProviderErrorCode.INVALID_ORGANIZATION_STATE,
+                    "No pending legal entity upgrade on this organization.");
+        }
+        if (org.getIdentityEvidenceRefs() == null || org.getIdentityEvidenceRefs().isBlank()) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Identity evidence documents are required to approve legal entity upgrade.");
+        }
+        org.setTaxCode(validateTaxCodeForLegalEntity(targetType, org.getTaxCode()));
+        Instant now = Instant.now();
+        org.setLegalEntityType(targetType);
+        org.setPendingLegalEntityUpgrade(null);
+        org.setUpdatedAt(now);
+        OrganizationEntity saved = organizationRepository.save(org);
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("organizationId", saved.getId().toString());
+        data.put("name", saved.getName());
+        data.put("type", saved.getType().name());
+        data.put("legalEntityType", saved.getLegalEntityType().name());
+        data.put("approvedBy", adminUserId);
+        enqueueOutbox(saved.getId(), EVT_UPDATED, data, now);
+        return toOrgResponse(saved);
+    }
+
+    @Transactional
+    public void handleOwnerUserSuspended(String userId, String reason, String adminUserId) {
+        List<OrganizationEntity> ownedApproved = organizationRepository.findByOwnerUserIdAndStatus(
+                userId, OrganizationStatus.APPROVED);
+        for (OrganizationEntity org : ownedApproved) {
+            boolean isIndividual = org.getLegalEntityType() == LegalEntityType.INDIVIDUAL;
+            boolean hasOtherAdmin = memberRepository.existsByOrganizationIdAndRoleAndStatusAndUserIdNot(
+                    org.getId(), OrgRole.ORG_ADMIN, EntityStatus.ACTIVE.name(), userId);
+            if (isIndividual || !hasOtherAdmin) {
+                suspendOrganization(org.getId(), "Owner suspended: " + reason, null, false, adminUserId);
+            }
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public UUID findOrganizationIdIfUserIsMemberOfProvider(UUID providerId, String userId) {
+        return providerRepository.findById(providerId)
+                .map(ProviderEntity::getOrganizationId)
+                .filter(orgId -> memberRepository.findByOrganizationIdAndUserId(orgId, userId)
+                        .map(m -> EntityStatus.ACTIVE.name().equalsIgnoreCase(m.getStatus()))
+                        .orElse(false))
+                .orElse(null);
     }
 
     @Transactional
@@ -498,6 +1053,11 @@ public class OrganizationDomainService {
                 org.getLegalEntityType(),
                 org.getStatus(),
                 org.getRejectReason(),
+                org.getResubmitCount(),
+                org.isIdentityVerified(),
+                org.getIdentityVerifiedAt(),
+                org.getIdentityEvidenceRefs(),
+                org.getPendingLegalEntityUpgrade(),
                 org.getTaxCode(),
                 org.getPhone(),
                 org.getCity(),

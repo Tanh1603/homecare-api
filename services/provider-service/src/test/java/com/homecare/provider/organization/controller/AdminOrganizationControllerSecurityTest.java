@@ -31,6 +31,9 @@ class AdminOrganizationControllerSecurityTest {
     @Autowired
     private AdminOrganizationController adminOrganizationController;
 
+    @Autowired
+    private AdminGovernanceController adminGovernanceController;
+
     @AfterEach
     void clearSecurityContext() {
         SecurityContextHolder.clearContext();
@@ -46,7 +49,7 @@ class AdminOrganizationControllerSecurityTest {
                 "sub", "reviewer-1",
                 "permissions", List.of(RbacConstants.PERM_ORGANIZATION_REVIEW)));
 
-        var response = adminOrganizationController.listOrganizations(null, 1, 20, request);
+        var response = adminOrganizationController.listOrganizations(null, null, null, null, null, null, 1, 20, request);
         assertThat(response.getStatusCode().value()).isEqualTo(200);
     }
 
@@ -59,7 +62,7 @@ class AdminOrganizationControllerSecurityTest {
                 "sub", "admin-1",
                 "user_roles", List.of(RbacConstants.ROLE_ADMIN)));
 
-        var response = adminOrganizationController.listOrganizations(null, 1, 20, request);
+        var response = adminOrganizationController.listOrganizations(null, null, null, null, null, null, 1, 20, request);
         assertThat(response.getStatusCode().value()).isEqualTo(200);
     }
 
@@ -69,7 +72,10 @@ class AdminOrganizationControllerSecurityTest {
                 "sub", "customer-1",
                 "user_roles", List.of(RbacConstants.ROLE_CUSTOMER)));
 
-        assertThatThrownBy(() -> adminOrganizationController.listOrganizations(null, 1, 20, new MockHttpServletRequest()))
+        assertThatThrownBy(() -> adminOrganizationController.listOrganizations(
+                null, null, null, null, null, null, 1, 20, new MockHttpServletRequest()))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> adminGovernanceController.listSettings(new MockHttpServletRequest()))
                 .isInstanceOf(AccessDeniedException.class);
     }
 

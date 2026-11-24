@@ -217,6 +217,22 @@ class CommercePortalTest {
     }
 
     @Test
+    void serviceOrgWithoutMerchantEntityGetsEmptyMerchantReturnsInsteadOf403() throws Exception {
+        UUID serviceOrgId = UUID.randomUUID();
+        String ownerId = "svc-owner-" + UUID.randomUUID();
+        Mockito.when(membership.verify(serviceOrgId, ownerId))
+                .thenReturn(VerifiedMembership.of(serviceOrgId, ownerId, "ORG_OWNER",
+                        java.util.Set.of("order:read", "order:return:resolve"), true));
+
+        mvc.perform(get("/api/v1/merchant/returns")
+                        .header("X-Organization-Id", serviceOrgId)
+                        .with(jwt().jwt(j -> j.subject(ownerId).claim("user_roles", List.of("ORGANIZATION")))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(0))
+                .andExpect(jsonPath("$.data.pagination.totalItems").value(0));
+    }
+
+    @Test
     void separatesOrderReadFromFulfillAndAllowsNonOwnerOrgStaffWithinOwnOrg() throws Exception {
         var product = CommerceDataInitializer.PRODUCT_AC_FILTER_ID;
         var merchantOrgId = service.getProduct(product).merchantId();

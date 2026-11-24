@@ -18,6 +18,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import com.homecare.booking.client.HouseholdVerificationClient;
 import com.homecare.booking.client.HouseholdVerificationClient.WarrantyCheckStatus;
+import com.homecare.booking.client.ProviderGrpcClientAdapter;
 import com.homecare.booking.entity.BookingEntity;
 import com.homecare.booking.repository.BookingRepository;
 import com.homecare.booking.repository.ServiceRequestRepository;
@@ -50,6 +51,9 @@ class ServiceRequestLifecycleTest {
 
     @MockitoBean
     private HouseholdVerificationClient householdClient;
+
+    @MockitoBean
+    private ProviderGrpcClientAdapter providerGrpcClient;
 
     @Test
     void replacementRequestPersistsOrderLineOnRequestAndLinkedBooking() {
