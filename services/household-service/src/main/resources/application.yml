@@ -9,6 +9,9 @@ grpc:
         providerService:
             address: ${PROVIDER_GRPC_ADDRESS:static://localhost:9083}
             negotiationType: PLAINTEXT
+        bookingService:
+            address: ${BOOKING_GRPC_ADDRESS:static://localhost:9084}
+            negotiationType: PLAINTEXT
 
 spring:
     application:

@@ -47,6 +47,13 @@ public class MaintenanceSchedule {
     @Column(nullable = false)
     private String status;
 
+    @Column(name = "reminder_enabled", nullable = false)
+    @Builder.Default
+    private boolean reminderEnabled = true;
+
+    @Column(name = "last_skipped_at")
+    private Instant lastSkippedAt;
+
     @Column(name = "notified_at")
     private Instant notifiedAt;
 

@@ -147,6 +147,9 @@ public class BookingEntity {
     @Column(name = "admin_review_reason", length = 1000)
     private String adminReviewReason;
 
+    @Column(name = "accepted_at")
+    private Instant acceptedAt;
+
     @Version
     private Long version;
 

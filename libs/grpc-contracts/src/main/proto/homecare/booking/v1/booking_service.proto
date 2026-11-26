@@ -8,6 +8,16 @@ option java_outer_classname = "BookingServiceProto";
 
 service BookingVerificationService {
   rpc VerifyBookingEligibility (VerifyBookingEligibilityRequest) returns (VerifyBookingEligibilityResponse);
+  rpc HasDeviceBookings (HasDeviceBookingsRequest) returns (HasDeviceBookingsResponse);
+}
+
+message HasDeviceBookingsRequest {
+  string device_id = 1;
+}
+
+message HasDeviceBookingsResponse {
+  string device_id = 1;
+  bool has_linked_bookings = 2;
 }
 
 message VerifyBookingEligibilityRequest {

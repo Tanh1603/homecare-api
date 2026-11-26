@@ -4,21 +4,30 @@ import com.homecare.household.repository.HouseholdOutboxEventRepository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.DomainException;
+import com.homecare.common.security.AccessMode;
+import com.homecare.common.security.ActorContext;
+import com.homecare.common.security.RbacConstants;
 import com.homecare.common.security.VerifiedMembership;
 import com.homecare.common.web.EtagSupport;
+import com.homecare.household.client.BookingUsageGrpcClient;
 import com.homecare.household.client.ProviderOrgClient;
 import com.homecare.household.dto.HouseholdDtos.CareRecordResponse;
+import com.homecare.household.dto.HouseholdDtos.CreateCareRecordRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateDeviceRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateHouseholdRequest;
+import com.homecare.household.dto.HouseholdDtos.CreateMaintenancePolicyRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateMaintenanceScheduleRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateWarrantyRequest;
+import com.homecare.household.dto.HouseholdDtos.DeviceRemovalResponse;
 import com.homecare.household.dto.HouseholdDtos.DeviceResponse;
 import com.homecare.household.dto.HouseholdDtos.HouseholdResponse;
 import com.homecare.household.dto.HouseholdDtos.MaintenanceScheduleResponse;
+import com.homecare.household.dto.HouseholdDtos.UpdateCareRecordRequest;
 import com.homecare.household.dto.HouseholdDtos.UpdateDeviceRequest;
 import com.homecare.household.dto.HouseholdDtos.UpdateMaintenanceScheduleRequest;
 import com.homecare.household.dto.HouseholdDtos.UpdateWarrantyRequest;
@@ -26,12 +35,16 @@ import com.homecare.household.dto.HouseholdDtos.VerifyDeviceReferenceResponse;
 import com.homecare.household.dto.HouseholdDtos.VerifyWarrantyResponse;
 import com.homecare.household.dto.HouseholdDtos.WarrantyResponse;
 import com.homecare.household.entity.HouseholdOutboxEvent;
+import com.homecare.household.entity.Warranty;
 import com.homecare.household.repository.DeviceRepository;
 import com.homecare.household.repository.MaintenanceScheduleRepository;
 import com.homecare.household.repository.WarrantyRepository;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -68,6 +81,14 @@ class HouseholdDomainServiceTest {
                     .andExpect(MockMvcResultMatchers.jsonPath("$.data.items.length()").value(1));
         }
         assertThatThrownBy(() -> service.deleteHousehold("outsider", household.id())).isInstanceOf(DomainException.class);
+        // D-28: Household with a device that has warranty history cannot be hard-deleted.
+        assertThatThrownBy(() -> service.deleteHousehold(owner, household.id()))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("OPERATION_FORBIDDEN");
+
+        // Removing warranty frees the manual device for clean hard-delete and household cascade.
+        service.deleteWarranty(owner, warranty.id());
         service.deleteHousehold(owner, household.id());
         assertThat(devices.findById(device.id())).isEmpty();
         assertThat(warranties.findById(warranty.id())).isEmpty();
@@ -85,6 +106,14 @@ class HouseholdDomainServiceTest {
 
     @MockitoBean
     private ProviderOrgClient providerOrgClient;
+
+    @MockitoBean
+    private BookingUsageGrpcClient bookingUsageGrpcClient;
+
+    @BeforeEach
+    void setupBookingUsageDefault() {
+        when(bookingUsageGrpcClient.hasLinkedBookings(any())).thenReturn(false);
+    }
 
     @Test
     void enforcesOwnershipEtagWarrantyDateOrderScheduleNotificationConflictAndOutbox() {
@@ -211,7 +240,14 @@ class HouseholdDomainServiceTest {
                 {"eventId":"%s","eventType":"booking.completed.v1","data":{"bookingId":"%s","deviceId":"%s","requesterProfileId":"%s","bookingType":"WARRANTY_CLAIM","serviceName":"Bảo hành Màng lọc RO"}}
                 """.formatted(UUID.randomUUID(), bookingId, autoDevice.id(), buyer).strip();
 
+        // D-11.5: booking.completed.v1 must NOT append CareRecord before acceptance.
         eventConsumer.onDomainEvent(completedBookingJson);
+        assertThat(service.listCareRecords(buyer, autoDevice.id())).isEmpty();
+
+        String acceptedBookingJson = """
+                {"eventId":"%s","eventType":"booking.accepted.v1","data":{"bookingId":"%s","deviceId":"%s","requesterProfileId":"%s","bookingType":"WARRANTY_CLAIM","serviceName":"Bảo hành Màng lọc RO","acceptedAt":"2026-11-24T10:00:00Z"}}
+                """.formatted(UUID.randomUUID(), bookingId, autoDevice.id(), buyer).strip();
+        eventConsumer.onDomainEvent(acceptedBookingJson);
 
         List<CareRecordResponse> careRecords = service.listCareRecords(buyer, autoDevice.id());
         assertThat(careRecords).hasSize(1);
@@ -271,10 +307,98 @@ class HouseholdDomainServiceTest {
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("RESOURCE_FORBIDDEN");
-        assertThatThrownBy(() -> service.deleteDevice(owner, storeWarranty.deviceId()))
+        // D-28: Removing a store-originated device with warranty soft-archives it instead of hard-deleting history.
+        DeviceRemovalResponse removal = service.removeDevice(owner, storeWarranty.deviceId());
+        assertThat(removal.outcome()).isEqualTo("ARCHIVED");
+        assertThat(removal.device().status()).isEqualTo("ARCHIVED");
+        assertThat(service.listWarranties(owner, storeWarranty.deviceId())).hasSize(1);
+    }
+
+    @Test
+    void enforcesDeviceArchiveRulesCareRecordImmutabilityWarrantyActivationAndAdminPolicyRbac() {
+        String owner = "f2-owner-" + UUID.randomUUID();
+        var household = service.createHousehold(owner, new CreateHouseholdRequest("Home F2", "Address", null));
+
+        // Category-default Admin policy (model = null) auto-creates schedule for manual device without model
+        ActorContext customerActor = new ActorContext(owner, AccessMode.PERSONAL, null, Set.of("USER"), Set.of(), Set.of(), Set.of());
+        ActorContext adminActor = new ActorContext(owner, AccessMode.PERSONAL, null, Set.of(RbacConstants.ROLE_ADMIN), Set.of(), Set.of(), Set.of());
+        var policyReq = new CreateMaintenancePolicyRequest("WATER_HEATER", null, "Bảo dưỡng bình nóng lạnh", 12, "APPROVED", null);
+        assertThatThrownBy(() -> service.createMaintenancePolicyForAdmin(customerActor, policyReq))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
+        service.createMaintenancePolicyForAdmin(adminActor, policyReq);
+
+        DeviceResponse manualDevice = service.createDevice(owner,
+                new CreateDeviceRequest(household.id(), "Bình nóng lạnh", "WATER_HEATER", "Ariston", null, "SN-99", LocalDate.now()));
+        assertThat(manualDevice.originSource()).isEqualTo("MANUAL");
+        assertThat(service.listSchedules(owner, manualDevice.id())).isNotEmpty();
+
+        // Fail-closed: if booking-service reports linked booking, removeDevice soft-archives to ARCHIVED
+        when(bookingUsageGrpcClient.hasLinkedBookings(manualDevice.id())).thenReturn(true);
+        DeviceRemovalResponse archivedOutcome = service.removeDevice(owner, manualDevice.id());
+        assertThat(archivedOutcome.outcome()).isEqualTo("ARCHIVED");
+        assertThat(archivedOutcome.device().archivedAt()).isNotNull();
+
+        // VerifyDeviceReference distinguishes ARCHIVED status
+        VerifyDeviceReferenceResponse archivedRef = service.verifyDeviceReference(manualDevice.id(), owner);
+        assertThat(archivedRef.valid()).isFalse();
+        assertThat(archivedRef.status()).isEqualTo("ARCHIVED");
+
+        // ARCHIVED device rejects updates and new manual CareRecords
+        assertThatThrownBy(() -> service.updateDevice(owner, manualDevice.id(), null,
+                new UpdateDeviceRequest("Edited", null, null, null, null, null, null)))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("DEVICE_ARCHIVED");
+        assertThatThrownBy(() -> service.createCareRecord(owner, manualDevice.id(),
+                new CreateCareRecordRequest("MANUAL", Instant.now(), "Outside check", "notes", null)))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("DEVICE_ARCHIVED");
+
+        // Active device: manual CareRecord rejects client-supplied bookingId; booking-backed CareRecord is immutable
+        DeviceResponse activeDevice = service.createDevice(owner,
+                new CreateDeviceRequest(household.id(), "Máy giặt", "WASHING_MACHINE", "LG", "FV1409", "SN-100", LocalDate.now()));
+        assertThatThrownBy(() -> service.createCareRecord(owner, activeDevice.id(),
+                new CreateCareRecordRequest("PAID_REPAIR", Instant.now(), "Fake", "spoof", UUID.randomUUID())))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("VALIDATION_FAILED");
+
+        UUID bookingId = UUID.randomUUID();
+        CareRecordResponse bookingCare = service.recordCareHistoryFromBookingAccepted(
+                bookingId, activeDevice.id(), owner, "PAID_REPAIR", "Thay bạc đạn", Instant.now(), "ok");
+        assertThatThrownBy(() -> service.updateCareRecord(owner, bookingCare.id(),
+                new UpdateCareRecordRequest("PAID_REPAIR", null, "Tampered", null)))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("OPERATION_FORBIDDEN");
+        assertThatThrownBy(() -> service.deleteCareRecord(owner, bookingCare.id()))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("OPERATION_FORBIDDEN");
+
+        // FR-016: recordInstallationCompleted persists activated warranty when serial is present
+        Warranty pendingInstallWarranty = warranties.saveAndFlush(Warranty.builder()
+                .id(UUID.randomUUID())
+                .deviceId(activeDevice.id())
+                .ownerProfileId(owner)
+                .source("ORDER_AUTO_ACTIVATED")
+                .providerName("Store")
+                .startsOn(LocalDate.now())
+                .endsOn(LocalDate.now().plusMonths(12))
+                .coverageMonths(12)
+                .startTrigger("INSTALLATION_COMPLETED")
+                .status("PENDING_TRIGGER")
+                .createdAt(Instant.now())
+                .build());
+        UUID executorOrgId = UUID.randomUUID();
+        service.recordInstallationCompleted(UUID.randomUUID(), activeDevice.id(), null, executorOrgId, Instant.now(), List.of("ev-1"));
+        Warranty reloaded = warranties.findById(pendingInstallWarranty.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo("ACTIVE");
+        assertThat(reloaded.getWarrantyResponsibleOrgId()).isEqualTo(executorOrgId);
+        assertThat(reloaded.getTriggerEvidenceRef()).isEqualTo("ev-1");
     }
 
     @Test

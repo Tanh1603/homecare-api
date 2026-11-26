@@ -34,7 +34,7 @@ public class MaintenancePolicyEntity {
     @Column(nullable = false, length = 100)
     private String category;
 
-    @Column(nullable = false, length = 255)
+    @Column(length = 255)
     private String model;
 
     @Column(nullable = false)

@@ -34,7 +34,7 @@ public class MaintenanceReminderWorker {
     @Scheduled(fixedDelayString = "${homecare.maintenance.poll-ms:60000}")
     @Transactional
     public void emitDueMaintenanceReminders() {
-        domainService.enqueueDueMaintenanceReminders(LocalDate.now());
+        domainService.enqueueDueMaintenanceReminders(LocalDate.now(HouseholdDomainService.VIETNAM_ZONE));
         List<HouseholdOutboxEvent> pending = outboxEventRepository.findPendingDueEvents(Instant.now());
         for (HouseholdOutboxEvent event : pending) {
             try {

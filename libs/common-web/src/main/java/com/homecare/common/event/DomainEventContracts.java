@@ -37,6 +37,7 @@ public final class DomainEventContracts {
     public static final String BOOKING_REASSIGNED = "booking.reassigned.v1";
     public static final String BOOKING_CANCELLED = "booking.cancelled.v1";
     public static final String BOOKING_COMPLETED = "booking.completed.v1";
+    public static final String BOOKING_ACCEPTED = "booking.accepted.v1";
     public static final String INSTALLATION_COMPLETED = "INSTALLATION_COMPLETED";
 
     // Commerce lifecycle events
