@@ -153,6 +153,16 @@ public class ProviderSecurityAndGrpcConfig {
     }
 
     @Bean
+    public Binding providerBookingAllocationReleaseRetry() {
+        return new Binding(
+                ProviderBookingConsumer.QUEUE,
+                Binding.DestinationType.QUEUE,
+                DomainEventContracts.EXCHANGE,
+                "booking.allocation.release.retry.v1",
+                null);
+    }
+
+    @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             ServletCorrelationIdFilter correlationIdFilter,

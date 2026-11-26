@@ -56,6 +56,9 @@ public class WorkUpdateEntity {
     @Column(name = "extra_cost_approved_by", length = 255)
     private String extraCostApprovedBy;
 
+    @Column(name = "revised_quotation_id")
+    private UUID revisedQuotationId;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 }

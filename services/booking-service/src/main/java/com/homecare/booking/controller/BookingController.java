@@ -1,6 +1,7 @@
 package com.homecare.booking.controller;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.UUID;
 
 import org.springframework.http.HttpHeaders;
@@ -24,10 +25,18 @@ import com.homecare.booking.client.ProviderGrpcClientAdapter;
 import com.homecare.booking.dto.BookingDtos.ApproveExtraCostRequest;
 import com.homecare.booking.dto.BookingDtos.BookingResponse;
 import com.homecare.booking.dto.BookingDtos.CancelBookingRequest;
+import com.homecare.booking.dto.BookingDtos.ConfirmRescheduleRequest;
 import com.homecare.booking.dto.BookingDtos.CreateBookingRequest;
 import com.homecare.booking.dto.BookingDtos.CreateWorkUpdateRequest;
+import com.homecare.booking.dto.BookingDtos.ReportNoShowRequest;
+import com.homecare.booking.dto.BookingDtos.RescheduleBookingRequest;
 import com.homecare.booking.dto.BookingDtos.WorkEvidenceResponse;
 import com.homecare.booking.service.BookingLifecycleService;
+import com.homecare.booking.service.QuotationService;
+import com.homecare.booking.service.QuotationService.AcceptQuotationInput;
+import com.homecare.booking.service.QuotationService.CreateRevisedQuotationInput;
+import com.homecare.booking.service.QuotationService.QuotationResponse;
+import com.homecare.booking.service.QuotationService.RejectQuotationInput;
 import com.homecare.common.idempotency.IdempotencyService;
 import com.homecare.common.security.ActorContext;
 import com.homecare.common.security.ActorContextResolver;
@@ -42,7 +51,6 @@ import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 
 @RestController
@@ -52,6 +60,7 @@ import lombok.RequiredArgsConstructor;
 public class BookingController {
 
     private final BookingLifecycleService service;
+    private final QuotationService quotationService;
     private final ProviderGrpcClientAdapter providerGrpcClient;
     private final IdempotencyService idempotencyService;
     private final ServletApiResponseFactory responseFactory;
@@ -205,6 +214,117 @@ public class BookingController {
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
                 .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    @PostMapping("/{bookingId}/reschedule-request")
+    public ResponseEntity<ApiResponse<BookingResponse>> requestReschedule(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID bookingId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @Valid @RequestBody RescheduleBookingRequest request,
+            HttpServletRequest httpRequest) {
+        BookingResponse updated = service.requestReschedule(resolveActor(jwt, rawOrgId), bookingId, ifMatch, request);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    @PostMapping("/{bookingId}/reschedule-confirm")
+    public ResponseEntity<ApiResponse<BookingResponse>> confirmReschedule(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID bookingId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @Valid @RequestBody ConfirmRescheduleRequest request,
+            HttpServletRequest httpRequest) {
+        BookingResponse updated = service.confirmReschedule(resolveActor(jwt, rawOrgId), bookingId, ifMatch, request);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    @PostMapping("/{bookingId}/report-no-show")
+    public ResponseEntity<ApiResponse<BookingResponse>> reportTechnicianNoShow(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID bookingId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @Valid @RequestBody ReportNoShowRequest request,
+            HttpServletRequest httpRequest) {
+        ActorContext actor = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId));
+        BookingResponse updated = service.reportTechnicianNoShow(actor, bookingId, ifMatch, request);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    @GetMapping("/{bookingId}/revised-quotations")
+    public ResponseEntity<ApiResponse<List<QuotationResponse>>> listRevisedQuotations(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID bookingId,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.RETRIEVED,
+                quotationService.listRevisedQuotations(resolveActor(jwt, rawOrgId), bookingId),
+                httpRequest));
+    }
+
+    @PostMapping("/{bookingId}/revised-quotations")
+    public ResponseEntity<ApiResponse<QuotationResponse>> issueRevisedQuotation(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @PathVariable UUID bookingId,
+            @Valid @RequestBody CreateRevisedQuotationInput input,
+            HttpServletRequest httpRequest) {
+        ActorContext actor = resolveActor(jwt, rawOrgId);
+        QuotationResponse created = (idempotencyKey != null && !idempotencyKey.isBlank())
+                ? idempotencyService.execute(
+                        actor.userId(), "POST:/api/v1/bookings/" + bookingId + "/revised-quotations", idempotencyKey, input.toString(),
+                        () -> quotationService.issueRevisedQuotation(actor, bookingId, input))
+                : quotationService.issueRevisedQuotation(actor, bookingId, input);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
+    }
+
+    @PostMapping("/{bookingId}/revised-quotations/{quoteId}/accept")
+    public ResponseEntity<ApiResponse<QuotationResponse>> acceptRevisedQuotation(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @PathVariable UUID bookingId,
+            @PathVariable UUID quoteId,
+            @Valid @RequestBody AcceptQuotationInput input,
+            HttpServletRequest httpRequest) {
+        ActorContext actor = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId));
+        QuotationResponse accepted = (idempotencyKey != null && !idempotencyKey.isBlank())
+                ? idempotencyService.execute(
+                        actor.userId(), "POST:/api/v1/bookings/" + bookingId + "/revised-quotations/" + quoteId + "/accept",
+                        idempotencyKey, input.toString(),
+                        () -> quotationService.acceptRevisedQuotation(actor.userId(), bookingId, quoteId, input))
+                : quotationService.acceptRevisedQuotation(actor.userId(), bookingId, quoteId, input);
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.UPDATED, accepted, httpRequest));
+    }
+
+    @PostMapping("/{bookingId}/revised-quotations/{quoteId}/reject")
+    public ResponseEntity<ApiResponse<QuotationResponse>> rejectRevisedQuotation(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @PathVariable UUID bookingId,
+            @PathVariable UUID quoteId,
+            @Valid @RequestBody RejectQuotationInput input,
+            HttpServletRequest httpRequest) {
+        ActorContext actor = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId));
+        QuotationResponse rejected = (idempotencyKey != null && !idempotencyKey.isBlank())
+                ? idempotencyService.execute(
+                        actor.userId(), "POST:/api/v1/bookings/" + bookingId + "/revised-quotations/" + quoteId + "/reject",
+                        idempotencyKey, input.toString(),
+                        () -> quotationService.rejectRevisedQuotation(actor.userId(), bookingId, quoteId, input))
+                : quotationService.rejectRevisedQuotation(actor.userId(), bookingId, quoteId, input);
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.UPDATED, rejected, httpRequest));
     }
 
     private ActorContext resolveActor(Jwt jwt, String rawOrgId) {

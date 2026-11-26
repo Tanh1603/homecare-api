@@ -150,6 +150,26 @@ public class BookingEntity {
     @Column(name = "accepted_at")
     private Instant acceptedAt;
 
+    @Column(name = "inspection_fee_policy", nullable = false, length = 30)
+    @Builder.Default
+    private String inspectionFeePolicy = InspectionFeePolicy.NO_FEE.name();
+
+    @Column(name = "reschedule_count", nullable = false)
+    @Builder.Default
+    private int rescheduleCount = 0;
+
+    @Column(name = "pending_reschedule_start")
+    private Instant pendingRescheduleStart;
+
+    @Column(name = "pending_reschedule_end")
+    private Instant pendingRescheduleEnd;
+
+    @Column(name = "pending_reschedule_by", length = 40)
+    private String pendingRescheduleBy;
+
+    @Column(name = "pending_reschedule_reason", length = 500)
+    private String pendingRescheduleReason;
+
     @Version
     private Long version;
 
