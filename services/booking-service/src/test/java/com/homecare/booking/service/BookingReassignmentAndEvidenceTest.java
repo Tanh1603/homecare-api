@@ -43,6 +43,9 @@ class BookingReassignmentAndEvidenceTest {
     private BookingLifecycleService service;
 
     @Autowired
+    private BookingExecutionService executionService;
+
+    @Autowired
     private BookingOutboxEventRepository outboxRepository;
 
     @MockitoBean
@@ -157,7 +160,7 @@ class BookingReassignmentAndEvidenceTest {
         ActorContext custActor = new ActorContext(
                 "cust-ev-1", AccessMode.PERSONAL, null, Set.of(RbacConstants.ROLE_CUSTOMER), Set.of(), Set.of(), Set.of());
 
-        WorkEvidenceResponse ev = service.uploadWorkEvidence(
+        WorkEvidenceResponse ev = executionService.uploadWorkEvidence(
                 techActor, created.id(), "photo.png", "image/png", new byte[]{1, 2, 3, 4});
         assertThat(ev.id()).isNotNull();
 
@@ -172,9 +175,9 @@ class BookingReassignmentAndEvidenceTest {
         assertThat(diagnosed.workUpdates().getFirst().evidence().getFirst().signedUrl()).isNotBlank();
 
         // Cannot complete while extraCost is pending approval
-        assertThatThrownBy(() -> service.appendWorkUpdate(
+        assertThatThrownBy(() -> executionService.submitCompletionForAcceptance(
                 techActor, created.id(), EtagSupport.format(diagnosed.version()),
-                new CreateWorkUpdateRequest("COMPLETED", "Xong")))
+                new com.homecare.booking.dto.BookingExecutionDtos.SubmitCompletionRequest("Xong", List.of(ev.id()))))
                 .isInstanceOf(DomainException.class)
                 .satisfies(ex -> assertThat(((DomainException) ex).status()).isEqualTo(HttpStatus.CONFLICT));
 
@@ -184,9 +187,9 @@ class BookingReassignmentAndEvidenceTest {
         assertThat(approved.quotedPrice()).isEqualTo(350_000L);
         assertThat(approved.workUpdates().getFirst().extraCostStatus()).isEqualTo("APPROVED");
 
-        BookingResponse completed = service.appendWorkUpdate(
+        BookingResponse completed = executionService.submitCompletionForAcceptance(
                 techActor, created.id(), EtagSupport.format(approved.version()),
-                new CreateWorkUpdateRequest("COMPLETED", "Hoàn tất"));
-        assertThat(completed.status()).isEqualTo("COMPLETED");
+                new com.homecare.booking.dto.BookingExecutionDtos.SubmitCompletionRequest("Hoàn tất", List.of(ev.id())));
+        assertThat(completed.status()).isEqualTo("COMPLETED_PENDING_ACCEPTANCE");
     }
 }

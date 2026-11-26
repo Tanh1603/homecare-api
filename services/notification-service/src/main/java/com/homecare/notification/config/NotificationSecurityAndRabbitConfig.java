@@ -91,6 +91,11 @@ public class NotificationSecurityAndRabbitConfig {
     }
 
     @Bean
+    public Binding disputeEventsBinding(Queue notificationInboxQueue, TopicExchange domainEventsExchange) {
+        return BindingBuilder.bind(notificationInboxQueue).to(domainEventsExchange).with("dispute.#");
+    }
+
+    @Bean
     public Queue notificationPushDispatchQueue() {
         return QueueBuilder.durable(FcmPushConsumer.QUEUE)
                 .withArgument("x-dead-letter-exchange", DomainEventContracts.DLX)

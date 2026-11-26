@@ -38,6 +38,7 @@ import com.homecare.common.security.AccessMode;
 import com.homecare.common.security.ActorContext;
 import com.homecare.common.security.RbacConstants;
 import com.homecare.common.web.EtagSupport;
+import java.util.List;
 import java.util.Set;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.provider.v1.ReleaseBookingResponse;
@@ -50,6 +51,12 @@ class BookingLifecycleServiceTest {
 
     @Autowired
     private BookingLifecycleService service;
+
+    @Autowired
+    private BookingExecutionService executionService;
+
+    @Autowired
+    private BookingAcceptanceService acceptanceService;
 
     @Autowired
     private BookingAllocationSagaRepository sagaRepository;
@@ -165,12 +172,21 @@ class BookingLifecycleServiceTest {
                 .extracting("errorCode")
                 .isEqualTo("BOOKING_INVALID_STATE");
 
-        BookingResponse completed = service.appendWorkUpdate(
+        var ev = executionService.uploadWorkEvidence(
+                techActor, created.id(), "done.jpg", "image/jpeg", new byte[]{1, 2, 3});
+        BookingResponse pending = executionService.submitCompletionForAcceptance(
                 techActor,
                 created.id(),
                 EtagSupport.format(inProgress.version()),
-                new CreateWorkUpdateRequest("COMPLETED", "Đã vệ sinh và nạp gas đầy đủ"));
-        assertThat(completed.status()).isEqualTo("COMPLETED");
+                new com.homecare.booking.dto.BookingExecutionDtos.SubmitCompletionRequest(
+                        "Đã vệ sinh và nạp gas đầy đủ", List.of(ev.id())));
+        assertThat(pending.status()).isEqualTo("COMPLETED_PENDING_ACCEPTANCE");
+        BookingResponse accepted = acceptanceService.acceptBooking(
+                customerActor,
+                created.id(),
+                EtagSupport.format(pending.version()),
+                new com.homecare.booking.dto.BookingExecutionDtos.AcceptBookingRequest("Hài lòng"));
+        assertThat(accepted.status()).isEqualTo("ACCEPTED");
         assertThat(service.verifyReviewEligibility(created.id(), "customer-sub-1").eligible()).isTrue();
     }
 
@@ -357,11 +373,11 @@ class BookingLifecycleServiceTest {
                 .extracting("errorCode")
                 .isEqualTo("PRECONDITION_REQUIRED");
 
-        assertThatThrownBy(() -> service.appendWorkUpdate(
+        assertThatThrownBy(() -> executionService.submitCompletionForAcceptance(
                 demoTech,
                 assigned.id(),
                 EtagSupport.format(assigned.version()),
-                new CreateWorkUpdateRequest("COMPLETED", "Skipped STARTED")))
+                new com.homecare.booking.dto.BookingExecutionDtos.SubmitCompletionRequest("Skipped STARTED", List.of())))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("BOOKING_INVALID_STATE");
