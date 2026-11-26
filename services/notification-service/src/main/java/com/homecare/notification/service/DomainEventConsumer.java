@@ -126,11 +126,66 @@ public class DomainEventConsumer {
                         "Lịch sử chăm sóc đã cập nhật",
                         "Lịch sử chăm sóc thiết bị của bạn vừa được cập nhật.",
                         "deviceId");
-                case "QuotationSent" -> recordLifecycle(
+                case "QuotationSent", "quotation.sent.v1" -> recordLifecycle(
                         eventId, eventType, data, "requesterProfileId",
                         "Báo giá dịch vụ đã được gửi",
                         "Bạn có một báo giá mới cần xem xét.",
-                        "requestId");
+                        "serviceRequestId");
+                case DomainEventContracts.QUOTATION_SUPERSEDED -> recordLifecycle(
+                        eventId, eventType, data, "requesterProfileId",
+                        "Báo giá cũ đã được thay thế",
+                        "Đối tác đã phát hành phiên bản báo giá mới thay thế bản trước đó.",
+                        "serviceRequestId");
+                case DomainEventContracts.QUOTATION_REJECTED -> recordLifecycle(
+                        eventId, eventType, data, "requesterProfileId",
+                        "Đã ghi nhận từ chối báo giá",
+                        "Bạn có thể chọn đơn vị thay thế hoặc điều chỉnh phạm vi yêu cầu.",
+                        "serviceRequestId");
+                case DomainEventContracts.QUOTATION_REVISED_SENT -> recordLifecycle(
+                        eventId, eventType, data, "requesterProfileId",
+                        "Báo giá phát sinh cần phê duyệt",
+                        "Kỹ thuật viên vừa gửi báo giá điều chỉnh chi phí phát sinh cho lịch hẹn.",
+                        "bookingId");
+                case DomainEventContracts.SERVICE_REQUEST_TIMEOUT -> recordLifecycle(
+                        eventId, eventType, data, "requesterProfileId",
+                        "Đơn vị chưa phản hồi trong 24 giờ",
+                        "Bạn có thể chọn đơn vị thay thế khác cho yêu cầu dịch vụ này.",
+                        "serviceRequestId");
+                case DomainEventContracts.SERVICE_REQUEST_EXPIRY_WARNING -> recordLifecycle(
+                        eventId, eventType, data, "requesterProfileId",
+                        "Yêu cầu dịch vụ sắp hết hạn sau 24 giờ",
+                        "Vui lòng chọn đơn vị thay thế hoặc hủy yêu cầu trước khi tự động hết hạn.",
+                        "serviceRequestId");
+                case DomainEventContracts.SERVICE_REQUEST_EXPIRED -> recordLifecycle(
+                        eventId, eventType, data, "requesterProfileId",
+                        "Yêu cầu dịch vụ đã hết hạn",
+                        "Yêu cầu dịch vụ đã tự động đóng sau 7 ngày không có thao tác.",
+                        "serviceRequestId");
+                case "service.request.fallback.available.v1", "warranty.request.fallback.available.v1" -> recordLifecycle(
+                        eventId, eventType, data, "requesterProfileId",
+                        "Có thể chọn đơn vị thay thế",
+                        "Đơn vị hiện tại không thể tiếp nhận; bạn có thể chọn nhà cung cấp khác.",
+                        "serviceRequestId");
+                case DomainEventContracts.BOOKING_RESCHEDULE_REQUESTED -> {
+                    String bookingId = stringField(data, "bookingId");
+                    inboxService.recordIfAbsent(
+                            eventId,
+                            stringField(data, "requesterProfileId"),
+                            eventType,
+                            "Có đề xuất đổi lịch hẹn",
+                            "Lịch hẹn dịch vụ vừa có yêu cầu thay đổi thời gian, vui lòng xác nhận.",
+                            Map.of("bookingId", bookingId));
+                }
+                case DomainEventContracts.BOOKING_TECHNICIAN_NO_SHOW -> {
+                    String bookingId = stringField(data, "bookingId");
+                    inboxService.recordIfAbsent(
+                            eventId,
+                            stringField(data, "requesterProfileId"),
+                            eventType,
+                            "Đã ghi nhận thợ không đến",
+                            "Phí khảo sát (nếu có) đã được miễn; bạn có thể chọn đơn vị khác hoặc đặt lại.",
+                            Map.of("bookingId", bookingId));
+                }
                 case "WarrantyRequestRejected" -> recordLifecycle(
                         eventId, eventType, data, "requesterProfileId",
                         "Yêu cầu bảo hành chưa được chấp thuận",

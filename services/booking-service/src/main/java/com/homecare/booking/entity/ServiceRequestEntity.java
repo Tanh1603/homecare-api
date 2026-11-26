@@ -53,6 +53,31 @@ public class ServiceRequestEntity {
     @Builder.Default
     private long inspectionFee = 0L;
 
+    @Column(name = "inspection_fee_policy", nullable = false, length = 30)
+    @Builder.Default
+    private String inspectionFeePolicy = InspectionFeePolicy.NO_FEE.name();
+
+    @Column(name = "inspection_fee_warning_flag", nullable = false)
+    @Builder.Default
+    private boolean inspectionFeeWarningFlag = false;
+
+    @Column(name = "fallback_count", nullable = false)
+    @Builder.Default
+    private int fallbackCount = 0;
+
+    @Column(name = "rejected_provider_ids", columnDefinition = "TEXT")
+    private String rejectedProviderIds;
+
+    @Column(name = "status_changed_at", nullable = false)
+    @Builder.Default
+    private Instant statusChangedAt = Instant.now();
+
+    @Column(name = "expiry_warning_notified_at")
+    private Instant expiryWarningNotifiedAt;
+
+    @Column(name = "cancel_reason", length = 500)
+    private String cancelReason;
+
     @Column(name = "policy_version", nullable = false, length = 64)
     @Builder.Default
     private String policyVersion = "v1";

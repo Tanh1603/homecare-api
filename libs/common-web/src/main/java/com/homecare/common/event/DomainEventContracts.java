@@ -38,7 +38,17 @@ public final class DomainEventContracts {
     public static final String BOOKING_CANCELLED = "booking.cancelled.v1";
     public static final String BOOKING_COMPLETED = "booking.completed.v1";
     public static final String BOOKING_ACCEPTED = "booking.accepted.v1";
+    public static final String BOOKING_RESCHEDULE_REQUESTED = "booking.reschedule.requested.v1";
+    public static final String BOOKING_TECHNICIAN_NO_SHOW = "booking.technician.no_show.v1";
     public static final String INSTALLATION_COMPLETED = "INSTALLATION_COMPLETED";
+
+    // ServiceRequest & Quotation lifecycle events
+    public static final String SERVICE_REQUEST_TIMEOUT = "service.request.timeout.v1";
+    public static final String SERVICE_REQUEST_EXPIRY_WARNING = "service.request.expiry.warning.v1";
+    public static final String SERVICE_REQUEST_EXPIRED = "service.request.expired.v1";
+    public static final String QUOTATION_SUPERSEDED = "quotation.superseded.v1";
+    public static final String QUOTATION_REJECTED = "quotation.rejected.v1";
+    public static final String QUOTATION_REVISED_SENT = "quotation.revised.sent.v1";
 
     // Commerce lifecycle events
     public static final String ORDER_CREATED = "order.created.v1";

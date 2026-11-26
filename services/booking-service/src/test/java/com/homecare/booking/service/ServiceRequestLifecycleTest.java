@@ -90,8 +90,8 @@ class ServiceRequestLifecycleTest {
         UUID providerId = UUID.randomUUID();
         UUID offeringId = UUID.randomUUID();
 
-        // 1. Out-of-bounds inspectionFee (> 500,000 VND) rejected
-        assertThatThrownBy(() -> serviceRequestService.createRequest(
+        // 1. High inspectionFee (> 500,000 VND) allowed with soft warning flag (D-04 / D-22)
+        ServiceRequestResponse highFeeReq = serviceRequestService.createRequest(
                 customer,
                 "Nguyễn Văn A",
                 new CreateServiceRequestInput(
@@ -109,10 +109,8 @@ class ServiceRequestLifecycleTest {
                         "12 Lê Lợi, Phường Bến Nghé, TP. Hồ Chí Minh",
                         "Rò ống nước âm tường",
                         null,
-                        null)))
-                .isInstanceOf(DomainException.class)
-                .extracting("errorCode")
-                .isEqualTo("VALIDATION_FAILED");
+                        null));
+        assertThat(highFeeReq.inspectionFeeWarningFlag()).isTrue();
 
         // 2. Service-only QUOTE_REQUIRED with onsite survey (150,000 VND) and no deviceId
         ServiceRequestResponse created = serviceRequestService.createRequest(
@@ -165,7 +163,8 @@ class ServiceRequestLifecycleTest {
                                 new QuotationItemInput("LABOR", "Thay đoạn ống", 1, 400_000L),
                                 new QuotationItemInput("MATERIAL", "Ống PPR", 2, 50_000L)),
                         Instant.now().plus(2, ChronoUnit.DAYS),
-                        true));
+                        true,
+                        "Cập nhật vật tư ống PPR"));
         assertThat(q2.version()).isEqualTo(2);
         assertThat(q2.itemsTotal()).isEqualTo(500_000L);
         assertThat(q2.inspectionFeeCredit()).isEqualTo(150_000L);

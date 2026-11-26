@@ -29,8 +29,11 @@ import com.homecare.booking.dto.BookingDtos.ApproveExtraCostRequest;
 import com.homecare.booking.dto.BookingDtos.BookingHistoryResponse;
 import com.homecare.booking.dto.BookingDtos.BookingResponse;
 import com.homecare.booking.dto.BookingDtos.CancelBookingRequest;
+import com.homecare.booking.dto.BookingDtos.ConfirmRescheduleRequest;
 import com.homecare.booking.dto.BookingDtos.CreateBookingRequest;
 import com.homecare.booking.dto.BookingDtos.CreateWorkUpdateRequest;
+import com.homecare.booking.dto.BookingDtos.ReportNoShowRequest;
+import com.homecare.booking.dto.BookingDtos.RescheduleBookingRequest;
 import com.homecare.booking.dto.BookingDtos.VerifyBookingReviewEligibilityResponse;
 import com.homecare.booking.dto.BookingDtos.WorkEvidenceResponse;
 import com.homecare.booking.dto.BookingDtos.WorkUpdateResponse;
@@ -49,6 +52,7 @@ import com.homecare.booking.repository.BookingAllocationSagaRepository;
 import com.homecare.booking.repository.BookingHistoryRepository;
 import com.homecare.booking.repository.BookingOutboxEventRepository;
 import com.homecare.booking.repository.BookingRepository;
+import com.homecare.booking.repository.QuotationRepository;
 import com.homecare.booking.repository.WorkEvidenceRepository;
 import com.homecare.booking.repository.WorkUpdateRepository;
 import com.homecare.booking.security.BookingAccessPolicy;
@@ -75,6 +79,8 @@ public class BookingLifecycleService {
     private static final Logger log = LoggerFactory.getLogger(BookingLifecycleService.class);
     public static final String EXCHANGE = DomainEventContracts.EXCHANGE;
 
+    public static final int MAX_RESCHEDULES_PER_BOOKING = 2;
+
     private final BookingRepository bookingRepository;
     private final BookingHistoryRepository historyRepository;
     private final WorkUpdateRepository workUpdateRepository;
@@ -83,6 +89,9 @@ public class BookingLifecycleService {
     private final BookingAllocationSagaRepository sagaRepository;
     private final AssignmentAttemptRepository attemptRepository;
     private final BookingOutboxEventRepository outboxEventRepository;
+    private final QuotationRepository quotationRepository;
+    private final QuotationService quotationService;
+    private final ServiceRequestService serviceRequestService;
     private final ProviderGrpcClientAdapter providerGrpcClient;
     private final HouseholdVerificationClient householdVerificationClient;
     private final BookingAccessPolicy accessPolicy;
@@ -423,27 +432,243 @@ public class BookingLifecycleService {
         BookingEntity booking = requireBooking(bookingId);
         accessPolicy.assertCanCancel(actor, booking);
         EtagSupport.verifyIfMatch(ifMatchHeader, booking.getVersion());
-        if ("IN_PROGRESS".equals(booking.getStatus())
-                || "COMPLETED".equals(booking.getStatus())
-                || "CANCELLED".equals(booking.getStatus())) {
+        if (!"REQUESTED".equals(booking.getStatus()) && !"ASSIGNED".equals(booking.getStatus())) {
             throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
         }
+        boolean hasArrived = workUpdateRepository.findByBookingIdOrderByCreatedAtAsc(bookingId).stream()
+                .anyMatch(wu -> "ARRIVED".equalsIgnoreCase(wu.getKind()));
+        if (hasArrived) {
+            throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE,
+                    "Booking cannot be unilaterally cancelled after Technician ARRIVED (BR-ASSIGN-03).");
+        }
         String previous = booking.getStatus();
+        String reason = request != null && request.reason() != null && !request.reason().isBlank()
+                ? request.reason().trim()
+                : "Cancelled";
+        releaseActiveAllocationIfPresent(booking, reason);
         booking.setStatus("CANCELLED");
         booking.setUpdatedAt(Instant.now());
         BookingEntity saved = bookingRepository.saveAndFlush(booking);
-        recordHistory(
-                bookingId,
-                previous,
-                "CANCELLED",
-                actor.userId(),
-                request != null && request.reason() != null ? request.reason() : "Customer cancelled");
+        recordHistory(bookingId, previous, "CANCELLED", actor.userId(), reason);
         publishDomainEvent(
                 BookingPurpose.INSTALLATION.name().equals(saved.getPurpose())
                         ? "INSTALLATION_CANCELLED"
                         : DomainEventContracts.BOOKING_CANCELLED,
                 saved);
         return toBookingResponse(saved);
+    }
+
+    @Transactional
+    public BookingResponse requestReschedule(
+            ActorContext actor,
+            UUID bookingId,
+            String ifMatchHeader,
+            RescheduleBookingRequest request) {
+        if (request == null || request.preferredStart() == null || request.preferredEnd() == null
+                || !request.preferredEnd().isAfter(request.preferredStart())) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "preferredEnd must be after preferredStart.");
+        }
+        BookingEntity booking = bookingRepository.lockById(bookingId)
+                .orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
+        assertCustomerOrAssignedOrg(actor, booking);
+        EtagSupport.verifyIfMatch(ifMatchHeader, booking.getVersion());
+        if (!Set.of("REQUESTED", "ASSIGNED", "WAITING_FOR_PARTS").contains(booking.getStatus())) {
+            throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
+        }
+        if ("ASSIGNED".equals(booking.getStatus())
+                && workUpdateRepository.findByBookingIdOrderByCreatedAtAsc(bookingId).stream()
+                        .anyMatch(wu -> "ARRIVED".equalsIgnoreCase(wu.getKind()))) {
+            throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE,
+                    "Cannot reschedule an ASSIGNED booking after Technician ARRIVED (BR-ASSIGN-03).");
+        }
+        if (booking.getRescheduleCount() >= MAX_RESCHEDULES_PER_BOOKING) {
+            throw new DomainException(CommonErrorCode.CONFLICT,
+                    "Maximum reschedule limit (" + MAX_RESCHEDULES_PER_BOOKING + ") reached for this Booking (D-30).");
+        }
+        String initiator = actor.mode() == AccessMode.ORGANIZATION ? "PROVIDER" : "CUSTOMER";
+        Instant now = Instant.now();
+        booking.setPendingRescheduleStart(request.preferredStart());
+        booking.setPendingRescheduleEnd(request.preferredEnd());
+        booking.setPendingRescheduleBy(initiator);
+        booking.setPendingRescheduleReason(request.reason() != null ? request.reason().trim() : null);
+        booking.setUpdatedAt(now);
+        BookingEntity saved = bookingRepository.saveAndFlush(booking);
+        recordHistory(bookingId, booking.getStatus(), booking.getStatus(), actor.userId(),
+                "Reschedule requested by " + initiator + ": " + (request.reason() != null ? request.reason() : ""));
+        publishDomainEvent(DomainEventContracts.BOOKING_RESCHEDULE_REQUESTED, saved);
+        return toBookingResponse(saved);
+    }
+
+    @Transactional
+    public BookingResponse confirmReschedule(
+            ActorContext actor,
+            UUID bookingId,
+            String ifMatchHeader,
+            ConfirmRescheduleRequest request) {
+        BookingEntity booking = bookingRepository.lockById(bookingId)
+                .orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
+        assertCustomerOrAssignedOrg(actor, booking);
+        EtagSupport.verifyIfMatch(ifMatchHeader, booking.getVersion());
+        if (booking.getPendingRescheduleStart() == null || booking.getPendingRescheduleBy() == null) {
+            throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE, "No pending reschedule request.");
+        }
+        String responder = actor.mode() == AccessMode.ORGANIZATION ? "PROVIDER" : "CUSTOMER";
+        if (!actor.isGlobalAdmin() && responder.equals(booking.getPendingRescheduleBy())) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN,
+                    "Counterparty must confirm the reschedule request (BR-ASSIGN-03).");
+        }
+        Instant now = Instant.now();
+        String previousStatus = booking.getStatus();
+        if (request != null && request.approved()) {
+            booking.setPreferredStart(booking.getPendingRescheduleStart());
+            booking.setPreferredEnd(booking.getPendingRescheduleEnd());
+            booking.setRescheduleCount(booking.getRescheduleCount() + 1);
+            if ("ASSIGNED".equals(previousStatus)) {
+                releaseActiveAllocationIfPresent(booking, "Booking rescheduled");
+                booking.setStatus("REQUESTED");
+            }
+            recordHistory(bookingId, previousStatus, booking.getStatus(), actor.userId(),
+                    "Reschedule confirmed by " + responder);
+        } else {
+            recordHistory(bookingId, previousStatus, previousStatus, actor.userId(),
+                    "Reschedule declined by " + responder + ": " + (request != null && request.reason() != null ? request.reason() : ""));
+        }
+        booking.setPendingRescheduleStart(null);
+        booking.setPendingRescheduleEnd(null);
+        booking.setPendingRescheduleBy(null);
+        booking.setPendingRescheduleReason(null);
+        booking.setUpdatedAt(now);
+        return toBookingResponse(bookingRepository.saveAndFlush(booking));
+    }
+
+    @Transactional
+    public BookingResponse reportTechnicianNoShow(
+            ActorContext actor,
+            UUID bookingId,
+            String ifMatchHeader,
+            ReportNoShowRequest request) {
+        BookingEntity booking = bookingRepository.lockById(bookingId)
+                .orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
+        if (!actor.isGlobalAdmin() && !booking.getRequesterProfileId().equals(actor.userId())) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        EtagSupport.verifyIfMatch(ifMatchHeader, booking.getVersion());
+        if (!"ASSIGNED".equals(booking.getStatus())) {
+            throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE,
+                    "Technician No-Show can only be reported on an ASSIGNED booking.");
+        }
+        Instant now = Instant.now();
+        if (!now.isAfter(booking.getPreferredEnd())) {
+            throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE,
+                    "Technician No-Show can only be reported after preferredEnd has passed (BR-ASSIGN-03).");
+        }
+        boolean hasArrived = workUpdateRepository.findByBookingIdOrderByCreatedAtAsc(bookingId).stream()
+                .anyMatch(wu -> "ARRIVED".equalsIgnoreCase(wu.getKind()));
+        if (hasArrived) {
+            throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE,
+                    "Technician already checked in (ARRIVED).");
+        }
+        String action = request.resolutionAction().trim().toUpperCase();
+        if (!Set.of("CANCEL", "REOPEN_FALLBACK", "RESCHEDULE").contains(action)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "resolutionAction must be CANCEL, REOPEN_FALLBACK, or RESCHEDULE.");
+        }
+        String reason = request.reason() != null && !request.reason().isBlank()
+                ? request.reason().trim()
+                : "Technician No-Show";
+        releaseActiveAllocationIfPresent(booking, "TECHNICIAN_NO_SHOW: " + reason);
+        if (BookingPurpose.DIAGNOSTIC.name().equals(booking.getPurpose())) {
+            booking.setQuotedPrice(0L);
+        }
+        String previous = booking.getStatus();
+        if ("RESCHEDULE".equals(action)) {
+            booking.setStatus("REQUESTED");
+        } else {
+            booking.setStatus("CANCELLED");
+        }
+        booking.setUpdatedAt(now);
+        BookingEntity saved = bookingRepository.saveAndFlush(booking);
+        recordHistory(bookingId, previous, saved.getStatus(), actor.userId(),
+                "[PROVIDER_NO_SHOW_STRIKE][" + action + "] " + reason);
+        publishDomainEvent(DomainEventContracts.BOOKING_TECHNICIAN_NO_SHOW, saved);
+        if ("REOPEN_FALLBACK".equals(action) && saved.getServiceRequestId() != null) {
+            serviceRequestService.reopenForFallbackAfterNoShow(saved.getServiceRequestId(), reason, now);
+        }
+        return toBookingResponse(saved);
+    }
+
+    private void assertCustomerOrAssignedOrg(ActorContext actor, BookingEntity booking) {
+        boolean isOwner = booking.getRequesterProfileId().equals(actor.userId());
+        boolean isOrg = actor.mode() == AccessMode.ORGANIZATION
+                && actor.organizationId() != null
+                && actor.organizationId().equals(booking.getProviderId());
+        if (!actor.isGlobalAdmin() && !isOwner && !isOrg) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+    }
+
+    private void releaseActiveAllocationIfPresent(BookingEntity booking, String reason) {
+        UUID bookingId = booking.getId();
+        UUID opId = booking.getActiveAllocationOperationId();
+        if (opId != null) {
+            booking.setActiveAllocationOperationId(null);
+            Runnable releaseTask = () -> {
+                try {
+                    providerGrpcClient.releaseBooking(bookingId, opId, reason);
+                } catch (Exception e) {
+                    log.error("ReleaseBooking gRPC failed for booking {} op {} — queuing compensation event: {}",
+                            bookingId, opId, e.getMessage());
+                    TransactionTemplate retryTx = new TransactionTemplate(transactionManager);
+                    retryTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                    retryTx.executeWithoutResult(status -> {
+                        UUID eventId = UUID.randomUUID();
+                        Instant now = Instant.now();
+                        Map<String, Object> envelope = new LinkedHashMap<>();
+                        envelope.put(DomainEventContracts.FIELD_EVENT_ID, eventId);
+                        envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, "booking.allocation.release.retry.v1");
+                        envelope.put(DomainEventContracts.FIELD_OCCURRED_AT, now.toString());
+                        envelope.put(DomainEventContracts.FIELD_PRODUCER, "booking-service");
+                        envelope.put(DomainEventContracts.FIELD_DATA, Map.of(
+                                "bookingId", bookingId,
+                                "operationId", opId,
+                                "reason", reason != null ? reason : "RELEASE_RETRY"));
+                        String payload;
+                        try {
+                            payload = objectMapper.writeValueAsString(envelope);
+                        } catch (Exception ex) {
+                            throw new IllegalStateException("Failed to serialize release retry payload", ex);
+                        }
+                        outboxEventRepository.save(BookingOutboxEventEntity.builder()
+                                .id(eventId)
+                                .aggregateType("Booking")
+                                .aggregateId(bookingId)
+                                .eventType("booking.allocation.release.retry.v1")
+                                .routingKey("booking.allocation.release.retry.v1")
+                                .payloadJson(payload)
+                                .status(EntityStatus.PENDING.name())
+                                .retryCount(0)
+                                .nextAttemptAt(now)
+                                .createdAt(now)
+                                .build());
+                    });
+                }
+            };
+            if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+                org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                        new org.springframework.transaction.support.TransactionSynchronization() {
+                            @Override
+                            public void afterCommit() {
+                                releaseTask.run();
+                            }
+                        });
+            } else {
+                releaseTask.run();
+            }
+        }
+        booking.setAssignedTechnicianId(null);
+        booking.setAssignedTechnicianProfileId(null);
+        booking.setAssignedTechnicianName(null);
+        booking.setAllocationStatus("UNALLOCATED");
     }
 
     @Transactional
@@ -484,7 +709,9 @@ public class BookingLifecycleService {
                     throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE,
                             "Installation cannot complete before product delivery.");
                 }
-                if (workUpdateRepository.existsByBookingIdAndExtraCostStatus(bookingId, "PENDING_APPROVAL")) {
+                if (workUpdateRepository.existsByBookingIdAndExtraCostStatus(bookingId, "PENDING_APPROVAL")
+                        || quotationRepository.existsByBookingIdAndQuoteKindAndStatus(
+                                bookingId, QuotationService.QUOTE_KIND_REVISED, "SENT")) {
                     throw new DomainException(CommonErrorCode.CONFLICT);
                 }
                 booking.setStatus("COMPLETED");
@@ -506,6 +733,14 @@ public class BookingLifecycleService {
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         }
 
+        Instant now = Instant.now();
+        UUID revisedQuotationId = null;
+        if (hasExtraCost) {
+            revisedQuotationId = quotationService
+                    .issueRevisedQuotationForWorkUpdate(booking, extraCost, request.note(), now)
+                    .getId();
+        }
+
         WorkUpdateEntity savedUpdate = workUpdateRepository.save(WorkUpdateEntity.builder()
                 .id(UUID.randomUUID())
                 .bookingId(bookingId)
@@ -516,7 +751,8 @@ public class BookingLifecycleService {
                 .partOrderLineId(request.partOrderLineId())
                 .extraCost(hasExtraCost ? extraCost : null)
                 .extraCostStatus(hasExtraCost ? "PENDING_APPROVAL" : "NONE")
-                .createdAt(Instant.now())
+                .revisedQuotationId(revisedQuotationId)
+                .createdAt(now)
                 .build());
 
         List<UUID> evidenceIds = request.evidenceIds();
@@ -613,6 +849,21 @@ public class BookingLifecycleService {
         update.setExtraCostApprovedAt(now);
         update.setExtraCostApprovedBy(actor.userId());
         workUpdateRepository.save(update);
+        if (update.getRevisedQuotationId() != null) {
+            quotationRepository.findById(update.getRevisedQuotationId()).ifPresent(q -> {
+                if ("SENT".equals(q.getStatus())) {
+                    q.setStatus(request.approved() ? "ACCEPTED" : "REJECTED");
+                    if (request.approved()) {
+                        q.setAcceptedAt(now);
+                    } else {
+                        q.setRejectedAt(now);
+                        q.setRejectionReason(request.note());
+                    }
+                    q.setUpdatedAt(now);
+                    quotationRepository.save(q);
+                }
+            });
+        }
         if (request.approved() && update.getExtraCost() != null && update.getExtraCost() > 0) {
             booking.setQuotedPrice(booking.getQuotedPrice() + update.getExtraCost());
         }
@@ -1314,6 +1565,12 @@ public class BookingLifecycleService {
                         b.getProvinceName(),
                         b.getFormattedAddress(),
                         b.getLatitude(),
-                        b.getLongitude()));
+                        b.getLongitude()),
+                b.getRescheduleCount(),
+                b.getPendingRescheduleStart(),
+                b.getPendingRescheduleEnd(),
+                b.getPendingRescheduleBy(),
+                b.getPendingRescheduleReason(),
+                b.getInspectionFeePolicy());
     }
 }

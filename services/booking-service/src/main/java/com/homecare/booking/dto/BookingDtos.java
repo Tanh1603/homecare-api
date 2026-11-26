@@ -92,6 +92,22 @@ public final class BookingDtos {
             String reason) {
     }
 
+    public record RescheduleBookingRequest(
+            @NotNull Instant preferredStart,
+            @NotNull Instant preferredEnd,
+            String reason) {
+    }
+
+    public record ConfirmRescheduleRequest(
+            boolean approved,
+            String reason) {
+    }
+
+    public record ReportNoShowRequest(
+            @NotBlank String resolutionAction,
+            String reason) {
+    }
+
     public record CreateWorkUpdateRequest(
             @JsonAlias({"kind", "status"}) @NotBlank String kind,
             @JsonAlias({"note", "notes"}) String note,
@@ -182,7 +198,30 @@ public final class BookingDtos {
             Instant updatedAt,
             List<BookingHistoryResponse> history,
             List<WorkUpdateResponse> workUpdates,
-            AddressSnapshotResponse addressSnapshot) {
+            AddressSnapshotResponse addressSnapshot,
+            int rescheduleCount,
+            Instant pendingRescheduleStart,
+            Instant pendingRescheduleEnd,
+            String pendingRescheduleBy,
+            String pendingRescheduleReason,
+            String inspectionFeePolicy) {
+        public BookingResponse(
+                UUID id, String requesterProfileId, String requesterName, UUID serviceId, String serviceName,
+                UUID providerId, String bookingType, UUID orderId, UUID orderLineId, String purpose,
+                UUID warrantyId, UUID deviceId, String deviceType,
+                UUID assignedTechnicianId, String assignedTechnicianProfileId, String assignedTechnicianName,
+                Instant preferredStart, Instant preferredEnd, String address, String notes, String status,
+                String allocationStatus, long quotedPrice, Long version, Instant createdAt, Instant updatedAt,
+                List<BookingHistoryResponse> history, List<WorkUpdateResponse> workUpdates,
+                AddressSnapshotResponse addressSnapshot) {
+            this(id, requesterProfileId, requesterName, serviceId, serviceName, providerId, bookingType,
+                    orderId, orderLineId, purpose, warrantyId, deviceId, deviceType, assignedTechnicianId,
+                    assignedTechnicianProfileId, assignedTechnicianName,
+                    preferredStart, preferredEnd, address, notes, status, allocationStatus, quotedPrice, version,
+                    createdAt, updatedAt, history, workUpdates, addressSnapshot,
+                    0, null, null, null, null, null);
+        }
+
         public BookingResponse(
                 UUID id, String requesterProfileId, String requesterName, UUID serviceId, String serviceName,
                 UUID providerId, String bookingType, UUID warrantyId, UUID deviceId, String deviceType,
@@ -194,7 +233,8 @@ public final class BookingDtos {
                     null, null, "REPAIR", warrantyId, deviceId, deviceType, assignedTechnicianId,
                     assignedTechnicianProfileId, assignedTechnicianName,
                     preferredStart, preferredEnd, address, notes, status, allocationStatus, quotedPrice, version,
-                    createdAt, updatedAt, history, workUpdates, null);
+                    createdAt, updatedAt, history, workUpdates, null,
+                    0, null, null, null, null, null);
         }
 
         public BookingResponse(

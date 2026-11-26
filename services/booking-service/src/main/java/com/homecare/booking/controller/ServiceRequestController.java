@@ -22,11 +22,15 @@ import com.homecare.booking.service.QuotationService;
 import com.homecare.booking.service.QuotationService.AcceptQuotationInput;
 import com.homecare.booking.service.QuotationService.CreateQuotationInput;
 import com.homecare.booking.service.QuotationService.QuotationResponse;
+import com.homecare.booking.service.QuotationService.RejectQuotationInput;
 import com.homecare.booking.service.ServiceRequestService;
+import com.homecare.booking.service.ServiceRequestService.AdjustScopeInput;
+import com.homecare.booking.service.ServiceRequestService.CancelServiceRequestInput;
 import com.homecare.booking.service.ServiceRequestService.CreateServiceRequestInput;
 import com.homecare.booking.service.ServiceRequestService.RejectServiceRequestInput;
 import com.homecare.booking.service.ServiceRequestService.SelectFallbackProviderInput;
 import com.homecare.booking.service.ServiceRequestService.ServiceRequestResponse;
+import com.homecare.common.idempotency.IdempotencyService;
 import com.homecare.common.security.ActorContext;
 import com.homecare.common.security.ActorContextResolver;
 import com.homecare.common.security.RbacConstants;
@@ -48,6 +52,7 @@ public class ServiceRequestController {
     private final ServiceRequestService serviceRequestService;
     private final QuotationService quotationService;
     private final ProviderGrpcClientAdapter membershipVerifier;
+    private final IdempotencyService idempotencyService;
     private final ServletApiResponseFactory responseFactory;
 
     private ActorContext resolveActor(Jwt jwt, String rawOrgId) {
@@ -58,13 +63,16 @@ public class ServiceRequestController {
     public ResponseEntity<ApiResponse<ServiceRequestResponse>> createServiceRequest(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody CreateServiceRequestInput input,
             HttpServletRequest httpRequest) {
         ActorContext actor = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId));
-        ServiceRequestResponse created = serviceRequestService.createRequest(
-                actor.userId(),
-                jwt != null ? jwt.getClaimAsString("full_name") : null,
-                input);
+        String fullName = jwt != null ? jwt.getClaimAsString("full_name") : null;
+        ServiceRequestResponse created = (idempotencyKey != null && !idempotencyKey.isBlank())
+                ? idempotencyService.execute(
+                        actor.userId(), "POST:/api/v1/service-requests", idempotencyKey, input.toString(),
+                        () -> serviceRequestService.createRequest(actor.userId(), fullName, input))
+                : serviceRequestService.createRequest(actor.userId(), fullName, input);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
     }
@@ -116,7 +124,7 @@ public class ServiceRequestController {
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.UPDATED,
-                serviceRequestService.triggerWarrantyFallback(resolveActor(jwt, rawOrgId), requestId, input.reason()),
+                serviceRequestService.providerReject(resolveActor(jwt, rawOrgId), requestId, input.reason()),
                 httpRequest));
     }
 
@@ -134,14 +142,48 @@ public class ServiceRequestController {
                 httpRequest));
     }
 
+    @PostMapping("/{requestId}/adjust-scope")
+    public ResponseEntity<ApiResponse<ServiceRequestResponse>> adjustScope(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID requestId,
+            @RequestBody(required = false) AdjustScopeInput input,
+            HttpServletRequest httpRequest) {
+        ActorContext actor = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId));
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.UPDATED,
+                serviceRequestService.adjustScope(actor.userId(), requestId, input),
+                httpRequest));
+    }
+
+    @PostMapping("/{requestId}/cancel")
+    public ResponseEntity<ApiResponse<ServiceRequestResponse>> cancelServiceRequest(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID requestId,
+            @RequestBody(required = false) CancelServiceRequestInput input,
+            HttpServletRequest httpRequest) {
+        ActorContext actor = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId));
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.CANCELLED,
+                serviceRequestService.cancelServiceRequest(actor.userId(), requestId, input != null ? input.reason() : null),
+                httpRequest));
+    }
+
     @PostMapping("/{requestId}/quotations")
     public ResponseEntity<ApiResponse<QuotationResponse>> issueQuotation(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @PathVariable UUID requestId,
             @Valid @RequestBody CreateQuotationInput input,
             HttpServletRequest httpRequest) {
-        QuotationResponse created = quotationService.issueQuotation(resolveActor(jwt, rawOrgId), requestId, input);
+        ActorContext actor = resolveActor(jwt, rawOrgId);
+        QuotationResponse created = (idempotencyKey != null && !idempotencyKey.isBlank())
+                ? idempotencyService.execute(
+                        actor.userId(), "POST:/api/v1/service-requests/" + requestId + "/quotations", idempotencyKey, input.toString(),
+                        () -> quotationService.issueQuotation(actor, requestId, input))
+                : quotationService.issueQuotation(actor, requestId, input);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
     }
@@ -162,14 +204,43 @@ public class ServiceRequestController {
     public ResponseEntity<ApiResponse<QuotationResponse>> acceptQuotation(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @PathVariable UUID requestId,
             @PathVariable UUID quoteId,
             @Valid @RequestBody AcceptQuotationInput input,
             HttpServletRequest httpRequest) {
         ActorContext actor = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId));
+        QuotationResponse accepted = (idempotencyKey != null && !idempotencyKey.isBlank())
+                ? idempotencyService.execute(
+                        actor.userId(), "POST:/api/v1/service-requests/" + requestId + "/quotations/" + quoteId + "/accept",
+                        idempotencyKey, input.toString(),
+                        () -> quotationService.acceptQuotation(actor.userId(), requestId, quoteId, input))
+                : quotationService.acceptQuotation(actor.userId(), requestId, quoteId, input);
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.UPDATED,
-                quotationService.acceptQuotation(actor.userId(), requestId, quoteId, input),
+                accepted,
+                httpRequest));
+    }
+
+    @PostMapping("/{requestId}/quotations/{quoteId}/reject")
+    public ResponseEntity<ApiResponse<QuotationResponse>> rejectQuotation(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @PathVariable UUID requestId,
+            @PathVariable UUID quoteId,
+            @Valid @RequestBody RejectQuotationInput input,
+            HttpServletRequest httpRequest) {
+        ActorContext actor = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId));
+        QuotationResponse rejected = (idempotencyKey != null && !idempotencyKey.isBlank())
+                ? idempotencyService.execute(
+                        actor.userId(), "POST:/api/v1/service-requests/" + requestId + "/quotations/" + quoteId + "/reject",
+                        idempotencyKey, input.toString(),
+                        () -> quotationService.rejectQuotation(actor.userId(), requestId, quoteId, input))
+                : quotationService.rejectQuotation(actor.userId(), requestId, quoteId, input);
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.UPDATED,
+                rejected,
                 httpRequest));
     }
 }

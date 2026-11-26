@@ -25,8 +25,15 @@ public class QuotationEntity {
     @Id
     private UUID id;
 
-    @Column(name = "service_request_id", nullable = false)
+    @Column(name = "service_request_id")
     private UUID serviceRequestId;
+
+    @Column(name = "quote_kind", nullable = false, length = 20)
+    @Builder.Default
+    private String quoteKind = "INITIAL";
+
+    @Column(name = "booking_id")
+    private UUID bookingId;
 
     @Column(name = "provider_id", nullable = false)
     private UUID providerId;
@@ -67,6 +74,18 @@ public class QuotationEntity {
 
     @Column(name = "repair_booking_id")
     private UUID repairBookingId;
+
+    @Column(name = "supersede_reason", length = 500)
+    private String supersedeReason;
+
+    @Column(name = "revision_reason", length = 500)
+    private String revisionReason;
+
+    @Column(name = "rejected_at")
+    private Instant rejectedAt;
+
+    @Column(name = "rejection_reason", length = 500)
+    private String rejectionReason;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;

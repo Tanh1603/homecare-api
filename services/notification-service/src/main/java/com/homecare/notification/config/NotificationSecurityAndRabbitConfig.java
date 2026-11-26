@@ -76,6 +76,21 @@ public class NotificationSecurityAndRabbitConfig {
     }
 
     @Bean
+    public Binding serviceRequestEventsBinding(Queue notificationInboxQueue, TopicExchange domainEventsExchange) {
+        return BindingBuilder.bind(notificationInboxQueue).to(domainEventsExchange).with("service.request.#");
+    }
+
+    @Bean
+    public Binding quotationEventsBinding(Queue notificationInboxQueue, TopicExchange domainEventsExchange) {
+        return BindingBuilder.bind(notificationInboxQueue).to(domainEventsExchange).with("quotation.#");
+    }
+
+    @Bean
+    public Binding warrantyEventsBinding(Queue notificationInboxQueue, TopicExchange domainEventsExchange) {
+        return BindingBuilder.bind(notificationInboxQueue).to(domainEventsExchange).with("warranty.#");
+    }
+
+    @Bean
     public Queue notificationPushDispatchQueue() {
         return QueueBuilder.durable(FcmPushConsumer.QUEUE)
                 .withArgument("x-dead-letter-exchange", DomainEventContracts.DLX)
