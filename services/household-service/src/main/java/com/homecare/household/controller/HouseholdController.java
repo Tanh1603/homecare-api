@@ -17,6 +17,7 @@ import com.homecare.household.dto.HouseholdDtos.CreateDeviceRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateHouseholdRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateMaintenanceScheduleRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateWarrantyRequest;
+import com.homecare.household.dto.HouseholdDtos.DeviceRemovalResponse;
 import com.homecare.household.dto.HouseholdDtos.DeviceResponse;
 import com.homecare.household.dto.HouseholdDtos.DeviceLifecycleResponse;
 import com.homecare.household.dto.HouseholdDtos.RegisterSerialRequest;
@@ -157,12 +158,13 @@ public class HouseholdController {
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @RequestParam(required = false) UUID householdId,
+            @RequestParam(required = false) String status,
             @RequestParam(defaultValue = PageResponse.DEFAULT_PAGE_STRING) int page,
             @RequestParam(defaultValue = PageResponse.DEFAULT_SIZE_STRING) int size,
             HttpServletRequest httpRequest) {
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.RETRIEVED,
-                service.devicesPage(resolvePersonal(jwt, rawOrgId).userId(), householdId, page, size),
+                service.devicesPage(resolvePersonal(jwt, rawOrgId).userId(), householdId, status, page, size),
                 httpRequest));
     }
 
@@ -217,14 +219,26 @@ public class HouseholdController {
                 .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
     }
 
-    @DeleteMapping("/devices/{deviceId}")
-    public ResponseEntity<ApiResponse<Void>> deleteDevice(
+    @PostMapping("/devices/{deviceId}/archive")
+    public ResponseEntity<ApiResponse<DeviceResponse>> archiveDevice(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
             @PathVariable UUID deviceId,
             HttpServletRequest httpRequest) {
-        service.deleteDevice(resolvePersonal(jwt, rawOrgId).userId(), deviceId);
-        return ResponseEntity.ok(responseFactory.ok(ApiMessages.DELETED, null, httpRequest));
+        DeviceResponse archived = service.archiveDevice(resolvePersonal(jwt, rawOrgId).userId(), deviceId);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.ETAG, EtagSupport.format(archived.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, archived, httpRequest));
+    }
+
+    @DeleteMapping("/devices/{deviceId}")
+    public ResponseEntity<ApiResponse<DeviceRemovalResponse>> deleteDevice(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID deviceId,
+            HttpServletRequest httpRequest) {
+        DeviceRemovalResponse result = service.removeDevice(resolvePersonal(jwt, rawOrgId).userId(), deviceId);
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.DELETED, result, httpRequest));
     }
 
     @PostMapping("/devices/{deviceId}/warranties")
@@ -345,6 +359,18 @@ public class HouseholdController {
         return ResponseEntity.ok(responseFactory.ok(
                 ApiMessages.UPDATED,
                 service.updateSchedule(resolvePersonal(jwt, rawOrgId).userId(), scheduleId, request),
+                httpRequest));
+    }
+
+    @PostMapping("/maintenance-schedules/{scheduleId}/skip")
+    public ResponseEntity<ApiResponse<MaintenanceScheduleResponse>> skipSchedule(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID scheduleId,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.UPDATED,
+                service.skipSchedule(resolvePersonal(jwt, rawOrgId).userId(), scheduleId),
                 httpRequest));
     }
 

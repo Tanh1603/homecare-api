@@ -81,6 +81,13 @@ public class HouseholdSecurityConfig {
     }
 
     @Bean
+    public Binding bindBookingAccepted(Queue householdEventsQueue, TopicExchange domainEventsExchange) {
+        return BindingBuilder.bind(householdEventsQueue)
+                .to(domainEventsExchange)
+                .with(DomainEventContracts.BOOKING_ACCEPTED);
+    }
+
+    @Bean
     public Binding bindInstallationCompleted(Queue householdEventsQueue, TopicExchange domainEventsExchange) {
         return BindingBuilder.bind(householdEventsQueue)
                 .to(domainEventsExchange)

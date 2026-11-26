@@ -9,6 +9,8 @@ public enum BookingErrorCode implements ApiErrorCodeContract {
     BOOKING_INVALID_STATE(HttpStatus.CONFLICT, "error.booking.invalid-state", "Booking is not in a valid state for this action."),
     SERVICE_NOT_AVAILABLE(HttpStatus.CONFLICT, "error.booking.service-unavailable", "Requested service offering is inactive or unavailable."),
     DEVICE_REFERENCE_INVALID(HttpStatus.CONFLICT, "error.booking.device-invalid", "Referenced device does not belong to requester or is inactive."),
+    DEVICE_ARCHIVED(HttpStatus.CONFLICT, "error.booking.device-archived", "Referenced device is archived and cannot be linked to a booking."),
+    BOOKING_ALREADY_LINKED_TO_DEVICE(HttpStatus.CONFLICT, "error.booking.device-already-linked", "Booking is already linked to another device."),
     WARRANTY_EXPIRED(HttpStatus.CONFLICT, "error.booking.warranty-expired", "Warranty has expired; please book a paid repair service instead."),
     WARRANTY_INVALID(HttpStatus.CONFLICT, "error.booking.warranty-invalid", "Referenced warranty does not belong to requester or is invalid."),
     HOUSEHOLD_SERVICE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "error.booking.household-unavailable", "Household verification unavailable"),

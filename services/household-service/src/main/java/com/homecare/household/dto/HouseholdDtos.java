@@ -77,7 +77,7 @@ public final class HouseholdDtos {
             @NotBlank String name,
             @JsonAlias({"type", "deviceType"}) @NotBlank String deviceType,
             @NotBlank String brand,
-            @NotBlank String model,
+            String model,
             String serialNumber,
             LocalDate purchaseDate) {
     }
@@ -107,9 +107,34 @@ public final class HouseholdDtos {
             String serialNumber,
             LocalDate purchaseDate,
             String status,
+            String originSource,
+            Instant archivedAt,
             Long version,
             Instant createdAt,
             Instant updatedAt) {
+        public DeviceResponse(
+                UUID id,
+                UUID householdId,
+                String ownerProfileId,
+                String name,
+                String deviceType,
+                String type,
+                String brand,
+                String model,
+                String serialNumber,
+                LocalDate purchaseDate,
+                String status,
+                Long version,
+                Instant createdAt,
+                Instant updatedAt) {
+            this(id, householdId, ownerProfileId, name, deviceType, type, brand, model,
+                    serialNumber, purchaseDate, status, "MANUAL", null, version, createdAt, updatedAt);
+        }
+    }
+
+    public record DeviceRemovalResponse(
+            String outcome,
+            DeviceResponse device) {
     }
 
     public record CreateWarrantyRequest(
@@ -196,14 +221,22 @@ public final class HouseholdDtos {
     public record CreateMaintenanceScheduleRequest(
             @NotBlank String title,
             Integer cadenceMonths,
-            @NotNull LocalDate dueOn) {
+            @NotNull LocalDate dueOn,
+            Boolean reminderEnabled) {
+        public CreateMaintenanceScheduleRequest(String title, Integer cadenceMonths, LocalDate dueOn) {
+            this(title, cadenceMonths, dueOn, true);
+        }
     }
 
     public record UpdateMaintenanceScheduleRequest(
             String title,
             Integer cadenceMonths,
             LocalDate dueOn,
-            String status) {
+            String status,
+            Boolean reminderEnabled) {
+        public UpdateMaintenanceScheduleRequest(String title, Integer cadenceMonths, LocalDate dueOn, String status) {
+            this(title, cadenceMonths, dueOn, status, null);
+        }
     }
 
     public record MaintenanceScheduleResponse(
@@ -213,9 +246,53 @@ public final class HouseholdDtos {
             Integer cadenceMonths,
             LocalDate dueOn,
             String status,
+            boolean reminderEnabled,
             Instant notifiedAt,
             Instant completedAt,
+            Instant lastServicedAt,
+            Instant lastSkippedAt,
             Instant createdAt) {
+        public MaintenanceScheduleResponse(
+                UUID id,
+                UUID deviceId,
+                String title,
+                Integer cadenceMonths,
+                LocalDate dueOn,
+                String status,
+                Instant notifiedAt,
+                Instant completedAt,
+                Instant createdAt) {
+            this(id, deviceId, title, cadenceMonths, dueOn, status, true, notifiedAt, completedAt, null, null, createdAt);
+        }
+    }
+
+    public record CreateMaintenancePolicyRequest(
+            @NotBlank String category,
+            String model,
+            @NotBlank String title,
+            @NotNull Integer cadenceMonths,
+            String status,
+            LocalDate firstDueOn) {
+    }
+
+    public record UpdateMaintenancePolicyRequest(
+            String title,
+            Integer cadenceMonths,
+            String status,
+            LocalDate firstDueOn) {
+    }
+
+    public record MaintenancePolicyResponse(
+            UUID id,
+            String category,
+            String model,
+            String title,
+            Integer cadenceMonths,
+            Integer policyVersion,
+            String status,
+            LocalDate firstDueOn,
+            Instant createdAt,
+            Instant updatedAt) {
     }
 
     public record CreateCareRecordRequest(

@@ -1097,7 +1097,48 @@ public class BookingLifecycleService {
         });
     }
 
+    @Transactional
+    public BookingResponse linkDeviceToAcceptedBooking(ActorContext actor, UUID bookingId, UUID deviceId) {
+        if (deviceId == null) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "deviceId is required.");
+        }
+        BookingEntity booking = bookingRepository.lockById(bookingId)
+                .orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
+        if (!booking.getRequesterProfileId().equals(actor.userId())) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Only the booking requester can link a device.");
+        }
+        if (!BookingStatus.ACCEPTED.name().equalsIgnoreCase(booking.getStatus())) {
+            throw new DomainException(
+                    BookingErrorCode.BOOKING_INVALID_STATE,
+                    "Only ACCEPTED bookings can be retroactively linked to a device.");
+        }
+        if (booking.getDeviceId() != null) {
+            if (booking.getDeviceId().equals(deviceId)) {
+                return toBookingResponse(booking);
+            }
+            throw new DomainException(BookingErrorCode.BOOKING_ALREADY_LINKED_TO_DEVICE);
+        }
+        String resolvedDeviceType = householdVerificationClient.verifyDeviceOrFallback(
+                deviceId, actor.userId(), booking.getDeviceType());
+        Instant effectiveAcceptedAt = booking.getAcceptedAt() != null
+                ? booking.getAcceptedAt()
+                : (booking.getUpdatedAt() != null ? booking.getUpdatedAt() : Instant.now());
+        booking.setDeviceId(deviceId);
+        if (resolvedDeviceType != null && !resolvedDeviceType.isBlank()) {
+            booking.setDeviceType(resolvedDeviceType);
+        }
+        booking.setAcceptedAt(effectiveAcceptedAt);
+        booking.setUpdatedAt(Instant.now());
+        BookingEntity saved = bookingRepository.saveAndFlush(booking);
+        publishDomainEvent(DomainEventContracts.BOOKING_ACCEPTED, saved, true);
+        return toBookingResponse(saved);
+    }
+
     private void publishDomainEvent(String eventType, BookingEntity booking) {
+        publishDomainEvent(eventType, booking, false);
+    }
+
+    private void publishDomainEvent(String eventType, BookingEntity booking, boolean retroactiveLink) {
         Instant now = Instant.now();
         UUID eventId = UUID.randomUUID();
         Map<String, Object> data = new LinkedHashMap<>();
@@ -1112,6 +1153,11 @@ public class BookingLifecycleService {
         data.put("purpose", booking.getPurpose());
         data.put("orderId", booking.getOrderId());
         data.put("orderLineId", booking.getOrderLineId());
+        if (DomainEventContracts.BOOKING_ACCEPTED.equals(eventType)) {
+            Instant acceptedAt = booking.getAcceptedAt() != null ? booking.getAcceptedAt() : now;
+            data.put("acceptedAt", acceptedAt.toString());
+            data.put("retroactiveLink", retroactiveLink);
+        }
         if ("INSTALLATION_COMPLETED".equals(eventType)) {
             List<String> evidenceRefs = workEvidenceRepository.findByBookingId(booking.getId()).stream()
                     .map(e -> e.getId() + ":" + e.getObjectKey())

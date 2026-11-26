@@ -16,6 +16,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface BookingRepository extends JpaRepository<BookingEntity, UUID>, JpaSpecificationExecutor<BookingEntity> {
+    boolean existsByDeviceId(UUID deviceId);
     Optional<BookingEntity> findByOrderLineIdAndPurpose(UUID orderLineId, String purpose);
 
     List<BookingEntity> findByProviderIdAndStatusIn(UUID providerId, List<String> statuses);

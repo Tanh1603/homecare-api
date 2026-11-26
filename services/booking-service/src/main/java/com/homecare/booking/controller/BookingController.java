@@ -42,6 +42,7 @@ import com.homecare.common.web.servlet.ServletApiResponseFactory;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 
 @RestController
@@ -185,6 +186,22 @@ public class BookingController {
             HttpServletRequest httpRequest) {
         ActorContext actor = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId));
         BookingResponse updated = service.approveExtraCost(actor, bookingId, updateId, request, ifMatch);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    public record LinkDeviceRequest(@NotNull UUID deviceId) {}
+
+    @PostMapping("/{bookingId}/link-device")
+    public ResponseEntity<ApiResponse<BookingResponse>> linkDevice(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID bookingId,
+            @Valid @RequestBody LinkDeviceRequest request,
+            HttpServletRequest httpRequest) {
+        ActorContext actor = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId));
+        BookingResponse updated = service.linkDeviceToAcceptedBooking(actor, bookingId, request.deviceId());
         return ResponseEntity.ok()
                 .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
                 .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));

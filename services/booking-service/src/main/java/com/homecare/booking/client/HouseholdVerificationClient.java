@@ -59,6 +59,9 @@ public class HouseholdVerificationClient {
                             .build());
 
             if (!response.getValid()) {
+                if ("ARCHIVED".equalsIgnoreCase(response.getStatus())) {
+                    throw new DomainException(BookingErrorCode.DEVICE_ARCHIVED);
+                }
                 throw new DomainException(BookingErrorCode.DEVICE_REFERENCE_INVALID);
             }
             if (!response.getDeviceType().isBlank()) {

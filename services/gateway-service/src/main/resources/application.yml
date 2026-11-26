@@ -28,7 +28,7 @@ spring:
             - id: household-service-route
               uri: ${HOUSEHOLD_URL:http://localhost:8082}
               predicates:
-                - Path=/api/v1/households,/api/v1/households/**,/api/v1/devices,/api/v1/devices/**,/api/v1/warranties,/api/v1/warranties/**,/api/v1/maintenance-schedules/**,/api/v1/care-history/**,/api/v1/locations,/api/v1/locations/**,/api/v1/addresses,/api/v1/addresses/**
+                - Path=/api/v1/households,/api/v1/households/**,/api/v1/devices,/api/v1/devices/**,/api/v1/warranties,/api/v1/warranties/**,/api/v1/maintenance-schedules,/api/v1/maintenance-schedules/**,/api/v1/admin/maintenance-policies,/api/v1/admin/maintenance-policies/**,/api/v1/care-history/**,/api/v1/locations,/api/v1/locations/**,/api/v1/addresses,/api/v1/addresses/**
             - id: review-service-route
               uri: ${REVIEW_URL:http://localhost:8086}
               predicates:

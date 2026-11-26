@@ -14,6 +14,7 @@ import static jakarta.persistence.LockModeType.PESSIMISTIC_WRITE;
 
 public interface WarrantyRepository extends JpaRepository<Warranty, UUID> {
     void deleteByDeviceId(UUID deviceId);
+    boolean existsByDeviceId(UUID deviceId);
     @Query("select w from Warranty w where (:owner is null or w.ownerProfileId = :owner) and (:org is null or w.organizationId = :org)")
     Page<Warranty> search(String owner, UUID org, Pageable pageable);
     List<Warranty> findByDeviceIdOrderByEndsOnDesc(UUID deviceId);

@@ -57,6 +57,13 @@ public class Device {
     @Column(nullable = false)
     private String status;
 
+    @Column(name = "origin_source", nullable = false, length = 32)
+    @Builder.Default
+    private String originSource = "MANUAL";
+
+    @Column(name = "archived_at")
+    private Instant archivedAt;
+
     @Column(name = "installation_status", nullable = false)
     @Builder.Default
     private String installationStatus = "PENDING";

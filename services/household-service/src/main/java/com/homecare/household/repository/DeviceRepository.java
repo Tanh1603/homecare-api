@@ -15,7 +15,9 @@ import com.homecare.household.entity.Device;
 public interface DeviceRepository extends JpaRepository<Device, UUID> {
     List<Device> findByHouseholdIdOrderByCreatedAtDesc(UUID householdId);
     Page<Device> findByHouseholdIdOrderByCreatedAtDesc(UUID householdId, Pageable pageable);
+    Page<Device> findByHouseholdIdAndStatusOrderByCreatedAtDesc(UUID householdId, String status, Pageable pageable);
     Page<Device> findByOwnerProfileIdOrderByCreatedAtDesc(String ownerProfileId, Pageable pageable);
+    Page<Device> findByOwnerProfileIdAndStatusOrderByCreatedAtDesc(String ownerProfileId, String status, Pageable pageable);
     List<Device> findByOwnerProfileIdOrderByCreatedAtDesc(String ownerProfileId);
     Optional<Device> findByUnitKey(String unitKey);
 

@@ -72,15 +72,21 @@ public class HouseholdEventConsumer {
                     }
                 }
                 case DomainEventContracts.BOOKING_COMPLETED -> {
+                    // D-11.5: CareRecord & maintenance advancement trigger ONLY at ACCEPTED (booking.accepted.v1),
+                    // never prematurely on booking.completed.v1.
+                    log.debug("HouseholdEventConsumer ignored booking.completed.v1 for CareRecord (D-11.5)");
+                }
+                case DomainEventContracts.BOOKING_ACCEPTED -> {
                     UUID deviceId = uuidField(data, "deviceId");
                     if (deviceId != null) {
-                        domainService.recordCareHistoryFromBookingCompleted(
+                        domainService.recordCareHistoryFromBookingAccepted(
                                 uuidField(data, "bookingId"),
                                 deviceId,
                                 stringField(data, "requesterProfileId"),
                                 stringField(data, "bookingType"),
                                 stringField(data, "serviceName"),
-                                "Hoàn tất dịch vụ tự động ghi nhận từ Booking #" + stringField(data, "bookingId"));
+                                instantField(data, "acceptedAt"),
+                                "Nghiệm thu dịch vụ tự động ghi nhận từ Booking #" + stringField(data, "bookingId"));
                     }
                 }
                 case DomainEventContracts.INSTALLATION_COMPLETED -> domainService.recordInstallationCompleted(

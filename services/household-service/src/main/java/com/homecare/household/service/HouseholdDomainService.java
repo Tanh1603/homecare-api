@@ -10,20 +10,25 @@ import com.homecare.household.security.HouseholdAccessPolicy;
 import com.homecare.common.event.DomainEventContracts;
 import com.homecare.common.web.EtagSupport;
 import com.homecare.common.web.PageResponse;
+import com.homecare.household.client.BookingUsageGrpcClient;
 import com.homecare.household.client.ProviderOrgClient;
 import com.homecare.household.dto.HouseholdDtos.CareRecordResponse;
 import com.homecare.household.dto.HouseholdDtos.CreateCareRecordRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateDeviceRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateHouseholdRequest;
+import com.homecare.household.dto.HouseholdDtos.CreateMaintenancePolicyRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateMaintenanceScheduleRequest;
 import com.homecare.household.dto.HouseholdDtos.CreateWarrantyRequest;
+import com.homecare.household.dto.HouseholdDtos.DeviceRemovalResponse;
 import com.homecare.household.dto.HouseholdDtos.DeviceResponse;
 import com.homecare.household.dto.HouseholdDtos.DeviceLifecycleResponse;
 import com.homecare.household.dto.HouseholdDtos.HouseholdResponse;
+import com.homecare.household.dto.HouseholdDtos.MaintenancePolicyResponse;
 import com.homecare.household.dto.HouseholdDtos.MaintenanceScheduleResponse;
 import com.homecare.household.dto.HouseholdDtos.UpdateCareRecordRequest;
 import com.homecare.household.dto.HouseholdDtos.UpdateDeviceRequest;
 import com.homecare.household.dto.HouseholdDtos.UpdateHouseholdRequest;
+import com.homecare.household.dto.HouseholdDtos.UpdateMaintenancePolicyRequest;
 import com.homecare.household.dto.HouseholdDtos.UpdateMaintenanceScheduleRequest;
 import com.homecare.household.dto.HouseholdDtos.UpdateWarrantyRequest;
 import com.homecare.household.dto.HouseholdDtos.RegisterSerialRequest;
@@ -51,11 +56,13 @@ import com.homecare.household.repository.WarrantyRepository;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.IntStream;
 import lombok.RequiredArgsConstructor;
@@ -68,6 +75,13 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class HouseholdDomainService {
+    public static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
+    private static final String ORIGIN_MANUAL = "MANUAL";
+    private static final String ORIGIN_STORE_ORDER = "STORE_ORDER";
+    private static final String STATUS_ARCHIVED = "ARCHIVED";
+    private static final Set<String> ALLOWED_POLICY_STATUSES = Set.of("DRAFT", "APPROVED", "ARCHIVED");
+    private static final Set<String> ALLOWED_SCHEDULE_STATUSES = Set.of("SCHEDULED", "PAUSED", "COMPLETED", "CANCELLED");
+
     private final HouseholdRepository householdRepository;
     private final DeviceRepository deviceRepository;
     private final WarrantyRepository warrantyRepository;
@@ -78,6 +92,7 @@ public class HouseholdDomainService {
     private final UserAddressRepository userAddressRepository;
     private final AddressBookService addressBookService;
     private final ProviderOrgClient providerOrgClient;
+    private final BookingUsageGrpcClient bookingUsageGrpcClient;
     private final HouseholdAccessPolicy accessPolicy;
     private final ObjectMapper objectMapper;
 
@@ -169,8 +184,17 @@ public class HouseholdDomainService {
     @Transactional
     public void deleteHousehold(String ownerProfileId, UUID householdId) {
         Household h = requireOwnedHousehold(ownerProfileId, householdId);
+        boolean hasArchivedDevice = false;
         for (var device : deviceRepository.findByHouseholdIdOrderByCreatedAtDesc(householdId)) {
-            deleteDevice(ownerProfileId, device.getId());
+            DeviceRemovalResponse removal = removeDevice(ownerProfileId, device.getId());
+            if (STATUS_ARCHIVED.equals(removal.outcome())) {
+                hasArchivedDevice = true;
+            }
+        }
+        if (hasArchivedDevice) {
+            throw new DomainException(
+                    CommonErrorCode.OPERATION_FORBIDDEN,
+                    "Cannot delete household with devices that have warranty, care, or booking history.");
         }
         householdRepository.delete(h);
     }
@@ -184,6 +208,7 @@ public class HouseholdDomainService {
             householdId = ensureDefaultHouseholdId(ownerProfileId);
         }
         Instant now = Instant.now();
+        String normalizedModel = (request.model() == null || request.model().isBlank()) ? null : request.model().trim();
         Device saved = deviceRepository.saveAndFlush(Device.builder()
                 .id(UUID.randomUUID())
                 .householdId(householdId)
@@ -191,10 +216,12 @@ public class HouseholdDomainService {
                 .name(request.name().trim())
                 .deviceType(request.deviceType().trim().toUpperCase())
                 .brand(request.brand().trim())
-                .model(request.model().trim())
-                .serialNumber(request.serialNumber())
+                .model(normalizedModel)
+                .serialNumber(request.serialNumber() == null || request.serialNumber().isBlank()
+                        ? null : request.serialNumber().trim())
                 .purchaseDate(request.purchaseDate())
                 .status(EntityStatus.ACTIVE.name())
+                .originSource(ORIGIN_MANUAL)
                 .createdAt(now)
                 .updatedAt(now)
                 .build());
@@ -204,11 +231,28 @@ public class HouseholdDomainService {
 
     @Transactional(readOnly = true)
     public PageResponse<DeviceResponse> devicesPage(String ownerProfileId, UUID householdId, int page, int size) {
+        return devicesPage(ownerProfileId, householdId, null, page, size);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<DeviceResponse> devicesPage(String ownerProfileId, UUID householdId, String status, int page, int size) {
         var pageable = pageRequest(page, size, "createdAt");
+        String normalizedStatus = (status == null || status.isBlank() || "ALL".equalsIgnoreCase(status.trim()))
+                ? null : status.trim().toUpperCase();
+        if (normalizedStatus != null
+                && !EntityStatus.ACTIVE.name().equals(normalizedStatus)
+                && !STATUS_ARCHIVED.equals(normalizedStatus)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Device status filter must be ACTIVE, ARCHIVED, or ALL.");
+        }
         var result = householdId != null
-                ? deviceRepository.findByHouseholdIdOrderByCreatedAtDesc(
-                        requireOwnedHousehold(ownerProfileId, householdId).getId(), pageable)
-                : deviceRepository.findByOwnerProfileIdOrderByCreatedAtDesc(ownerProfileId, pageable);
+                ? (normalizedStatus != null
+                        ? deviceRepository.findByHouseholdIdAndStatusOrderByCreatedAtDesc(
+                                requireOwnedHousehold(ownerProfileId, householdId).getId(), normalizedStatus, pageable)
+                        : deviceRepository.findByHouseholdIdOrderByCreatedAtDesc(
+                                requireOwnedHousehold(ownerProfileId, householdId).getId(), pageable))
+                : (normalizedStatus != null
+                        ? deviceRepository.findByOwnerProfileIdAndStatusOrderByCreatedAtDesc(ownerProfileId, normalizedStatus, pageable)
+                        : deviceRepository.findByOwnerProfileIdOrderByCreatedAtDesc(ownerProfileId, pageable));
         return PageResponse.of(result.map(this::toDeviceResponse).getContent(), page, size, result.getTotalElements());
     }
 
@@ -224,6 +268,7 @@ public class HouseholdDomainService {
             String ifMatchHeader,
             UpdateDeviceRequest request) {
         Device device = requireOwnedDevice(ownerProfileId, deviceId);
+        requireActiveDevice(device);
         EtagSupport.verifyIfMatch(ifMatchHeader, device.getVersion());
         if (request.name() != null && !request.name().isBlank()) {
             device.setName(request.name().trim());
@@ -234,34 +279,60 @@ public class HouseholdDomainService {
         if (request.brand() != null && !request.brand().isBlank()) {
             device.setBrand(request.brand().trim());
         }
-        if (request.model() != null && !request.model().isBlank()) {
-            device.setModel(request.model().trim());
+        if (request.model() != null) {
+            device.setModel(request.model().isBlank() ? null : request.model().trim());
         }
         if (request.serialNumber() != null) {
-            device.setSerialNumber(request.serialNumber().trim());
+            device.setSerialNumber(request.serialNumber().isBlank() ? null : request.serialNumber().trim());
         }
         if (request.purchaseDate() != null) {
             device.setPurchaseDate(request.purchaseDate());
         }
         if (request.status() != null && !request.status().isBlank()) {
-            device.setStatus(request.status().trim().toUpperCase());
+            String requestedStatus = request.status().trim().toUpperCase();
+            if (STATUS_ARCHIVED.equals(requestedStatus)) {
+                device.setStatus(STATUS_ARCHIVED);
+                device.setArchivedAt(Instant.now());
+            } else if (!EntityStatus.ACTIVE.name().equals(requestedStatus)) {
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Unsupported device status transition.");
+            }
         }
         device.setUpdatedAt(Instant.now());
         return toDeviceResponse(deviceRepository.saveAndFlush(device));
     }
 
     @Transactional
-    public void deleteDevice(String ownerProfileId, UUID deviceId) {
+    public DeviceResponse archiveDevice(String ownerProfileId, UUID deviceId) {
         Device device = requireOwnedDevice(ownerProfileId, deviceId);
-        if (warrantyRepository.findByDeviceIdOrderByEndsOnDesc(deviceId).stream()
-                .anyMatch(w -> "ORDER_AUTO_ACTIVATED".equalsIgnoreCase(w.getSource()))) {
-            throw new DomainException(CommonErrorCode.OPERATION_FORBIDDEN,
-                    "Cannot delete a device with an electronic store warranty.");
+        if (STATUS_ARCHIVED.equalsIgnoreCase(device.getStatus())) {
+            return toDeviceResponse(device);
         }
-        careRecordRepository.deleteByDeviceId(deviceId);
+        Instant now = Instant.now();
+        device.setStatus(STATUS_ARCHIVED);
+        device.setArchivedAt(now);
+        device.setUpdatedAt(now);
+        return toDeviceResponse(deviceRepository.saveAndFlush(device));
+    }
+
+    @Transactional
+    public DeviceRemovalResponse removeDevice(String ownerProfileId, UUID deviceId) {
+        Device device = requireOwnedDevice(ownerProfileId, deviceId);
+        boolean mustArchive = !ORIGIN_MANUAL.equalsIgnoreCase(device.getOriginSource())
+                || careRecordRepository.existsByDeviceId(deviceId)
+                || warrantyRepository.existsByDeviceId(deviceId)
+                || bookingUsageGrpcClient.hasLinkedBookings(deviceId);
+        if (mustArchive) {
+            DeviceResponse archived = archiveDevice(ownerProfileId, deviceId);
+            return new DeviceRemovalResponse(STATUS_ARCHIVED, archived);
+        }
         scheduleRepository.deleteByDeviceId(deviceId);
-        warrantyRepository.deleteByDeviceId(deviceId);
         deviceRepository.delete(device);
+        return new DeviceRemovalResponse("DELETED", null);
+    }
+
+    @Transactional
+    public void deleteDevice(String ownerProfileId, UUID deviceId) {
+        removeDevice(ownerProfileId, deviceId);
     }
 
     @Transactional(readOnly = true)
@@ -464,6 +535,7 @@ public class HouseholdDomainService {
                                 .unitKey(unitKey)
                                 .purchaseDate(today)
                                 .status(EntityStatus.ACTIVE.name())
+                                .originSource(ORIGIN_STORE_ORDER)
                                 .createdAt(now)
                                 .updatedAt(now)
                                 .build()));
@@ -551,12 +623,13 @@ public class HouseholdDomainService {
             if (!"INSTALLATION_COMPLETED".equalsIgnoreCase(warranty.getStartTrigger())) {
                 continue;
             }
+            boolean alreadyActive = "ACTIVE".equalsIgnoreCase(warranty.getStatus());
             if (device == null || device.getSerialNumber() == null || device.getSerialNumber().isBlank()) {
                 warranty.setStatus("PENDING_SERIAL");
-            } else if (!"ACTIVE".equalsIgnoreCase(warranty.getStatus())) {
+            } else if (!alreadyActive) {
                 activateInstallationWarranty(warranty);
             }
-            if (!"ACTIVE".equalsIgnoreCase(warranty.getStatus())) {
+            if (!alreadyActive) {
                 warranty.setWarrantyResponsibleOrgId(executorOrgId != null ? executorOrgId : warranty.getWarrantyResponsibleOrgId());
                 warranty.setTriggerEvidenceRef(String.join(",", evidenceRefs));
                 warrantyRepository.save(warranty);
@@ -626,6 +699,19 @@ public class HouseholdDomainService {
             String bookingType,
             String serviceName,
             String notes) {
+        return recordCareHistoryFromBookingAccepted(
+                bookingId, deviceId, requesterProfileId, bookingType, serviceName, Instant.now(), notes);
+    }
+
+    @Transactional
+    public CareRecordResponse recordCareHistoryFromBookingAccepted(
+            UUID bookingId,
+            UUID deviceId,
+            String requesterProfileId,
+            String bookingType,
+            String serviceName,
+            Instant acceptedAt,
+            String notes) {
         if (bookingId == null || deviceId == null) {
             return null;
         }
@@ -640,23 +726,25 @@ public class HouseholdDomainService {
             }
             Device device = deviceOpt.get();
             String kind = "WARRANTY_CLAIM".equalsIgnoreCase(bookingType) ? "WARRANTY_REPAIR"
+                    : ("INSTALLATION".equalsIgnoreCase(bookingType) ? "INSTALLATION"
                     : ("MAINTENANCE".equalsIgnoreCase(bookingType)
                             || "MAINTENANCE_SERVICE".equalsIgnoreCase(bookingType)
-                                    ? "MAINTENANCE" : "PAID_REPAIR");
-            Instant now = Instant.now();
+                                    ? "MAINTENANCE" : "PAID_REPAIR"));
+            Instant occurredAt = acceptedAt != null ? acceptedAt : Instant.now();
             CareRecord saved = careRecordRepository.saveAndFlush(CareRecord.builder()
                     .id(UUID.randomUUID())
                     .deviceId(device.getId())
-                    .ownerProfileId(requesterProfileId != null ? requesterProfileId : device.getOwnerProfileId())
+                    .ownerProfileId(requesterProfileId != null && !requesterProfileId.isBlank()
+                            ? requesterProfileId : device.getOwnerProfileId())
                     .kind(kind)
-                    .occurredAt(now)
+                    .occurredAt(occurredAt)
                     .title(serviceName != null && !serviceName.isBlank() ? serviceName : kind)
                     .notes(notes)
                     .bookingId(bookingId)
-                    .createdAt(now)
+                    .createdAt(Instant.now())
                     .build());
             if ("MAINTENANCE".equals(kind)) {
-                advanceMaintenanceSchedule(deviceId, now);
+                advanceMaintenanceSchedule(deviceId, occurredAt);
             }
             return toCareRecordResponse(saved);
         } catch (org.springframework.dao.DataIntegrityViolationException duplicate) {
@@ -666,17 +754,19 @@ public class HouseholdDomainService {
         }
     }
 
-    private void advanceMaintenanceSchedule(UUID deviceId, Instant servicedAt) {
+    private void advanceMaintenanceSchedule(UUID deviceId, Instant acceptedAt) {
+        LocalDate acceptedDateVn = acceptedAt.atZone(VIETNAM_ZONE).toLocalDate();
         scheduleRepository.findByDeviceIdOrderByDueOnAsc(deviceId).stream()
-                .filter(s -> !"CANCELLED".equalsIgnoreCase(s.getStatus()))
+                .filter(s -> "SCHEDULED".equalsIgnoreCase(s.getStatus()))
+                .filter(s -> s.getLastServicedAt() == null || acceptedAt.isAfter(s.getLastServicedAt()))
                 .findFirst()
                 .ifPresent(schedule -> {
                     int cadence = schedule.getCadenceMonths() == null ? 6 : schedule.getCadenceMonths();
-                    schedule.setDueOn(schedule.getDueOn().plusMonths(cadence));
+                    schedule.setDueOn(acceptedDateVn.plusMonths(cadence));
                     schedule.setStatus("SCHEDULED");
                     schedule.setNotifiedAt(null);
-                    schedule.setCompletedAt(servicedAt);
-                    schedule.setLastServicedAt(servicedAt);
+                    schedule.setCompletedAt(acceptedAt);
+                    schedule.setLastServicedAt(acceptedAt);
                     scheduleRepository.save(schedule);
                 });
     }
@@ -684,12 +774,20 @@ public class HouseholdDomainService {
     @Transactional
     public MaintenanceScheduleResponse createScheduleFromApprovedPolicy(UUID deviceId) {
         Device device = deviceRepository.findById(deviceId).orElse(null);
-        if (device == null) {
+        if (device == null || STATUS_ARCHIVED.equalsIgnoreCase(device.getStatus())) {
             return null;
         }
-        Optional<MaintenancePolicyEntity> policy = maintenancePolicyRepository
-                .findFirstByCategoryAndModelAndStatusAndConsentGrantedTrueOrderByPolicyVersionDesc(
-                        device.getDeviceType(), device.getModel(), "APPROVED");
+        Optional<MaintenancePolicyEntity> policy = Optional.empty();
+        if (device.getModel() != null && !device.getModel().isBlank()) {
+            policy = maintenancePolicyRepository
+                    .findFirstByCategoryAndModelAndStatusOrderByPolicyVersionDesc(
+                            device.getDeviceType(), device.getModel(), "APPROVED");
+        }
+        if (policy.isEmpty()) {
+            policy = maintenancePolicyRepository
+                    .findFirstByCategoryAndModelIsNullAndStatusOrderByPolicyVersionDesc(
+                            device.getDeviceType(), "APPROVED");
+        }
         if (policy.isEmpty()) {
             return null;
         }
@@ -710,9 +808,10 @@ public class HouseholdDomainService {
                 .cadenceMonths(p.getCadenceMonths())
                 .policyVersion(p.getPolicyVersion())
                 .dueOn(p.getFirstDueOn() == null
-                        ? LocalDate.now().plusMonths(p.getCadenceMonths())
+                        ? LocalDate.now(VIETNAM_ZONE).plusMonths(p.getCadenceMonths())
                         : p.getFirstDueOn())
                 .status("SCHEDULED")
+                .reminderEnabled(true)
                 .createdAt(Instant.now())
                 .build());
         return toScheduleResponse(saved);
@@ -720,13 +819,77 @@ public class HouseholdDomainService {
 
     @Transactional
     public MaintenancePolicyEntity createMaintenancePolicy(MaintenancePolicyEntity policy) {
-        MaintenancePolicyEntity saved = maintenancePolicyRepository.saveAndFlush(policy);
-        deviceRepository.findAll().stream()
-                .filter(d -> d.getDeviceType().equalsIgnoreCase(saved.getCategory()))
-                .filter(d -> d.getModel().equalsIgnoreCase(saved.getModel()))
-                .filter(d -> saved.getDeviceId() == null || saved.getDeviceId().equals(d.getId()))
-                .forEach(d -> createScheduleFromApprovedPolicy(d.getId()));
-        return saved;
+        validateCadenceMonths(policy.getCadenceMonths());
+        return maintenancePolicyRepository.saveAndFlush(policy);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<MaintenancePolicyResponse> listMaintenancePoliciesForAdmin(
+            ActorContext actor, String category, String status, int page, int size) {
+        requireGlobalAdmin(actor);
+        PageResponse.validate(page, size);
+        String normCat = (category == null || category.isBlank()) ? null : category.trim().toUpperCase();
+        String normStatus = (status == null || status.isBlank()) ? null : status.trim().toUpperCase();
+        var pageable = PageRequest.of(page - 1, size);
+        var result = maintenancePolicyRepository.searchForAdmin(normCat, normStatus, pageable);
+        return PageResponse.of(result.map(this::toPolicyResponse).getContent(), page, size, result.getTotalElements());
+    }
+
+    @Transactional
+    public MaintenancePolicyResponse createMaintenancePolicyForAdmin(
+            ActorContext actor, CreateMaintenancePolicyRequest request) {
+        requireGlobalAdmin(actor);
+        validateCadenceMonths(request.cadenceMonths());
+        String category = request.category().trim().toUpperCase();
+        String model = (request.model() == null || request.model().isBlank()) ? null : request.model().trim();
+        String status = (request.status() == null || request.status().isBlank())
+                ? "DRAFT" : request.status().trim().toUpperCase();
+        if (!ALLOWED_POLICY_STATUSES.contains(status)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Policy status must be DRAFT, APPROVED, or ARCHIVED.");
+        }
+        int nextVersion = maintenancePolicyRepository.findMaxPolicyVersion(category, model) + 1;
+        Instant now = Instant.now();
+        MaintenancePolicyEntity saved = maintenancePolicyRepository.saveAndFlush(MaintenancePolicyEntity.builder()
+                .id(UUID.randomUUID())
+                .category(category)
+                .model(model)
+                .title(request.title().trim())
+                .cadenceMonths(request.cadenceMonths())
+                .policyVersion(nextVersion)
+                .status(status)
+                .consentGranted(true)
+                .firstDueOn(request.firstDueOn())
+                .createdAt(now)
+                .updatedAt(now)
+                .build());
+        return toPolicyResponse(saved);
+    }
+
+    @Transactional
+    public MaintenancePolicyResponse updateMaintenancePolicyForAdmin(
+            ActorContext actor, UUID policyId, UpdateMaintenancePolicyRequest request) {
+        requireGlobalAdmin(actor);
+        MaintenancePolicyEntity policy = maintenancePolicyRepository.findById(policyId)
+                .orElseThrow(() -> new DomainException(HouseholdErrorCode.MAINTENANCE_POLICY_NOT_FOUND));
+        if (request.title() != null && !request.title().isBlank()) {
+            policy.setTitle(request.title().trim());
+        }
+        if (request.cadenceMonths() != null) {
+            validateCadenceMonths(request.cadenceMonths());
+            policy.setCadenceMonths(request.cadenceMonths());
+        }
+        if (request.status() != null && !request.status().isBlank()) {
+            String nextStatus = request.status().trim().toUpperCase();
+            if (!ALLOWED_POLICY_STATUSES.contains(nextStatus)) {
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Policy status must be DRAFT, APPROVED, or ARCHIVED.");
+            }
+            policy.setStatus(nextStatus);
+        }
+        if (request.firstDueOn() != null) {
+            policy.setFirstDueOn(request.firstDueOn());
+        }
+        policy.setUpdatedAt(Instant.now());
+        return toPolicyResponse(maintenancePolicyRepository.saveAndFlush(policy));
     }
 
     @Transactional(readOnly = true)
@@ -794,14 +957,18 @@ public class HouseholdDomainService {
             UUID deviceId,
             CreateMaintenanceScheduleRequest request) {
         Device device = requireOwnedDevice(ownerProfileId, deviceId);
+        requireActiveDevice(device);
+        int cadence = request.cadenceMonths() == null ? 6 : request.cadenceMonths();
+        validateCadenceMonths(cadence);
         MaintenanceSchedule saved = scheduleRepository.save(MaintenanceSchedule.builder()
                 .id(UUID.randomUUID())
                 .deviceId(device.getId())
                 .ownerProfileId(ownerProfileId)
                 .title(request.title().trim())
-                .cadenceMonths(request.cadenceMonths() == null ? 6 : request.cadenceMonths())
+                .cadenceMonths(cadence)
                 .dueOn(request.dueOn())
                 .status("SCHEDULED")
+                .reminderEnabled(request.reminderEnabled() == null || request.reminderEnabled())
                 .createdAt(Instant.now())
                 .build());
         return toScheduleResponse(saved);
@@ -809,7 +976,10 @@ public class HouseholdDomainService {
 
     @Transactional(readOnly = true)
     public PageResponse<MaintenanceScheduleResponse> listSchedulesPage(String ownerProfileId, UUID deviceId, int page, int size) {
-        return slicePage(listSchedules(ownerProfileId, deviceId), page, size);
+        requireOwnedDevice(ownerProfileId, deviceId);
+        PageResponse.validate(page, size);
+        var result = scheduleRepository.findByDeviceIdOrderByDueOnAsc(deviceId, PageRequest.of(page - 1, size));
+        return PageResponse.of(result.map(this::toScheduleResponse).getContent(), page, size, result.getTotalElements());
     }
 
     @Transactional(readOnly = true)
@@ -831,29 +1001,59 @@ public class HouseholdDomainService {
         if (!s.getOwnerProfileId().equals(ownerProfileId)) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this schedule.");
         }
+        Device parent = requireOwnedDevice(ownerProfileId, s.getDeviceId());
+        requireActiveDevice(parent);
         if (request.dueOn() != null
                 && s.getNotifiedAt() != null
                 && !"COMPLETED".equals(request.status())) {
             throw new DomainException(
                     HouseholdErrorCode.SCHEDULE_ALREADY_NOTIFIED,
-                    "Schedule has already triggered a notification; complete or create a new schedule.");
+                    "Schedule has already triggered a notification; complete, skip, or create a new schedule.");
         }
         if (request.title() != null && !request.title().isBlank()) {
             s.setTitle(request.title().trim());
         }
         if (request.cadenceMonths() != null) {
+            validateCadenceMonths(request.cadenceMonths());
             s.setCadenceMonths(request.cadenceMonths());
         }
         if (request.dueOn() != null) {
             s.setDueOn(request.dueOn());
         }
+        if (request.reminderEnabled() != null) {
+            s.setReminderEnabled(request.reminderEnabled());
+        }
         if (request.status() != null && !request.status().isBlank()) {
             String nextStatus = request.status().trim().toUpperCase();
+            if (!ALLOWED_SCHEDULE_STATUSES.contains(nextStatus)) {
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Unsupported maintenance schedule status.");
+            }
             s.setStatus(nextStatus);
             if ("COMPLETED".equals(nextStatus)) {
                 s.setCompletedAt(Instant.now());
             }
         }
+        return toScheduleResponse(scheduleRepository.save(s));
+    }
+
+    @Transactional
+    public MaintenanceScheduleResponse skipSchedule(String ownerProfileId, UUID scheduleId) {
+        MaintenanceSchedule s = scheduleRepository.findById(scheduleId)
+                .orElseThrow(() -> new DomainException(HouseholdErrorCode.SCHEDULE_NOT_FOUND));
+        if (!s.getOwnerProfileId().equals(ownerProfileId)) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this schedule.");
+        }
+        Device parent = requireOwnedDevice(ownerProfileId, s.getDeviceId());
+        requireActiveDevice(parent);
+        if ("CANCELLED".equalsIgnoreCase(s.getStatus())) {
+            throw new DomainException(CommonErrorCode.OPERATION_FORBIDDEN, "Cannot skip a cancelled maintenance schedule.");
+        }
+        int cadence = s.getCadenceMonths() == null ? 6 : s.getCadenceMonths();
+        LocalDate todayVn = LocalDate.now(VIETNAM_ZONE);
+        s.setDueOn(todayVn.plusMonths(cadence));
+        s.setNotifiedAt(null);
+        s.setLastSkippedAt(Instant.now());
+        s.setStatus("SCHEDULED");
         return toScheduleResponse(scheduleRepository.save(s));
     }
 
@@ -873,6 +1073,12 @@ public class HouseholdDomainService {
             UUID deviceId,
             CreateCareRecordRequest request) {
         Device device = requireOwnedDevice(ownerProfileId, deviceId);
+        requireActiveDevice(device);
+        if (request.bookingId() != null) {
+            throw new DomainException(
+                    CommonErrorCode.VALIDATION_FAILED,
+                    "Manual care records cannot reference a bookingId; link the accepted booking instead.");
+        }
         Instant occurredAt = request.occurredAt() != null ? request.occurredAt() : Instant.now();
         CareRecord saved = careRecordRepository.save(CareRecord.builder()
                 .id(UUID.randomUUID())
@@ -882,7 +1088,7 @@ public class HouseholdDomainService {
                 .occurredAt(occurredAt)
                 .title(request.title() != null ? request.title().trim() : request.kind().trim())
                 .notes(request.notes())
-                .bookingId(request.bookingId())
+                .bookingId(null)
                 .createdAt(Instant.now())
                 .build());
         return toCareRecordResponse(saved);
@@ -890,7 +1096,10 @@ public class HouseholdDomainService {
 
     @Transactional(readOnly = true)
     public PageResponse<CareRecordResponse> listCareRecordsPage(String ownerProfileId, UUID deviceId, int page, int size) {
-        return slicePage(listCareRecords(ownerProfileId, deviceId), page, size);
+        requireOwnedDevice(ownerProfileId, deviceId);
+        PageResponse.validate(page, size);
+        var result = careRecordRepository.findByDeviceIdOrderByOccurredAtDesc(deviceId, PageRequest.of(page - 1, size));
+        return PageResponse.of(result.map(this::toCareRecordResponse).getContent(), page, size, result.getTotalElements());
     }
 
     private static <T> PageResponse<T> slicePage(List<T> all, int page, int size) {
@@ -919,9 +1128,9 @@ public class HouseholdDomainService {
         if (!r.getOwnerProfileId().equals(ownerProfileId)) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this care record.");
         }
-        if ("INSTALLATION".equalsIgnoreCase(r.getKind())) {
+        if (r.getBookingId() != null || "INSTALLATION".equalsIgnoreCase(r.getKind())) {
             throw new DomainException(CommonErrorCode.OPERATION_FORBIDDEN,
-                    "Installation history is immutable.");
+                    "Booking-backed and installation care history is append-only and immutable.");
         }
         if (request.kind() != null && !request.kind().isBlank()) {
             r.setKind(request.kind().trim().toUpperCase());
@@ -945,35 +1154,32 @@ public class HouseholdDomainService {
         if (!r.getOwnerProfileId().equals(ownerProfileId)) {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this care record.");
         }
-        if ("INSTALLATION".equalsIgnoreCase(r.getKind())) {
+        if (r.getBookingId() != null || "INSTALLATION".equalsIgnoreCase(r.getKind())) {
             throw new DomainException(CommonErrorCode.OPERATION_FORBIDDEN,
-                    "Installation history is immutable.");
+                    "Booking-backed and installation care history is append-only and immutable.");
         }
         careRecordRepository.delete(r);
     }
 
     @Transactional(readOnly = true)
     public VerifyDeviceReferenceResponse verifyDeviceReference(UUID deviceId, String requesterProfileId) {
-        return deviceRepository.findById(deviceId)
-                .filter(d -> d.getOwnerProfileId().equals(requesterProfileId) && EntityStatus.ACTIVE.name().equals(d.getStatus()))
-                .map(d -> new VerifyDeviceReferenceResponse(
-                        true,
-                        d.getId(),
-                        d.getHouseholdId(),
-                        d.getDeviceType(),
-                        d.getName(),
-                        d.getStatus(),
-                        d.getBrand(),
-                        d.getModel()))
-                .orElseGet(() -> new VerifyDeviceReferenceResponse(
-                        false,
-                        deviceId,
-                        null,
-                        null,
-                        null,
-                        "NOT_FOUND_OR_FORBIDDEN",
-                        null,
-                        null));
+        Optional<Device> deviceOpt = deviceRepository.findById(deviceId)
+                .filter(d -> d.getOwnerProfileId().equals(requesterProfileId));
+        if (deviceOpt.isEmpty()) {
+            return new VerifyDeviceReferenceResponse(
+                    false, deviceId, null, null, null, "NOT_FOUND_OR_FORBIDDEN", null, null);
+        }
+        Device d = deviceOpt.get();
+        boolean active = EntityStatus.ACTIVE.name().equalsIgnoreCase(d.getStatus());
+        return new VerifyDeviceReferenceResponse(
+                active,
+                d.getId(),
+                d.getHouseholdId(),
+                d.getDeviceType(),
+                d.getName(),
+                d.getStatus(),
+                d.getBrand(),
+                d.getModel());
     }
 
     @Transactional(readOnly = true)
@@ -1046,8 +1252,8 @@ public class HouseholdDomainService {
 
     @Transactional
     public int enqueueDueMaintenanceReminders(LocalDate referenceDate) {
-        List<MaintenanceSchedule> due = scheduleRepository
-                .findByStatusAndNotifiedAtIsNullAndDueOnLessThanEqual("SCHEDULED", referenceDate);
+        LocalDate effectiveDate = referenceDate != null ? referenceDate : LocalDate.now(VIETNAM_ZONE);
+        List<MaintenanceSchedule> due = scheduleRepository.findDueActiveSchedulesForUpdateSkipLocked(effectiveDate);
         Instant now = Instant.now();
         for (MaintenanceSchedule schedule : due) {
             schedule.setNotifiedAt(now);
@@ -1154,6 +1360,24 @@ public class HouseholdDomainService {
                 h.getUpdatedAt());
     }
 
+    private void requireActiveDevice(Device device) {
+        if (STATUS_ARCHIVED.equalsIgnoreCase(device.getStatus())) {
+            throw new DomainException(HouseholdErrorCode.DEVICE_ARCHIVED);
+        }
+    }
+
+    private void validateCadenceMonths(Integer cadenceMonths) {
+        if (cadenceMonths == null || cadenceMonths < 1 || cadenceMonths > 60) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "cadenceMonths must be between 1 and 60.");
+        }
+    }
+
+    private void requireGlobalAdmin(ActorContext actor) {
+        if (actor == null || !actor.isGlobalAdmin()) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Admin privileges are required.");
+        }
+    }
+
     private DeviceResponse toDeviceResponse(Device d) {
         return new DeviceResponse(
                 d.getId(),
@@ -1167,6 +1391,8 @@ public class HouseholdDomainService {
                 d.getSerialNumber(),
                 d.getPurchaseDate(),
                 d.getStatus(),
+                d.getOriginSource(),
+                d.getArchivedAt(),
                 d.getVersion(),
                 d.getCreatedAt(),
                 d.getUpdatedAt());
@@ -1204,9 +1430,26 @@ public class HouseholdDomainService {
                 s.getCadenceMonths(),
                 s.getDueOn(),
                 s.getStatus(),
+                s.isReminderEnabled(),
                 s.getNotifiedAt(),
                 s.getCompletedAt(),
+                s.getLastServicedAt(),
+                s.getLastSkippedAt(),
                 s.getCreatedAt());
+    }
+
+    private MaintenancePolicyResponse toPolicyResponse(MaintenancePolicyEntity p) {
+        return new MaintenancePolicyResponse(
+                p.getId(),
+                p.getCategory(),
+                p.getModel(),
+                p.getTitle(),
+                p.getCadenceMonths(),
+                p.getPolicyVersion(),
+                p.getStatus(),
+                p.getFirstDueOn(),
+                p.getCreatedAt(),
+                p.getUpdatedAt());
     }
 
     private CareRecordResponse toCareRecordResponse(CareRecord r) {
