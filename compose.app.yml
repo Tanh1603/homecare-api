@@ -11,8 +11,8 @@ services:
     env_file:
       - ./services/household-service/.env
     environment:
-      PROVIDER_GRPC_ADDRESS: "static://provider-service:9083"
-      BOOKING_GRPC_ADDRESS: "static://booking-service:9084"
+      PROVIDER_GRPC_ADDRESS: "dns:///provider-service:9083"
+      BOOKING_GRPC_ADDRESS: "dns:///booking-service:9084"
       HOMECARE_SECURITY_ENFORCE_GATEWAY: "true"
       INTERNAL_GATEWAY_SECRET: "homecare-internal-secret-2026"
       FLYWAY_ENABLED: "true"
@@ -105,8 +105,8 @@ services:
     env_file:
       - ./services/commerce-service/.env
     environment:
-      PROVIDER_GRPC_ADDRESS: "static://provider-service:9083"
-      BOOKING_GRPC_ADDRESS: "static://booking-service:9084"
+      PROVIDER_GRPC_ADDRESS: "dns:///provider-service:9083"
+      BOOKING_GRPC_ADDRESS: "dns:///booking-service:9084"
       HOMECARE_SECURITY_ENFORCE_GATEWAY: "true"
       INTERNAL_GATEWAY_SECRET: "homecare-internal-secret-2026"
       FLYWAY_ENABLED: "true"

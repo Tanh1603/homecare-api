@@ -6,11 +6,15 @@ import static org.assertj.core.api.Assertions.*;
 
 import com.homecare.common.security.AccessMode;
 import com.homecare.common.security.ActorContext;
+import com.homecare.common.security.RbacConstants;
 import com.homecare.provider.dto.ProviderDtos.CreateScheduleWindowRequest;
+import com.homecare.provider.organization.entity.OrgRole;
 import com.homecare.provider.repository.ProviderRepository;
 import com.homecare.provider.repository.ScheduleWindowRepository;
 import com.homecare.provider.repository.TechnicianRepository;
 import java.time.Instant;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -82,8 +86,8 @@ class AllocationWindowTest {
 
     @Test void releasedIntervalCanBeBookedTogetherWithItsAdjacentFreeTime() {
         Instant start = Instant.now().truncatedTo(SECONDS).plus(45, DAYS);
-        service.createScheduleWindow("me",
-                new ActorContext("demo-technician", AccessMode.PERSONAL, null, java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), java.util.Set.of()),
+        service.createScheduleWindow(ProviderDataInitializer.DEMO_TECH_ID.toString(),
+                orgAdminActor(ProviderDataInitializer.PROVIDER_1_ID),
                 new CreateScheduleWindowRequest(start, start.plusSeconds(3600)));
         UUID booking = UUID.randomUUID();
         var allocated = service.allocateTechnicianForBooking("merge-" + booking, booking,
@@ -120,7 +124,7 @@ class AllocationWindowTest {
                 w.setAllocatedBookingId(stealingBookingId);
                 windows.saveAndFlush(w);
             }
-            return java.util.Optional.of(realTech1);
+            return Optional.of(realTech1);
         }).when(technicians).lockByIdNoWait(ProviderDataInitializer.DEMO_TECH_ID);
 
         try {
@@ -187,11 +191,22 @@ class AllocationWindowTest {
                 .doesNotThrowAnyException();
     }
 
+    private ActorContext orgAdminActor(UUID providerId) {
+        return new ActorContext(
+                "org-admin-test",
+                AccessMode.ORGANIZATION,
+                providerId,
+                Set.of(RbacConstants.ROLE_ORGANIZATION),
+                Set.of(),
+                Set.of(OrgRole.ORG_ADMIN.name()),
+                Set.of(RbacConstants.PERM_SCHEDULE_MANAGE));
+    }
+
     @Test void operationIdEnforcesIdempotencyReleasedTombstoneAndCachedFailure() {
         Instant start = Instant.now().truncatedTo(SECONDS).plus(60, DAYS);
         Instant end = start.plusSeconds(1800);
-        service.createScheduleWindow("me",
-                new ActorContext("demo-technician", AccessMode.PERSONAL, null, java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), java.util.Set.of()),
+        service.createScheduleWindow(ProviderDataInitializer.DEMO_TECH_ID.toString(),
+                orgAdminActor(ProviderDataInitializer.PROVIDER_1_ID),
                 new CreateScheduleWindowRequest(start, start.plusSeconds(3600)));
 
         // 1. Release before Allocate creates RELEASED tombstone and blocks late Allocate

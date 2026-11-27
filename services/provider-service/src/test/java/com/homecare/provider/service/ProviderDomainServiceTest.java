@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -69,8 +70,8 @@ class ProviderDomainServiceTest {
         assertThat(outcome2.allocationId()).isEqualTo(outcome1.allocationId());
 
         assertThatThrownBy(() -> service.createScheduleWindow(
-                "me",
-                personalActor("demo-technician"),
+                ProviderDataInitializer.DEMO_TECH_ID.toString(),
+                orgAdminActor(ProviderDataInitializer.PROVIDER_1_ID),
                 new CreateScheduleWindowRequest(start, end)))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
@@ -149,12 +150,21 @@ class ProviderDomainServiceTest {
 
         Instant s3 = Instant.now().plus(42, ChronoUnit.DAYS);
         Instant e3 = s3.plus(2, ChronoUnit.HOURS);
+        ActorContext orgAdmin = orgAdminActor(ProviderDataInitializer.PROVIDER_1_ID);
+
+        // Technician self-edit is forbidden (BR-04 / BR-05)
+        assertThatThrownBy(() -> service.createScheduleWindow(
+                "me", personalActor("demo-technician"), new CreateScheduleWindowRequest(s3, e3)))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("RESOURCE_FORBIDDEN");
+
         ScheduleWindowResponse win = service.createScheduleWindow(
-                "me", personalActor("demo-technician"), new CreateScheduleWindowRequest(s3, e3));
+                ProviderDataInitializer.DEMO_TECH_ID.toString(), orgAdmin, new CreateScheduleWindowRequest(s3, e3));
 
         assertThatThrownBy(() -> service.updateScheduleWindow(
-                "me",
-                personalActor("demo-technician"),
+                ProviderDataInitializer.DEMO_TECH_ID.toString(),
+                orgAdmin,
                 win.id(),
                 EtagSupport.format(win.version()),
                 new UpdateScheduleWindowRequest(win.endsAt(), win.startsAt(), null)))
@@ -163,8 +173,8 @@ class ProviderDomainServiceTest {
                 .isEqualTo("VALIDATION_FAILED");
 
         assertThatThrownBy(() -> service.updateScheduleWindow(
-                "me",
-                personalActor("demo-technician"),
+                ProviderDataInitializer.DEMO_TECH_ID.toString(),
+                orgAdmin,
                 win.id(),
                 EtagSupport.format(win.version()),
                 new UpdateScheduleWindowRequest(null, null, "HACKED_STATUS")))
@@ -173,16 +183,27 @@ class ProviderDomainServiceTest {
                 .isEqualTo("VALIDATION_FAILED");
     }
 
+    private ActorContext orgAdminActor(UUID orgId) {
+        return new ActorContext(
+                "org-admin-demo",
+                AccessMode.ORGANIZATION,
+                orgId,
+                Set.of(RbacConstants.ROLE_ORGANIZATION),
+                Set.of(),
+                Set.of("ORG_ADMIN"),
+                Set.of(RbacConstants.PERM_SCHEDULE_MANAGE));
+    }
+
     @Test
     void eligibleServicesFiltersCoverageBeforeRankAndEnforcesInspectionFeeBounds() {
         ActorContext adminActor = new ActorContext(
                 "admin-user",
                 AccessMode.PERSONAL,
                 null,
-                java.util.Set.of(RbacConstants.ROLE_ADMIN),
-                java.util.Set.of(),
-                java.util.Set.of(),
-                java.util.Set.of(RbacConstants.PERM_SERVICE_MANAGE));
+                Set.of(RbacConstants.ROLE_ADMIN),
+                Set.of(),
+                Set.of(),
+                Set.of(RbacConstants.PERM_SERVICE_MANAGE));
 
         // 1. High inspectionFee (> 500,000 VND) is allowed with soft warning + Admin post-audit flag (D-22)
         ServiceOfferingResponse highFeeDraft = service.saveOffering(
@@ -320,6 +341,6 @@ class ProviderDomainServiceTest {
 
     private static ActorContext personalActor(String userId) {
         return new ActorContext(userId, AccessMode.PERSONAL, null,
-                java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), java.util.Set.of());
+                Set.of(), Set.of(), Set.of(), Set.of());
     }
 }

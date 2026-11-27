@@ -5,9 +5,12 @@ import tools.jackson.databind.ObjectMapper;
 import com.homecare.common.event.DomainEventContracts;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -313,6 +316,62 @@ public class DomainEventConsumer {
                         "Thiết bị của bạn đã đến hạn bảo dưỡng: " + stringField(data, "title"),
                         lifecycleData("scheduleId", stringField(data, "scheduleId"),
                                 "homecare://devices/" + stringField(data, "deviceId")));
+                case DomainEventContracts.PROVIDER_SCHEDULE_UPDATED -> {
+                    String technicianProfileId = stringField(data, "technicianProfileId");
+                    String summary = firstNonBlank(
+                            stringField(data, "summary"),
+                            "Tổ chức vừa cập nhật lịch làm việc của bạn. Mở mục Ca trực để xem lịch mới nhất.");
+                    inboxService.recordIfAbsent(
+                            eventId,
+                            technicianProfileId,
+                            eventType,
+                            "Lịch làm việc đã được cập nhật",
+                            summary,
+                            lifecycleData("technicianId", stringField(data, "technicianId"), "homecare://technician/schedule"));
+                }
+                case DomainEventContracts.PROVIDER_SCHEDULE_REQUEST_CREATED -> {
+                    String technicianName = firstNonBlank(stringField(data, "technicianName"), "Kỹ thuật viên");
+                    String requestTypeLabel = formatScheduleRequestType(stringField(data, "requestType"));
+                    String rangeLabel = formatDateRange(stringField(data, "fromDate"), stringField(data, "toDate"));
+                    String body = technicianName + " vừa gửi yêu cầu " + requestTypeLabel
+                            + (rangeLabel.isBlank() ? "" : " (" + rangeLabel + ")") + ".";
+                    Object recipientsObj = data.get("recipientProfileIds");
+                    if (recipientsObj instanceof List<?> recipients) {
+                        for (Object rec : recipients) {
+                            if (rec != null) {
+                                inboxService.recordIfAbsent(
+                                        eventId,
+                                        String.valueOf(rec),
+                                        eventType,
+                                        "Yêu cầu điều chỉnh lịch mới từ KTV",
+                                        body,
+                                        lifecycleData("requestId", stringField(data, "requestId"), "/org/schedules"));
+                            }
+                        }
+                    }
+                }
+                case DomainEventContracts.PROVIDER_SCHEDULE_REQUEST_REVIEWED -> {
+                    String technicianProfileId = stringField(data, "technicianProfileId");
+                    String decision = stringField(data, "status");
+                    boolean approved = "APPROVED".equalsIgnoreCase(decision);
+                    String requestTypeLabel = formatScheduleRequestType(stringField(data, "requestType"));
+                    String rangeLabel = formatDateRange(stringField(data, "fromDate"), stringField(data, "toDate"));
+                    String reviewNote = stringField(data, "reviewNote");
+                    String title = approved
+                            ? "Yêu cầu điều chỉnh lịch đã được duyệt"
+                            : "Yêu cầu điều chỉnh lịch bị từ chối";
+                    String body = "Yêu cầu " + requestTypeLabel
+                            + (rangeLabel.isBlank() ? "" : " (" + rangeLabel + ")")
+                            + (approved ? " đã được tổ chức phê duyệt và cập nhật vào lịch trực." : " đã bị từ chối.")
+                            + (reviewNote.isBlank() ? "" : " Ghi chú: " + reviewNote);
+                    inboxService.recordIfAbsent(
+                            eventId,
+                            technicianProfileId,
+                            eventType,
+                            title,
+                            body,
+                            lifecycleData("requestId", stringField(data, "requestId"), "homecare://technician/schedule"));
+                }
                 default -> log.debug("Ignored domain event type {}", eventType);
             }
         } catch (Exception e) {
@@ -354,13 +413,32 @@ public class DomainEventConsumer {
         }
 
     private Map<String, String> lifecycleData(String idField, String id, String deeplink) {
-            Map<String, String> data = new java.util.LinkedHashMap<>();
+            Map<String, String> data = new LinkedHashMap<>();
             data.put(idField, id);
             if (deeplink != null && !deeplink.isBlank()) {
                 data.put("deeplink", deeplink);
             }
             return data;
         }
+
+    private String formatScheduleRequestType(String requestType) {
+        return switch (requestType.toUpperCase()) {
+            case "LEAVE" -> "xin nghỉ phép";
+            case "SHIFT_CHANGE" -> "đổi giờ ca trực";
+            case "EXTRA_HOURS" -> "đăng ký thêm giờ";
+            default -> "điều chỉnh lịch";
+        };
+    }
+
+    private String formatDateRange(String fromDate, String toDate) {
+        if (fromDate == null || fromDate.isBlank()) {
+            return "";
+        }
+        if (toDate == null || toDate.isBlank() || fromDate.equals(toDate)) {
+            return fromDate;
+        }
+        return fromDate + " → " + toDate;
+    }
 
     private String firstNonBlank(String... values) {
             for (String value : values) {
@@ -397,9 +475,9 @@ public class DomainEventConsumer {
             return;
         }
         try {
-            java.time.Instant now = java.time.Instant.now();
-            Map<String, Object> envelope = new java.util.LinkedHashMap<>();
-            envelope.put(DomainEventContracts.FIELD_EVENT_ID, java.util.UUID.randomUUID().toString());
+            Instant now = Instant.now();
+            Map<String, Object> envelope = new LinkedHashMap<>();
+            envelope.put(DomainEventContracts.FIELD_EVENT_ID, UUID.randomUUID().toString());
             envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, DomainEventContracts.NOTIFICATION_COMPLETION_DELIVERED);
             envelope.put(DomainEventContracts.FIELD_OCCURRED_AT, now.toString());
             envelope.put(DomainEventContracts.FIELD_PRODUCER, "notification-service");

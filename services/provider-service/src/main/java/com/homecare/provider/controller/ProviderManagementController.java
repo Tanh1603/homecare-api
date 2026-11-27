@@ -13,6 +13,7 @@ import com.homecare.provider.dto.ProviderDtos.ProviderResponse;
 import com.homecare.provider.dto.ProviderDtos.ServiceOfferingResponse;
 import com.homecare.provider.dto.ProviderDtos.TechnicianInput;
 import com.homecare.provider.dto.ProviderDtos.TechnicianResponse;
+import com.homecare.provider.dto.ProviderDtos.UpdateTechnicianOnlineStatusRequest;
 import com.homecare.provider.dto.ProviderDtos.UpsertServiceCoverageRequest;
 import com.homecare.provider.entity.ServiceCategory;
 import com.homecare.provider.organization.controller.AdminProviderQualificationController.CategoryQualificationResponse;
@@ -119,6 +120,19 @@ public class ProviderManagementController {
             HttpServletRequest request) {
         ActorContext actor = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId));
         return ResponseEntity.ok(responses.ok(ApiMessages.RETRIEVED, service.me(actor.userId()), request));
+    }
+
+    @PatchMapping("/technicians/me/online-status")
+    public ResponseEntity<ApiResponse<TechnicianResponse>> updateMyOnlineStatus(
+            @Valid @RequestBody UpdateTechnicianOnlineStatusRequest body,
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            HttpServletRequest request) {
+        ActorContext actor = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId));
+        return ResponseEntity.ok(responses.ok(
+                ApiMessages.UPDATED,
+                service.updateMyOnlineStatus(actor.userId(), Boolean.TRUE.equals(body.online())),
+                request));
     }
 
     @PostMapping("/technicians")

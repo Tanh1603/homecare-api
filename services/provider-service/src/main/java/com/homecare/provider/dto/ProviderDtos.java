@@ -141,6 +141,10 @@ public final class ProviderDtos {
             String status) {
     }
 
+    public record UpdateTechnicianOnlineStatusRequest(
+            @NotNull Boolean online) {
+    }
+
     public record TechnicianResponse(
             UUID id,
             String profileId,
@@ -150,7 +154,20 @@ public final class ProviderDtos {
             int experienceYears,
             double ratingAvg,
             int activeAllocations,
-            String status) {
+            String status,
+            boolean isOnline) {
+        public TechnicianResponse(
+                UUID id,
+                String profileId,
+                UUID providerId,
+                String fullName,
+                List<String> specialties,
+                int experienceYears,
+                double ratingAvg,
+                int activeAllocations,
+                String status) {
+            this(id, profileId, providerId, fullName, specialties, experienceYears, ratingAvg, activeAllocations, status, true);
+        }
     }
 
     public record ScheduleWindowResponse(
@@ -160,7 +177,18 @@ public final class ProviderDtos {
             Instant endsAt,
             String status,
             UUID allocatedBookingId,
-            Long version) {
+            Long version,
+            String source) {
+        public ScheduleWindowResponse(
+                UUID id,
+                UUID technicianId,
+                Instant startsAt,
+                Instant endsAt,
+                String status,
+                UUID allocatedBookingId,
+                Long version) {
+            this(id, technicianId, startsAt, endsAt, status, allocatedBookingId, version, "MANUAL");
+        }
     }
 
     public record CreateScheduleWindowRequest(

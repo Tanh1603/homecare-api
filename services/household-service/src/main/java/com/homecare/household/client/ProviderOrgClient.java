@@ -56,6 +56,8 @@ public class ProviderOrgClient implements OrganizationMembershipVerifier {
                             .build());
             return VerifiedMembership.of(organizationId, userId, response.getRole(), response.getValid());
         } catch (StatusRuntimeException e) {
+            log.warn("Provider org membership gRPC unavailable for org {} user {}: status={} desc={}",
+                    organizationId, userId, e.getStatus().getCode(), e.getStatus().getDescription());
             throw new DomainException(CommonErrorCode.MEMBERSHIP_UNAVAILABLE);
         } catch (Exception e) {
             log.warn("Provider org membership gRPC verification failed for org {} user {}: {}",

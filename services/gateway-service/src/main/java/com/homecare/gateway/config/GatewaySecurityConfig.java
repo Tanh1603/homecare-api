@@ -24,7 +24,13 @@ public class GatewaySecurityConfig {
                                 HttpMethod.GET,
                                 "/api/v1/technicians/me",
                                 "/api/v1/technicians/me/**",
-                                "/api/v1/technicians/*/schedules")
+                                "/api/v1/technicians/*/schedules",
+                                "/api/v1/technicians/*/calendar",
+                                "/api/v1/technicians/*/schedule-audits",
+                                "/api/v1/technicians/*/weekly-schedules",
+                                "/api/v1/technicians/*/weekly-schedules/**",
+                                "/api/v1/technicians/*/schedule-exceptions",
+                                "/api/v1/technicians/*/schedule-exceptions/**")
                         .authenticated()
                         .pathMatchers(
                                 HttpMethod.GET,

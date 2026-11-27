@@ -2,6 +2,7 @@ package com.homecare.provider.repository;
 
 import com.homecare.provider.entity.ScheduleWindow;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -29,9 +30,33 @@ public interface ScheduleWindowRepository extends JpaRepository<ScheduleWindow, 
             where w.technicianId = :techId
               and w.startsAt < :reqEnd
               and w.endsAt > :reqStart
+            order by w.startsAt asc
             """)
     List<ScheduleWindow> findOverlapping(
             @Param("techId") UUID techId,
             @Param("reqStart") Instant reqStart,
             @Param("reqEnd") Instant reqEnd);
+
+    @Query("""
+            select w from ScheduleWindow w
+            where w.technicianId in :techIds
+              and w.startsAt < :reqEnd
+              and w.endsAt > :reqStart
+            order by w.startsAt asc
+            """)
+    List<ScheduleWindow> findOverlappingForTechnicians(
+            @Param("techIds") Collection<UUID> techIds,
+            @Param("reqStart") Instant reqStart,
+            @Param("reqEnd") Instant reqEnd);
+
+    @Query("""
+            select w from ScheduleWindow w
+            where w.technicianId = :techId
+              and (w.status = 'BOOKED' or w.allocatedBookingId is not null)
+              and w.endsAt > :fromInstant
+            order by w.startsAt asc
+            """)
+    List<ScheduleWindow> findBookedEndingAfter(
+            @Param("techId") UUID techId,
+            @Param("fromInstant") Instant fromInstant);
 }

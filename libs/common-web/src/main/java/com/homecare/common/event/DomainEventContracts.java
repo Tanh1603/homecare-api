@@ -29,6 +29,9 @@ public final class DomainEventContracts {
     public static final String ORG_BANNED = "organization.banned.v1";
     public static final String ORG_MEMBER_CHANGED = "organization.member.changed.v1";
     public static final String OFFERING_DEACTIVATED = "provider.offering.deactivated.v1";
+    public static final String PROVIDER_SCHEDULE_UPDATED = "provider.schedule.updated.v1";
+    public static final String PROVIDER_SCHEDULE_REQUEST_CREATED = "provider.schedule.request.created.v1";
+    public static final String PROVIDER_SCHEDULE_REQUEST_REVIEWED = "provider.schedule.request.reviewed.v1";
     public static final String USER_SUSPENDED = "user.suspended.v1";
 
     // Booking lifecycle events

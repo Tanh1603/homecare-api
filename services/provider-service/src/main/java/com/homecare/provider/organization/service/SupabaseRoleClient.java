@@ -39,20 +39,30 @@ public class SupabaseRoleClient {
     private final String supabaseUrl;
     private final String secretKey;
     private final String organizationRoleId;
+    private final String technicianRoleId;
     private final RestClient restClient;
 
     @Autowired
     public SupabaseRoleClient(SupabaseProperties properties) {
-        this(properties.getUrl(), properties.getSecretKey(), properties.getOrganizationRoleId());
+        this(properties.getUrl(), properties.getSecretKey(), properties.getOrganizationRoleId(), properties.getTechnicianRoleId());
     }
 
     public SupabaseRoleClient(
             String supabaseUrl,
             String secretKey,
             String organizationRoleId) {
+        this(supabaseUrl, secretKey, organizationRoleId, "00000000-0000-0000-0001-000000000003");
+    }
+
+    public SupabaseRoleClient(
+            String supabaseUrl,
+            String secretKey,
+            String organizationRoleId,
+            String technicianRoleId) {
         this.supabaseUrl = supabaseUrl;
         this.secretKey = secretKey;
         this.organizationRoleId = organizationRoleId;
+        this.technicianRoleId = technicianRoleId;
         HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(3))
                 .build();
@@ -62,8 +72,24 @@ public class SupabaseRoleClient {
     }
 
     public void grantOrganizationRole(String userId) {
+        grantRole(userId, organizationRoleId, "ORGANIZATION");
+    }
+
+    public void revokeOrganizationRole(String userId) {
+        revokeRole(userId, organizationRoleId, "ORGANIZATION");
+    }
+
+    public void grantTechnicianRole(String userId) {
+        grantRole(userId, technicianRoleId, "TECHNICIAN");
+    }
+
+    public void revokeTechnicianRole(String userId) {
+        revokeRole(userId, technicianRoleId, "TECHNICIAN");
+    }
+
+    private void grantRole(String userId, String roleId, String roleLabel) {
         if (!isConfigured()) {
-            log.info("[AUDIT-ROLE-SYNC] Supabase secret key not configured; skipping remote grant of ORGANIZATION role for userId={}", userId);
+            log.info("[AUDIT-ROLE-SYNC] Supabase secret key not configured; skipping remote grant of {} role for userId={}", roleLabel, userId);
             return;
         }
         restClient.post()
@@ -72,28 +98,28 @@ public class SupabaseRoleClient {
                 .header("Authorization", "Bearer " + secretKey)
                 .header("Prefer", "resolution=ignore-duplicates")
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("user_id", userId, "role_id", organizationRoleId))
+                .body(Map.of("user_id", userId, "role_id", roleId))
                 .retrieve()
                 .toBodilessEntity();
-        log.info("[AUDIT-ROLE-SYNC] Granted global ORGANIZATION role in Supabase public.user_roles for userId={}", userId);
+        log.info("[AUDIT-ROLE-SYNC] Granted global {} role in Supabase public.user_roles for userId={}", roleLabel, userId);
     }
 
-    public void revokeOrganizationRole(String userId) {
+    private void revokeRole(String userId, String roleId, String roleLabel) {
         if (!isConfigured()) {
-            log.info("[AUDIT-ROLE-SYNC] Supabase secret key not configured; skipping remote revoke of ORGANIZATION role for userId={}", userId);
+            log.info("[AUDIT-ROLE-SYNC] Supabase secret key not configured; skipping remote revoke of {} role for userId={}", roleLabel, userId);
             return;
         }
         restClient.delete()
                 .uri(uriBuilder -> uriBuilder
                         .path("/rest/v1/user_roles")
                         .queryParam("user_id", "eq." + userId)
-                        .queryParam("role_id", "eq." + organizationRoleId)
+                        .queryParam("role_id", "eq." + roleId)
                         .build())
                 .header("apikey", secretKey)
                 .header("Authorization", "Bearer " + secretKey)
                 .retrieve()
                 .toBodilessEntity();
-        log.info("[AUDIT-ROLE-SYNC] Revoked global ORGANIZATION role in Supabase public.user_roles for userId={}", userId);
+        log.info("[AUDIT-ROLE-SYNC] Revoked global {} role in Supabase public.user_roles for userId={}", roleLabel, userId);
     }
 
     public record ProfileSummary(String fullName, String email) {

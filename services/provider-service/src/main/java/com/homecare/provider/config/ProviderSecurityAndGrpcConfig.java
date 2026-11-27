@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import com.homecare.common.config.HomecareSecurityProperties;
 import com.homecare.common.event.DomainEventContracts;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
+import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.servlet.BaseApiExceptionHandler;
 import com.homecare.common.web.servlet.GatewayOriginFilter;
 import com.homecare.common.web.servlet.ServletApiResponseFactory;
@@ -28,6 +29,13 @@ import com.homecare.common.web.servlet.ServletCorrelationIdFilter;
 import com.homecare.grpc.interceptor.WorkloadAuthServerInterceptor;
 import com.homecare.provider.organization.service.SupabaseRoleSyncConsumer;
 import com.homecare.provider.service.ProviderBookingConsumer;
+import com.homecare.provider.service.ScheduleAllocationConflictException;
+import jakarta.servlet.http.HttpServletRequest;
+import java.time.Instant;
+import java.util.Map;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 
 import io.grpc.ServerInterceptor;
 import net.devh.boot.grpc.server.interceptor.GrpcGlobalServerInterceptor;
@@ -179,7 +187,13 @@ public class ProviderSecurityAndGrpcConfig {
                         .requestMatchers(HttpMethod.GET,
                                 "/api/v1/technicians/me",
                                 "/api/v1/technicians/me/**",
-                                "/api/v1/technicians/*/schedules")
+                                "/api/v1/technicians/*/schedules",
+                                "/api/v1/technicians/*/calendar",
+                                "/api/v1/technicians/*/schedule-audits",
+                                "/api/v1/technicians/*/weekly-schedules",
+                                "/api/v1/technicians/*/weekly-schedules/**",
+                                "/api/v1/technicians/*/schedule-exceptions",
+                                "/api/v1/technicians/*/schedule-exceptions/**")
                         .authenticated()
                         .requestMatchers(HttpMethod.GET,
                                 "/api/v1/services", "/api/v1/services/**",
@@ -199,6 +213,29 @@ public class ProviderSecurityAndGrpcConfig {
     public static class ProviderExceptionHandler extends BaseApiExceptionHandler {
         public ProviderExceptionHandler(ServletApiResponseFactory responseFactory) {
             super(responseFactory);
+        }
+
+        @ExceptionHandler(ScheduleAllocationConflictException.class)
+        public ResponseEntity<ApiResponse<Map<String, Object>>> handleScheduleConflict(
+                ScheduleAllocationConflictException exception,
+                HttpServletRequest request) {
+            String traceId = responseFactory.error(
+                    HttpStatus.CONFLICT,
+                    "SCHEDULE_ALLOCATION_CONFLICT",
+                    exception.getMessage(),
+                    null,
+                    request).traceId();
+            return ResponseEntity
+                    .status(HttpStatus.CONFLICT)
+                    .body(new ApiResponse<>(
+                            false,
+                            409,
+                            "SCHEDULE_ALLOCATION_CONFLICT",
+                            exception.getMessage(),
+                            Map.of("conflicts", exception.conflicts()),
+                            null,
+                            Instant.now(),
+                            traceId));
         }
     }
 }

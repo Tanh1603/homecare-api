@@ -899,7 +899,12 @@ public class OrganizationDomainService {
                     "User is already an active ORG_TECHNICIAN in another organization (1:1 limit in v0.1).");
         }
         member.setRole(newRole);
-        return toMemberResponse(memberRepository.save(member));
+        OrganizationMemberEntity saved = memberRepository.save(member);
+        Map<String, Object> data = Map.of(
+                "organizationId", orgId.toString(),
+                "affectedUserIds", List.of(targetUserId));
+        enqueueOutbox(orgId, EVT_MEMBER_CHANGED, data, Instant.now());
+        return toMemberResponse(saved);
     }
 
     @Transactional

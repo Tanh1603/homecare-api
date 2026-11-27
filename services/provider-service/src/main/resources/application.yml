@@ -56,11 +56,17 @@ homecare:
         internal-gateway-secret: ${INTERNAL_GATEWAY_SECRET:homecare-internal-secret-2026}
     organization:
         outbox-poll-ms: ${ORGANIZATION_OUTBOX_POLL_MS:5000}
+    schedule:
+        horizon-days: ${SCHEDULE_HORIZON_DAYS:30}
+        immediate-booking-threshold-minutes: ${SCHEDULE_IMMEDIATE_BOOKING_THRESHOLD_MINUTES:120}
+        materialization-cron: ${SCHEDULE_MATERIALIZATION_CRON:0 15 * * * *}
+        startup-recovery-enabled: ${SCHEDULE_STARTUP_RECOVERY_ENABLED:true}
 
 supabase:
     url: ${SUPABASE_URL:https://placeholder.supabase.co}
     secret-key: ${SUPABASE_SECRET_KEY:placeholder-secret-key}
     organization-role-id: ${SUPABASE_ORGANIZATION_ROLE_ID:00000000-0000-0000-0001-000000000002}
+    technician-role-id: ${SUPABASE_TECHNICIAN_ROLE_ID:00000000-0000-0000-0001-000000000003}
 
 app:
     auth:
