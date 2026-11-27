@@ -56,20 +56,56 @@ public class ProviderAccessPolicy implements OrganizationMembershipVerifier {
         }
     }
 
-    public void assertCanManageTechnicianSchedule(ActorContext actor, Technician technician) {
+    public void assertCanViewTechnicianSchedule(ActorContext actor, Technician technician) {
+        if (actor == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
         if (actor.isGlobalAdmin() && actor.mode() == AccessMode.PERSONAL) {
             return;
         }
         if (actor.userId().equals(technician.getProfileId())) {
-            if (actor.mode() == AccessMode.PERSONAL || actor.organizationId().equals(technician.getProviderId())) {
+            if (actor.mode() == AccessMode.PERSONAL
+                    || (actor.organizationId() != null && actor.organizationId().equals(technician.getProviderId()))) {
                 return;
             }
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
         }
         if (actor.mode() == AccessMode.ORGANIZATION
+                && actor.organizationId() != null
+                && actor.organizationId().equals(technician.getProviderId())
+                && actor.hasOrgRole(OrgRole.ORG_OWNER.name(), OrgRole.ORG_ADMIN.name(), OrgRole.ORG_STAFF.name())) {
+            return;
+        }
+        throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+    }
+
+    public void assertCanManageTechnicianSchedule(ActorContext actor, Technician technician) {
+        if (actor == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        if (actor.isGlobalAdmin() && actor.mode() == AccessMode.PERSONAL) {
+            return;
+        }
+        if (actor.mode() == AccessMode.ORGANIZATION
+                && actor.organizationId() != null
                 && actor.organizationId().equals(technician.getProviderId())
                 && actor.hasOrgRole(OrgRole.ORG_OWNER.name(), OrgRole.ORG_ADMIN.name())
                 && actor.hasOrgPermission(RbacConstants.PERM_SCHEDULE_MANAGE)) {
+            return;
+        }
+        throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+    }
+
+    public void assertCanViewOrganizationCalendar(ActorContext actor, UUID organizationId) {
+        if (actor == null || organizationId == null) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
+        if (actor.isGlobalAdmin() && actor.mode() == AccessMode.PERSONAL) {
+            return;
+        }
+        if (actor.mode() == AccessMode.ORGANIZATION
+                && organizationId.equals(actor.organizationId())
+                && actor.hasOrgRole(OrgRole.ORG_OWNER.name(), OrgRole.ORG_ADMIN.name(), OrgRole.ORG_STAFF.name())) {
             return;
         }
         throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);

@@ -50,4 +50,56 @@ public interface BookingRepository extends JpaRepository<BookingEntity, UUID>, J
           and b.allocationStatus = 'ALLOCATED'
         """)
     int tryClaimForReassignment(@Param("bookingId") UUID bookingId, @Param("now") Instant now);
+
+    @Query(value = """
+        SELECT * FROM bookings
+        WHERE status = 'COMPLETED_PENDING_ACCEPTANCE'
+          AND completion_notified_at IS NOT NULL
+          AND notification_failed = FALSE
+          AND auto_accept_at IS NOT NULL
+          AND auto_accept_at <= :now
+        ORDER BY auto_accept_at ASC
+        LIMIT :limit
+        FOR UPDATE SKIP LOCKED
+        """, nativeQuery = true)
+    List<BookingEntity> lockDueForAutoAccept(@Param("now") Instant now, @Param("limit") int limit);
+
+    @Query(value = """
+        SELECT * FROM bookings
+        WHERE status = 'COMPLETED_PENDING_ACCEPTANCE'
+          AND completion_notified_at IS NOT NULL
+          AND notification_failed = FALSE
+          AND acceptance_reminder_sent_at IS NULL
+          AND completion_notified_at <= :day3Cutoff
+        ORDER BY completion_notified_at ASC
+        LIMIT :limit
+        FOR UPDATE SKIP LOCKED
+        """, nativeQuery = true)
+    List<BookingEntity> lockDueForAcceptanceReminder(@Param("day3Cutoff") Instant day3Cutoff, @Param("limit") int limit);
+
+    @Query(value = """
+        SELECT * FROM bookings
+        WHERE status = 'REVISION_REQUESTED'
+          AND revision_requested_at IS NOT NULL
+          AND revision_requested_at <= :cutoff48h
+        ORDER BY revision_requested_at ASC
+        LIMIT :limit
+        FOR UPDATE SKIP LOCKED
+        """, nativeQuery = true)
+    List<BookingEntity> lockTimedOutRevisions(@Param("cutoff48h") Instant cutoff48h, @Param("limit") int limit);
+
+    @Query(value = """
+        SELECT * FROM bookings
+        WHERE status = 'WAITING_FOR_PARTS'
+          AND waiting_for_parts_since IS NOT NULL
+          AND waiting_for_parts_reminder_stage < :targetStage
+          AND waiting_for_parts_since <= :cutoff
+        ORDER BY waiting_for_parts_since ASC
+        LIMIT :limit
+        FOR UPDATE SKIP LOCKED
+        """, nativeQuery = true)
+    List<BookingEntity> lockWaitingForPartsDue(
+            @Param("targetStage") int targetStage,
+            @Param("cutoff") Instant cutoff,
+            @Param("limit") int limit);
 }

@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import com.homecare.common.event.DomainEventContracts;
 import com.homecare.provider.organization.repository.OrganizationMemberRepository;
+import com.homecare.provider.repository.TechnicianRepository;
 
 import lombok.RequiredArgsConstructor;
 import tools.jackson.databind.ObjectMapper;
@@ -22,6 +23,7 @@ public class SupabaseRoleSyncConsumer {
     public static final String QUEUE = "provider.supabase.role.sync.q";
 
     private final OrganizationMemberRepository memberRepository;
+    private final TechnicianRepository technicianRepository;
     private final SupabaseRoleClient supabaseRoleClient;
     private final ObjectMapper objectMapper;
 
@@ -60,6 +62,19 @@ public class SupabaseRoleSyncConsumer {
             log.info("[AUDIT-ROLE-SYNC] trigger={} userId={} approvedMemberships=0 -> REVOKE ORGANIZATION",
                     triggerEvent, userId);
             supabaseRoleClient.revokeOrganizationRole(userId);
+        }
+        syncUserGlobalTechnicianRole(userId, triggerEvent);
+    }
+
+    public void syncUserGlobalTechnicianRole(String userId, String triggerEvent) {
+        boolean isActiveTechnician = technicianRepository.existsActiveTechnicianInActiveProvider(userId)
+                || memberRepository.countApprovedTechnicianMembershipsByUserId(userId) > 0;
+        if (isActiveTechnician) {
+            log.info("[AUDIT-ROLE-SYNC] trigger={} userId={} -> GRANT TECHNICIAN", triggerEvent, userId);
+            supabaseRoleClient.grantTechnicianRole(userId);
+        } else {
+            log.info("[AUDIT-ROLE-SYNC] trigger={} userId={} -> REVOKE TECHNICIAN", triggerEvent, userId);
+            supabaseRoleClient.revokeTechnicianRole(userId);
         }
     }
 }

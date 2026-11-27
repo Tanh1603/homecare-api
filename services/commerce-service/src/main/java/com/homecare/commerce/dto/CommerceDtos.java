@@ -107,7 +107,7 @@ public final class CommerceDtos {
     }
 
     public record CreateOrderRequest(
-            @NotEmpty @Valid List<OrderLineRequest> items,
+            @NotEmpty List<@Valid OrderLineRequest> items,
             String shippingAddress,
             UUID shippingAddressId,
             UUID installOfferingId,

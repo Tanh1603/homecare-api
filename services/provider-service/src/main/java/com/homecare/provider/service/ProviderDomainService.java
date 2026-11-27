@@ -23,11 +23,14 @@ import com.homecare.provider.dto.ProviderDtos.TechnicianInput;
 import com.homecare.provider.dto.ProviderDtos.TechnicianResponse;
 import com.homecare.provider.dto.ProviderDtos.UpdateScheduleWindowRequest;
 import com.homecare.provider.dto.ProviderDtos.UpsertServiceCoverageRequest;
+import com.homecare.provider.dto.RecurringScheduleDtos.ScheduleConflictItem;
 import com.homecare.provider.entity.CategoryQualificationEntity;
 import com.homecare.provider.entity.CategoryQualificationStatus;
 import com.homecare.provider.entity.InspectionFeePolicy;
 import com.homecare.provider.entity.ProviderAllocationOperation;
 import com.homecare.provider.entity.ProviderEntity;
+import com.homecare.provider.entity.ScheduleException;
+import com.homecare.provider.entity.ScheduleExceptionType;
 import com.homecare.provider.entity.ScheduleWindow;
 import com.homecare.provider.entity.ScheduleWindowStatus;
 import com.homecare.provider.entity.ServiceCategory;
@@ -36,6 +39,7 @@ import com.homecare.provider.entity.ServiceOffering;
 import com.homecare.provider.entity.ServicePriceType;
 import com.homecare.provider.entity.Technician;
 import com.homecare.provider.entity.TechnicianAllocation;
+import com.homecare.provider.entity.TechnicianScheduleAudit;
 import com.homecare.provider.exception.ProviderErrorCode;
 import com.homecare.provider.organization.entity.OrganizationMemberEntity;
 import com.homecare.provider.organization.entity.OrganizationStatus;
@@ -47,12 +51,20 @@ import com.homecare.provider.organization.repository.ProviderOutboxEventReposito
 import com.homecare.provider.repository.CategoryQualificationRepository;
 import com.homecare.provider.repository.ProviderAllocationOperationRepository;
 import com.homecare.provider.repository.ProviderRepository;
+import com.homecare.provider.repository.ScheduleExceptionRepository;
 import com.homecare.provider.repository.ScheduleWindowRepository;
 import com.homecare.provider.repository.ServiceCoverageAreaRepository;
 import com.homecare.provider.repository.ServiceOfferingRepository;
 import com.homecare.provider.repository.TechnicianAllocationRepository;
 import com.homecare.provider.repository.TechnicianRepository;
+import com.homecare.provider.repository.TechnicianScheduleAuditRepository;
+import com.homecare.provider.repository.WeeklyScheduleRuleRepository;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -63,6 +75,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import tools.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.data.domain.Pageable;
@@ -535,7 +548,9 @@ public class ProviderDomainService {
             if ("INACTIVE".equals(input.status()) && item.getActiveAllocations() > 0) throw new DomainException(ProviderErrorCode.SCHEDULE_ALLOCATION_CONFLICT);
             item.setStatus(input.status());
         }
-        return toTechnicianResponse(technicianRepository.save(item));
+        Technician saved = technicianRepository.save(item);
+        enqueueTechnicianRoleSyncEvent(saved.getProviderId(), saved.getProfileId());
+        return toTechnicianResponse(saved);
     }
 
     @Transactional
@@ -543,21 +558,128 @@ public class ProviderDomainService {
         var item = technicianRepository.findById(id).orElseThrow(() -> new DomainException(ProviderErrorCode.TECHNICIAN_NOT_FOUND));
         requireProviderManager(item.getProviderId(), actor);
         if (item.getActiveAllocations() > 0) throw new DomainException(ProviderErrorCode.SCHEDULE_ALLOCATION_CONFLICT);
-        item.setStatus("INACTIVE"); technicianRepository.save(item);
+        item.setStatus("INACTIVE");
+        Technician saved = technicianRepository.save(item);
+        enqueueTechnicianRoleSyncEvent(saved.getProviderId(), saved.getProfileId());
+    }
+
+    private void enqueueTechnicianRoleSyncEvent(UUID providerId, String profileId) {
+        if (profileId == null || profileId.isBlank()) {
+            return;
+        }
+        Instant now = Instant.now();
+        UUID eventId = UUID.randomUUID();
+        Map<String, Object> data = Map.of(
+                "providerId", providerId.toString(),
+                "affectedUserIds", List.of(profileId));
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put(DomainEventContracts.FIELD_EVENT_ID, eventId.toString());
+        envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, DomainEventContracts.ORG_MEMBER_CHANGED);
+        envelope.put(DomainEventContracts.FIELD_OCCURRED_AT, now.toString());
+        envelope.put(DomainEventContracts.FIELD_PRODUCER, "provider-service");
+        envelope.put(DomainEventContracts.FIELD_DATA, data);
+        try {
+            outboxRepository.save(ProviderOutboxEventEntity.builder()
+                    .id(eventId)
+                    .aggregateType("Technician")
+                    .aggregateId(providerId)
+                    .eventType(DomainEventContracts.ORG_MEMBER_CHANGED)
+                    .routingKey(DomainEventContracts.ORG_MEMBER_CHANGED)
+                    .payloadJson(objectMapper.writeValueAsString(envelope))
+                    .status(EntityStatus.PENDING.name())
+                    .retryCount(0)
+                    .nextAttemptAt(now)
+                    .createdAt(now)
+                    .build());
+        } catch (Exception ex) {
+            throw new IllegalStateException("Failed to serialize technician role sync event.", ex);
+        }
     }
 
     @Transactional(readOnly = true)
     public TechnicianResponse me(String user) { return toTechnicianResponse(resolveTechnicianOrDemo("me", user)); }
 
     @Transactional
+    public TechnicianResponse updateMyOnlineStatus(String userId, boolean online) {
+        Technician tech = resolveTechnicianOrDemo("me", userId);
+        tech = technicianRepository.lockById(tech.getId())
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.TECHNICIAN_NOT_FOUND));
+        if (!EntityStatus.ACTIVE.name().equalsIgnoreCase(tech.getStatus())) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN,
+                    "Tài khoản kỹ thuật viên hiện không hoạt động.");
+        }
+        tech.setOnline(online);
+        return toTechnicianResponse(technicianRepository.save(tech));
+    }
+
+    @Transactional
     public void deleteSchedule(String technicianId, UUID windowId, ActorContext actor, String ifMatch) {
         var tech = resolveTechnicianOrDemo(technicianId, actor.userId());
         accessPolicy.assertCanManageTechnicianSchedule(actor, tech);
-        var window = scheduleWindowRepository.findById(windowId).orElseThrow(() -> new DomainException(ProviderErrorCode.SCHEDULE_WINDOW_NOT_FOUND));
-        if (!window.getTechnicianId().equals(tech.getId())) throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        tech = technicianRepository.lockById(tech.getId())
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.TECHNICIAN_NOT_FOUND));
+        var window = scheduleWindowRepository.findById(windowId)
+                .orElseThrow(() -> new DomainException(ProviderErrorCode.SCHEDULE_WINDOW_NOT_FOUND));
+        if (!window.getTechnicianId().equals(tech.getId())) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN);
+        }
         EtagSupport.verifyIfMatch(ifMatch, window.getVersion());
-        if (window.getAllocatedBookingId() != null) throw new DomainException(ProviderErrorCode.SCHEDULE_ALLOCATION_CONFLICT);
+        if (!window.getEndsAt().isAfter(scheduleReconciliationService.now())) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Không thể xóa ca làm việc đã kết thúc.");
+        }
+        if (ScheduleReconciliationService.isBooked(window)) {
+            boolean canViewBookingId = accessPolicy.canViewScheduleBookingIds(actor, tech);
+            throw new ScheduleAllocationConflictException(
+                    "Không thể xóa khung giờ đã được phân bổ cho booking.",
+                    List.of(new ScheduleConflictItem(
+                            window.getId(),
+                            canViewBookingId ? window.getAllocatedBookingId() : null,
+                            window.getStartsAt(),
+                            window.getEndsAt())));
+        }
+        Instant startsAt = window.getStartsAt();
+        Instant endsAt = window.getEndsAt();
+        String source = window.getSource();
         scheduleWindowRepository.delete(window);
+        scheduleWindowRepository.flush();
+
+        Instant now = scheduleReconciliationService.now();
+        if (ScheduleReconciliationService.SOURCE_RECURRING.equalsIgnoreCase(source) && endsAt.isAfter(now)) {
+            ZoneId zone = scheduleReconciliationService.resolveZone(
+                    weeklyScheduleRuleRepository.findByTechnicianIdOrderByEffectiveFromAsc(tech.getId()));
+            ZonedDateTime zStart = startsAt.atZone(zone);
+            ZonedDateTime zEnd = endsAt.atZone(zone);
+            LocalDate localDate = zStart.toLocalDate();
+            scheduleExceptionRepository.saveAndFlush(ScheduleException.builder()
+                    .id(UUID.randomUUID())
+                    .technicianId(tech.getId())
+                    .localDate(localDate)
+                    .exceptionType(ScheduleExceptionType.UNAVAILABLE)
+                    .startTime(zStart.toLocalTime())
+                    .endTime(zEnd.toLocalDate().equals(localDate) ? zEnd.toLocalTime() : LocalTime.MAX.truncatedTo(ChronoUnit.SECONDS))
+                    .reason("Xóa khung giờ")
+                    .createdAt(now)
+                    .updatedAt(now)
+                    .build());
+        }
+        technicianScheduleAuditRepository.save(TechnicianScheduleAudit.builder()
+                .id(UUID.randomUUID())
+                .technicianId(tech.getId())
+                .organizationId(tech.getProviderId())
+                .actorId(actor != null ? actor.userId() : "SYSTEM")
+                .action(ScheduleReconciliationService.SOURCE_RECURRING.equalsIgnoreCase(source)
+                        ? "RECURRING_SLOT_DELETED" : "MANUAL_SLOT_DELETED")
+                .scope("SINGLE_SLOT")
+                .detailsJson("{\"windowId\":\"" + windowId + "\"}")
+                .createdAt(now)
+                .build());
+        enqueueManualScheduleUpdatedEvent(
+                tech,
+                ScheduleReconciliationService.SOURCE_RECURRING.equalsIgnoreCase(source)
+                        ? "RECURRING_SLOT_DELETED" : "MANUAL_SLOT_DELETED",
+                "Tổ chức vừa xóa một khung giờ làm việc của bạn.",
+                now);
     }
 
     private final ProviderRepository providerRepository;
@@ -575,6 +697,24 @@ public class ProviderDomainService {
     private final PlatformGovernanceService governanceService;
     private final ProviderOutboxEventRepository outboxRepository;
     private final ObjectMapper objectMapper;
+    private final ScheduleReconciliationService scheduleReconciliationService;
+    private final ScheduleExceptionRepository scheduleExceptionRepository;
+    private final WeeklyScheduleRuleRepository weeklyScheduleRuleRepository;
+    private final TechnicianScheduleAuditRepository technicianScheduleAuditRepository;
+
+    @Value("${homecare.schedule.immediate-booking-threshold-minutes:120}")
+    private int immediateBookingThresholdMinutes = 120;
+
+    public int getImmediateBookingThresholdMinutes() {
+        return immediateBookingThresholdMinutes;
+    }
+
+    public boolean isImmediateBooking(Instant preferredStart, Instant referenceNow) {
+        if (preferredStart == null || referenceNow == null) {
+            return false;
+        }
+        return !preferredStart.isAfter(referenceNow.plus(immediateBookingThresholdMinutes, ChronoUnit.MINUTES));
+    }
 
     @Transactional(readOnly = true)
     public ServiceOfferingResponse getOffering(UUID serviceId) {
@@ -681,7 +821,16 @@ public class ProviderDomainService {
         if (!request.endsAt().isAfter(request.startsAt())) {
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "endsAt must be after startsAt.");
         }
+        Instant now = scheduleReconciliationService.now();
+        if (!request.endsAt().isAfter(now)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Không thể tạo ca làm việc đã kết thúc trong quá khứ.");
+        }
         technicianRepository.lockById(tech.getId());
+        if (scheduleReconciliationService.hasUnavailableExceptionOverlap(tech.getId(), request.startsAt(), request.endsAt())) {
+            throw new DomainException(ProviderErrorCode.SCHEDULE_OVERLAP,
+                    "Khung giờ trùng với ngày/giờ nghỉ phép (UNAVAILABLE) đã cấu hình.");
+        }
         List<ScheduleWindow> overlaps = scheduleWindowRepository.findOverlapping(
                 tech.getId(), request.startsAt(), request.endsAt());
         if (!overlaps.isEmpty()) {
@@ -693,8 +842,14 @@ public class ProviderDomainService {
                 .startsAt(request.startsAt())
                 .endsAt(request.endsAt())
                 .status(ScheduleWindowStatus.AVAILABLE.name())
-                .createdAt(Instant.now())
+                .source(ScheduleReconciliationService.SOURCE_MANUAL)
+                .createdAt(now)
                 .build());
+        enqueueManualScheduleUpdatedEvent(
+                tech,
+                "MANUAL_SLOT_CREATED",
+                "Tổ chức vừa thêm một khung giờ làm việc mới cho bạn.",
+                now);
         return toScheduleResponse(saved);
     }
 
@@ -714,9 +869,17 @@ public class ProviderDomainService {
             throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN, "Not the owner of this schedule window.");
         }
         EtagSupport.verifyIfMatch(ifMatchHeader, window.getVersion());
-        if (window.getAllocatedBookingId() != null) {
+        if (!window.getEndsAt().isAfter(scheduleReconciliationService.now())) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Không thể chỉnh sửa ca làm việc đã kết thúc.");
+        }
+        if (ScheduleReconciliationService.isBooked(window)) {
             throw new DomainException(ProviderErrorCode.SCHEDULE_ALLOCATION_CONFLICT);
         }
+        Instant oldStart = window.getStartsAt();
+        Instant oldEnd = window.getEndsAt();
+        boolean wasRecurring = ScheduleReconciliationService.SOURCE_RECURRING.equalsIgnoreCase(window.getSource());
+
         if (request.startsAt() != null) {
             window.setStartsAt(request.startsAt());
         }
@@ -726,6 +889,10 @@ public class ProviderDomainService {
         if (!window.getEndsAt().isAfter(window.getStartsAt())) {
             throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "endsAt must be after startsAt.");
         }
+        if (!window.getEndsAt().isAfter(scheduleReconciliationService.now())) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "Không thể dời ca làm việc về thời điểm đã kết thúc trong quá khứ.");
+        }
         boolean overlaps = scheduleWindowRepository.findOverlapping(tech.getId(), window.getStartsAt(), window.getEndsAt())
                 .stream()
                 .anyMatch(w -> !w.getId().equals(windowId));
@@ -734,14 +901,107 @@ public class ProviderDomainService {
         }
         if (request.status() != null && !request.status().isBlank()) {
             String normalizedStatus = request.status().trim().toUpperCase();
+            ScheduleWindowStatus parsedStatus;
             try {
-                ScheduleWindowStatus.valueOf(normalizedStatus);
+                parsedStatus = ScheduleWindowStatus.valueOf(normalizedStatus);
             } catch (IllegalArgumentException ex) {
                 throw new DomainException(CommonErrorCode.VALIDATION_FAILED, "Invalid schedule status.");
             }
+            if (parsedStatus == ScheduleWindowStatus.BOOKED) {
+                throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                        "Cannot set BOOKED status via schedule management API.");
+            }
             window.setStatus(normalizedStatus);
         }
-        return toScheduleResponse(scheduleWindowRepository.saveAndFlush(window));
+        if (ScheduleWindowStatus.AVAILABLE.name().equalsIgnoreCase(window.getStatus())
+                && scheduleReconciliationService.hasUnavailableExceptionOverlap(
+                        tech.getId(), window.getStartsAt(), window.getEndsAt())) {
+            throw new DomainException(ProviderErrorCode.SCHEDULE_OVERLAP,
+                    "Khung giờ trùng với ngày/giờ nghỉ phép (UNAVAILABLE) đã cấu hình.");
+        }
+        // Promote manually edited recurring slot to MANUAL and record UNAVAILABLE exceptions for any
+        // removed future portions so subsequent worker runs never regenerate removed hours (BR-SCH-062).
+        if (wasRecurring) {
+            window.setSource(ScheduleReconciliationService.SOURCE_MANUAL);
+            window.setOriginRuleId(null);
+        }
+        ScheduleWindow saved = scheduleWindowRepository.saveAndFlush(window);
+        if (wasRecurring) {
+            Instant now = scheduleReconciliationService.now();
+            List<IntervalMath.TimeRange> removed = IntervalMath.clipAfter(
+                    IntervalMath.subtract(
+                            List.of(new IntervalMath.TimeRange(oldStart, oldEnd)),
+                            List.of(new IntervalMath.TimeRange(saved.getStartsAt(), saved.getEndsAt()))),
+                    now);
+            if (!removed.isEmpty()) {
+                ZoneId zone = scheduleReconciliationService.resolveZone(
+                        weeklyScheduleRuleRepository.findByTechnicianIdOrderByEffectiveFromAsc(tech.getId()));
+                for (IntervalMath.TimeRange seg : removed) {
+                    ZonedDateTime zStart = seg.start().atZone(zone);
+                    ZonedDateTime zEnd = seg.end().atZone(zone);
+                    LocalDate localDate = zStart.toLocalDate();
+                    scheduleExceptionRepository.saveAndFlush(ScheduleException.builder()
+                            .id(UUID.randomUUID())
+                            .technicianId(tech.getId())
+                            .localDate(localDate)
+                            .exceptionType(ScheduleExceptionType.UNAVAILABLE)
+                            .startTime(zStart.toLocalTime())
+                            .endTime(zEnd.toLocalDate().equals(localDate)
+                                    ? zEnd.toLocalTime()
+                                    : LocalTime.MAX.truncatedTo(ChronoUnit.SECONDS))
+                            .reason("Điều chỉnh khung giờ")
+                            .createdAt(now)
+                            .updatedAt(now)
+                            .build());
+                }
+            }
+        }
+        enqueueManualScheduleUpdatedEvent(
+                tech,
+                "MANUAL_SLOT_UPDATED",
+                "Tổ chức vừa điều chỉnh khung giờ làm việc của bạn.",
+                scheduleReconciliationService.now());
+        return toScheduleResponse(saved);
+    }
+
+    private void enqueueManualScheduleUpdatedEvent(
+            Technician tech,
+            String action,
+            String summary,
+            Instant now) {
+        if (tech.getProfileId() == null || tech.getProfileId().isBlank()) {
+            return;
+        }
+        UUID eventId = UUID.randomUUID();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("technicianId", tech.getId().toString());
+        data.put("technicianProfileId", tech.getProfileId());
+        data.put("organizationId", tech.getProviderId().toString());
+        data.put("action", action);
+        data.put("summary", summary);
+
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put(DomainEventContracts.FIELD_EVENT_ID, eventId.toString());
+        envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, DomainEventContracts.PROVIDER_SCHEDULE_UPDATED);
+        envelope.put(DomainEventContracts.FIELD_OCCURRED_AT, now.toString());
+        envelope.put(DomainEventContracts.FIELD_PRODUCER, "provider-service");
+        envelope.put(DomainEventContracts.FIELD_DATA, data);
+        try {
+            outboxRepository.save(ProviderOutboxEventEntity.builder()
+                    .id(eventId)
+                    .aggregateType("TechnicianSchedule")
+                    .aggregateId(tech.getId())
+                    .eventType(DomainEventContracts.PROVIDER_SCHEDULE_UPDATED)
+                    .routingKey(DomainEventContracts.PROVIDER_SCHEDULE_UPDATED)
+                    .payloadJson(objectMapper.writeValueAsString(envelope))
+                    .status(EntityStatus.PENDING.name())
+                    .retryCount(0)
+                    .nextAttemptAt(now)
+                    .createdAt(now)
+                    .build());
+        } catch (Exception ex) {
+            throw new IllegalStateException("Failed to serialize manual schedule updated event.", ex);
+        }
     }
 
     public AllocationOutcome allocateTechnicianForBooking(
@@ -823,8 +1083,12 @@ public class ProviderDomainService {
             candidates = technicianRepository.findByStatus(EntityStatus.ACTIVE.name());
         }
 
+        Instant allocationNow = scheduleReconciliationService.now();
+        boolean immediateBooking = isImmediateBooking(preferredStart, allocationNow);
+
         List<Technician> eligible = candidates.stream()
                 .filter(t -> technicianId == null || technicianId.equals(t.getId()))
+                .filter(t -> !immediateBooking || t.isOnline())
                 .filter(t -> providerRepository.findById(t.getProviderId())
                         .filter(p -> EntityStatus.ACTIVE.name().equals(p.getStatus())).isPresent())
                 .filter(t -> matchesSpecialty(t, requiredSpecialty))
@@ -968,7 +1232,10 @@ public class ProviderDomainService {
             return new AllocationOutcome(false, null, "", "", null, null, "ALLOCATION_CONFLICT");
         }
         Technician chosen = technicianRepository.lockByIdNoWait(candidateId).orElse(null);
-        if (chosen == null) {
+        if (chosen == null || !EntityStatus.ACTIVE.name().equalsIgnoreCase(chosen.getStatus())) {
+            return null;
+        }
+        if (isImmediateBooking(preferredStart, scheduleReconciliationService.now()) && !chosen.isOnline()) {
             return null;
         }
         var available = scheduleWindowRepository.findAvailableCovering(chosen.getId(), preferredStart, preferredEnd);
@@ -977,17 +1244,28 @@ public class ProviderDomainService {
             return null;
         }
         ScheduleWindow window = available.getFirst();
-        if (window.getStartsAt().isBefore(preferredStart)) {
+        Instant originalStart = window.getStartsAt();
+        Instant originalEnd = window.getEndsAt();
+        String originalSource = window.getSource() != null ? window.getSource() : ScheduleReconciliationService.SOURCE_MANUAL;
+        UUID originalRuleId = window.getOriginRuleId();
+
+        // Shrink and flush booked window FIRST so PostgreSQL EXCLUDE USING gist never sees temporary overlap
+        window.setStartsAt(preferredStart);
+        window.setEndsAt(preferredEnd);
+        window.setAllocatedBookingId(bookingId);
+        window.setStatus("BOOKED");
+        scheduleWindowRepository.saveAndFlush(window);
+
+        if (originalStart.isBefore(preferredStart)) {
             scheduleWindowRepository.save(ScheduleWindow.builder().id(UUID.randomUUID()).technicianId(chosen.getId())
-                    .startsAt(window.getStartsAt()).endsAt(preferredStart).status("AVAILABLE").createdAt(Instant.now()).build());
+                    .startsAt(originalStart).endsAt(preferredStart).status("AVAILABLE")
+                    .source(originalSource).originRuleId(originalRuleId).createdAt(Instant.now()).build());
         }
-        if (window.getEndsAt().isAfter(preferredEnd)) {
+        if (originalEnd.isAfter(preferredEnd)) {
             scheduleWindowRepository.save(ScheduleWindow.builder().id(UUID.randomUUID()).technicianId(chosen.getId())
-                    .startsAt(preferredEnd).endsAt(window.getEndsAt()).status("AVAILABLE").createdAt(Instant.now()).build());
+                    .startsAt(preferredEnd).endsAt(originalEnd).status("AVAILABLE")
+                    .source(originalSource).originRuleId(originalRuleId).createdAt(Instant.now()).build());
         }
-        window.setStartsAt(preferredStart); window.setEndsAt(preferredEnd);
-        window.setAllocatedBookingId(bookingId); window.setStatus("BOOKED");
-        scheduleWindowRepository.save(window);
         chosen.setActiveAllocations(chosen.getActiveAllocations() + 1);
         technicianRepository.save(chosen);
 
@@ -1111,21 +1389,18 @@ public class ProviderDomainService {
         var tech = technicianRepository.lockById(allocation.getTechnicianId()).orElseThrow();
         tech.setActiveAllocations(Math.max(0, tech.getActiveAllocations() - 1));
         technicianRepository.save(tech);
-        for (var window : scheduleWindowRepository.findByAllocatedBookingId(allocation.getBookingId())) {
-            window.setAllocatedBookingId(null); window.setStatus("AVAILABLE");
-            scheduleWindowRepository.save(window);
+        List<ScheduleWindow> allocatedWindows = scheduleWindowRepository.findByAllocatedBookingId(allocation.getBookingId());
+        record ReleasedSlice(Instant start, Instant end, String source, UUID originRuleId) {}
+        List<ReleasedSlice> slices = allocatedWindows.stream()
+                .map(w -> new ReleasedSlice(w.getStartsAt(), w.getEndsAt(), w.getSource(), w.getOriginRuleId()))
+                .toList();
+        if (!allocatedWindows.isEmpty()) {
+            scheduleWindowRepository.deleteAll(allocatedWindows);
+            scheduleWindowRepository.flush();
         }
-        ScheduleWindow previous = null;
-        for (var window : scheduleWindowRepository.findByTechnicianIdOrderByStartsAtAsc(tech.getId())) {
-            if (!"AVAILABLE".equals(window.getStatus()) || window.getAllocatedBookingId() != null) {
-                previous = null;
-            } else if (previous != null && previous.getEndsAt().equals(window.getStartsAt())) {
-                previous.setEndsAt(window.getEndsAt());
-                scheduleWindowRepository.save(previous);
-                scheduleWindowRepository.delete(window);
-            } else {
-                previous = window;
-            }
+        for (ReleasedSlice slice : slices) {
+            scheduleReconciliationService.recalculateReleasedWindow(
+                    tech, slice.start(), slice.end(), slice.source(), slice.originRuleId());
         }
         allocation.setStatus("RELEASED");
         allocationRepository.save(allocation);
@@ -1245,19 +1520,27 @@ public class ProviderDomainService {
         }
 
         ScheduleWindow window = availableWindows.getFirst();
-        if (window.getStartsAt().isBefore(startsAt)) {
-            scheduleWindowRepository.save(ScheduleWindow.builder().id(UUID.randomUUID()).technicianId(newTech.getId())
-                    .startsAt(window.getStartsAt()).endsAt(startsAt).status("AVAILABLE").createdAt(Instant.now()).build());
-        }
-        if (window.getEndsAt().isAfter(endsAt)) {
-            scheduleWindowRepository.save(ScheduleWindow.builder().id(UUID.randomUUID()).technicianId(newTech.getId())
-                    .startsAt(endsAt).endsAt(window.getEndsAt()).status("AVAILABLE").createdAt(Instant.now()).build());
-        }
+        Instant originalStart = window.getStartsAt();
+        Instant originalEnd = window.getEndsAt();
+        String originalSource = window.getSource() != null ? window.getSource() : ScheduleReconciliationService.SOURCE_MANUAL;
+        UUID originalRuleId = window.getOriginRuleId();
+
         window.setStartsAt(startsAt);
         window.setEndsAt(endsAt);
         window.setAllocatedBookingId(bookingId);
         window.setStatus("BOOKED");
-        scheduleWindowRepository.save(window);
+        scheduleWindowRepository.saveAndFlush(window);
+
+        if (originalStart.isBefore(startsAt)) {
+            scheduleWindowRepository.save(ScheduleWindow.builder().id(UUID.randomUUID()).technicianId(newTech.getId())
+                    .startsAt(originalStart).endsAt(startsAt).status("AVAILABLE")
+                    .source(originalSource).originRuleId(originalRuleId).createdAt(Instant.now()).build());
+        }
+        if (originalEnd.isAfter(endsAt)) {
+            scheduleWindowRepository.save(ScheduleWindow.builder().id(UUID.randomUUID()).technicianId(newTech.getId())
+                    .startsAt(endsAt).endsAt(originalEnd).status("AVAILABLE")
+                    .source(originalSource).originRuleId(originalRuleId).createdAt(Instant.now()).build());
+        }
 
         newTech.setActiveAllocations(newTech.getActiveAllocations() + 1);
         technicianRepository.save(newTech);
@@ -1383,7 +1666,8 @@ public class ProviderDomainService {
                 t.getExperienceYears(),
                 t.getRatingAvg(),
                 t.getActiveAllocations(),
-                t.getStatus());
+                t.getStatus(),
+                t.isOnline());
     }
 
     private ScheduleWindowResponse toScheduleResponse(ScheduleWindow w) {
@@ -1398,6 +1682,7 @@ public class ProviderDomainService {
                 w.getEndsAt(),
                 w.getStatus(),
                 includeBookingId ? w.getAllocatedBookingId() : null,
-                w.getVersion());
+                w.getVersion(),
+                w.getSource() != null ? w.getSource() : ScheduleReconciliationService.SOURCE_MANUAL);
     }
 }

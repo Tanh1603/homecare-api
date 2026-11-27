@@ -42,6 +42,16 @@ import com.homecare.common.security.ActorContext;
 import com.homecare.common.security.ActorContextResolver;
 import com.homecare.common.security.RbacConstants;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
+import com.homecare.booking.dto.BookingExecutionDtos.AcceptBookingRequest;
+import com.homecare.booking.dto.BookingExecutionDtos.CustomerNoShowRequest;
+import com.homecare.booking.dto.BookingExecutionDtos.RefuseRevisionRequest;
+import com.homecare.booking.dto.BookingExecutionDtos.RequestRevisionRequest;
+import com.homecare.booking.dto.BookingExecutionDtos.ResumeFromPartsRequest;
+import com.homecare.booking.dto.BookingExecutionDtos.StartReworkRequest;
+import com.homecare.booking.dto.BookingExecutionDtos.SubmitCompletionRequest;
+import com.homecare.booking.dto.BookingExecutionDtos.WaitingForPartsRequest;
+import com.homecare.booking.service.BookingAcceptanceService;
+import com.homecare.booking.service.BookingExecutionService;
 import com.homecare.common.web.ApiMessages;
 import com.homecare.common.web.ApiResponse;
 import com.homecare.common.web.EtagSupport;
@@ -60,6 +70,8 @@ import lombok.RequiredArgsConstructor;
 public class BookingController {
 
     private final BookingLifecycleService service;
+    private final BookingExecutionService executionService;
+    private final BookingAcceptanceService acceptanceService;
     private final QuotationService quotationService;
     private final ProviderGrpcClientAdapter providerGrpcClient;
     private final IdempotencyService idempotencyService;
@@ -178,7 +190,7 @@ public class BookingController {
             @RequestParam("file") MultipartFile file,
             HttpServletRequest httpRequest) throws IOException {
         ActorContext actor = resolveActor(jwt, rawOrgId);
-        WorkEvidenceResponse uploaded = service.uploadWorkEvidence(
+        WorkEvidenceResponse uploaded = executionService.uploadWorkEvidence(
                 actor, bookingId, file.getOriginalFilename(), file.getContentType(), file.getBytes());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(responseFactory.created(ApiMessages.CREATED, uploaded, httpRequest));
@@ -325,6 +337,137 @@ public class BookingController {
                         () -> quotationService.rejectRevisedQuotation(actor.userId(), bookingId, quoteId, input))
                 : quotationService.rejectRevisedQuotation(actor.userId(), bookingId, quoteId, input);
         return ResponseEntity.ok(responseFactory.ok(ApiMessages.UPDATED, rejected, httpRequest));
+    }
+
+    @PostMapping("/{bookingId}/waiting-for-parts")
+    public ResponseEntity<ApiResponse<BookingResponse>> markWaitingForParts(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @PathVariable UUID bookingId,
+            @Valid @RequestBody WaitingForPartsRequest request,
+            HttpServletRequest httpRequest) {
+        BookingResponse updated = executionService.markWaitingForParts(resolveActor(jwt, rawOrgId), bookingId, ifMatch, request);
+        return ResponseEntity.ok().header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    @PostMapping("/{bookingId}/resume-from-parts")
+    public ResponseEntity<ApiResponse<BookingResponse>> resumeFromWaitingForParts(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @PathVariable UUID bookingId,
+            @RequestBody(required = false) ResumeFromPartsRequest request,
+            HttpServletRequest httpRequest) {
+        BookingResponse updated = executionService.resumeFromWaitingForParts(resolveActor(jwt, rawOrgId), bookingId, ifMatch, request);
+        return ResponseEntity.ok().header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    @PostMapping("/{bookingId}/reassign-technician")
+    public ResponseEntity<ApiResponse<BookingResponse>> reassignSameOrgTechnician(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @PathVariable UUID bookingId,
+            @Valid @RequestBody ResumeFromPartsRequest request,
+            HttpServletRequest httpRequest) {
+        BookingResponse updated = executionService.reassignSameOrgTechnician(resolveActor(jwt, rawOrgId), bookingId, ifMatch, request);
+        return ResponseEntity.ok().header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    @PostMapping("/{bookingId}/customer-no-show")
+    public ResponseEntity<ApiResponse<BookingResponse>> reportCustomerNoShow(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @PathVariable UUID bookingId,
+            @Valid @RequestBody CustomerNoShowRequest request,
+            HttpServletRequest httpRequest) {
+        BookingResponse updated = executionService.reportCustomerNoShow(resolveActor(jwt, rawOrgId), bookingId, ifMatch, request);
+        return ResponseEntity.ok().header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    @PostMapping("/{bookingId}/complete")
+    public ResponseEntity<ApiResponse<BookingResponse>> submitCompletionForAcceptance(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @PathVariable UUID bookingId,
+            @Valid @RequestBody SubmitCompletionRequest request,
+            HttpServletRequest httpRequest) {
+        BookingResponse updated = executionService.submitCompletionForAcceptance(resolveActor(jwt, rawOrgId), bookingId, ifMatch, request);
+        return ResponseEntity.ok().header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    @PostMapping("/{bookingId}/accept")
+    public ResponseEntity<ApiResponse<BookingResponse>> acceptBooking(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @PathVariable UUID bookingId,
+            @RequestBody(required = false) AcceptBookingRequest request,
+            HttpServletRequest httpRequest) {
+        ActorContext actor = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId));
+        BookingResponse updated = (idempotencyKey != null && !idempotencyKey.isBlank())
+                ? idempotencyService.execute(
+                        actor.userId(), "POST:/api/v1/bookings/" + bookingId + "/accept",
+                        idempotencyKey, String.valueOf(request),
+                        () -> acceptanceService.acceptBooking(actor, bookingId, ifMatch, request))
+                : acceptanceService.acceptBooking(actor, bookingId, ifMatch, request);
+        return ResponseEntity.ok().header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    @PostMapping("/{bookingId}/request-revision")
+    public ResponseEntity<ApiResponse<BookingResponse>> requestRevision(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @PathVariable UUID bookingId,
+            @Valid @RequestBody RequestRevisionRequest request,
+            HttpServletRequest httpRequest) {
+        ActorContext actor = ActorContextResolver.resolvePersonalOnly(jwt, ActorContextResolver.parseOrganizationId(rawOrgId));
+        BookingResponse updated = (idempotencyKey != null && !idempotencyKey.isBlank())
+                ? idempotencyService.execute(
+                        actor.userId(), "POST:/api/v1/bookings/" + bookingId + "/request-revision",
+                        idempotencyKey, request.toString(),
+                        () -> acceptanceService.requestRevision(actor, bookingId, ifMatch, request))
+                : acceptanceService.requestRevision(actor, bookingId, ifMatch, request);
+        return ResponseEntity.ok().header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    @PostMapping("/{bookingId}/start-rework")
+    public ResponseEntity<ApiResponse<BookingResponse>> startRework(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @PathVariable UUID bookingId,
+            @RequestBody(required = false) StartReworkRequest request,
+            HttpServletRequest httpRequest) {
+        BookingResponse updated = acceptanceService.startRework(resolveActor(jwt, rawOrgId), bookingId, ifMatch, request);
+        return ResponseEntity.ok().header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
+    }
+
+    @PostMapping("/{bookingId}/refuse-revision")
+    public ResponseEntity<ApiResponse<BookingResponse>> refuseRevision(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @PathVariable UUID bookingId,
+            @Valid @RequestBody RefuseRevisionRequest request,
+            HttpServletRequest httpRequest) {
+        BookingResponse updated = acceptanceService.refuseRevision(resolveActor(jwt, rawOrgId), bookingId, ifMatch, request);
+        return ResponseEntity.ok().header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
     }
 
     private ActorContext resolveActor(Jwt jwt, String rawOrgId) {

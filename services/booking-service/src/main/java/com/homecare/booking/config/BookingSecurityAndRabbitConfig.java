@@ -1,5 +1,9 @@
 package com.homecare.booking.config;
 
+import org.springframework.amqp.core.Binding;
+import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -12,6 +16,7 @@ import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.homecare.booking.service.BookingLifecycleService;
+import com.homecare.booking.service.BookingNotificationCallbackConsumer;
 import com.homecare.common.idempotency.IdempotencyService;
 import com.homecare.common.config.HomecareSecurityProperties;
 import com.homecare.common.security.SupabaseJwtConverterSupport;
@@ -30,6 +35,19 @@ public class BookingSecurityAndRabbitConfig {
     @Bean
     public TopicExchange domainEventsExchange() {
         return new TopicExchange(BookingLifecycleService.EXCHANGE, true, false);
+    }
+
+    @Bean
+    public Queue bookingNotificationCallbackQueue() {
+        return QueueBuilder.durable(BookingNotificationCallbackConsumer.QUEUE).build();
+    }
+
+    @Bean
+    public Binding bookingNotificationCallbackBinding(
+            Queue bookingNotificationCallbackQueue, TopicExchange domainEventsExchange) {
+        return BindingBuilder.bind(bookingNotificationCallbackQueue)
+                .to(domainEventsExchange)
+                .with("notification.booking.completion.#");
     }
 
     @Bean

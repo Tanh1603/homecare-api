@@ -143,17 +143,28 @@ class ProviderPortalTest {
     }
 
     @Test
-    void technicianCanDeleteOwnFreeWindowWithEtag() throws Exception {
-        var auth = jwt().jwt(j -> j.subject("demo-technician").claim("user_roles", List.of("TECHNICIAN")));
+    void technicianCannotMutateOwnScheduleAndAdminCanDeleteWithEtag() throws Exception {
+        var techAuth = jwt().jwt(j -> j.subject("demo-technician").claim("user_roles", List.of("TECHNICIAN")));
+        var adminAuth = jwt().jwt(j -> j.subject("admin-1").claim("user_roles", List.of("ADMIN")));
         Instant start = Instant.now().plusSeconds(86400L * 60);
+
+        // Technician self-mutation must be rejected with 403 Forbidden (BR-04 / BR-05)
+        mvc.perform(post("/api/v1/technicians/me/schedules").with(techAuth).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"startsAt\":\"" + start + "\",\"endsAt\":\"" + start.plusSeconds(3600) + "\"}"))
+                .andExpect(status().isForbidden());
+
+        // Admin can create and delete with ETag precondition
         var created = mvc
-                .perform(post("/api/v1/technicians/me/schedules").with(auth).contentType(MediaType.APPLICATION_JSON)
+                .perform(post("/api/v1/technicians/" + ProviderDataInitializer.DEMO_TECH_ID + "/schedules")
+                        .with(adminAuth).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"startsAt\":\"" + start + "\",\"endsAt\":\"" + start.plusSeconds(3600) + "\"}"))
                 .andExpect(status().isCreated()).andReturn();
         var tree = new ObjectMapper().readTree(created.getResponse().getContentAsString()).path("data");
-        String path = "/api/v1/technicians/me/schedules/" + tree.path("id").asString();
-        mvc.perform(delete(path).with(auth)).andExpect(status().is(428));
-        mvc.perform(delete(path).with(auth).header("If-Match", created.getResponse().getHeader("ETag")))
+        String path = "/api/v1/technicians/" + ProviderDataInitializer.DEMO_TECH_ID + "/schedules/" + tree.path("id").asString();
+        mvc.perform(delete(path).with(techAuth).header("If-Match", created.getResponse().getHeader("ETag")))
+                .andExpect(status().isForbidden());
+        mvc.perform(delete(path).with(adminAuth)).andExpect(status().is(428));
+        mvc.perform(delete(path).with(adminAuth).header("If-Match", created.getResponse().getHeader("ETag")))
                 .andExpect(status().isNoContent());
     }
 

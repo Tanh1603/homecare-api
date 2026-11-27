@@ -50,6 +50,10 @@ public class Technician {
     @Column(nullable = false)
     private String status;
 
+    @Builder.Default
+    @Column(name = "is_online", nullable = false)
+    private boolean isOnline = true;
+
     @Version
     private Long version;
 

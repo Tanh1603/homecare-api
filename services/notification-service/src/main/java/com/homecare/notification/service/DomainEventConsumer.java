@@ -5,13 +5,18 @@ import tools.jackson.databind.ObjectMapper;
 import com.homecare.common.event.DomainEventContracts;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -24,6 +29,7 @@ public class DomainEventConsumer {
 
     private final NotificationInboxService inboxService;
     private final ObjectMapper objectMapper;
+    private final ObjectProvider<RabbitTemplate> rabbitTemplateProvider;
 
     @RabbitListener(queues = QUEUE)
     @SuppressWarnings("unchecked")
@@ -103,7 +109,7 @@ public class DomainEventConsumer {
                         "Hoàn tiền thành công",
                         "Yêu cầu hoàn tiền cho đơn hàng " + stringField(data, "orderId") + " đã được hoàn tất.",
                         Map.of("orderId", stringField(data, "orderId")));
-                case DomainEventContracts.BOOKING_COMPLETED -> inboxService.recordIfAbsent(
+                case DomainEventContracts.BOOKING_COMPLETED, DomainEventContracts.BOOKING_ACCEPTED -> inboxService.recordIfAbsent(
                         eventId,
                         stringField(data, "requesterProfileId"),
                         eventType,
@@ -186,6 +192,67 @@ public class DomainEventConsumer {
                             "Phí khảo sát (nếu có) đã được miễn; bạn có thể chọn đơn vị khác hoặc đặt lại.",
                             Map.of("bookingId", bookingId));
                 }
+                case DomainEventContracts.BOOKING_COMPLETION_PENDING_ACCEPTANCE -> {
+                    String bookingId = stringField(data, "bookingId");
+                    inboxService.recordIfAbsent(
+                            eventId,
+                            stringField(data, "requesterProfileId"),
+                            eventType,
+                            "Công việc đã hoàn tất — Vui lòng nghiệm thu",
+                            "Kỹ thuật viên đã hoàn thành dịch vụ " + stringField(data, "serviceName")
+                                    + ". Vui lòng kiểm tra bằng chứng và xác nhận trong 7 ngày.",
+                            Map.of("bookingId", bookingId));
+                    publishCompletionDeliveryCallback(bookingId);
+                }
+                case DomainEventContracts.BOOKING_ACCEPTANCE_REMINDER -> inboxService.recordIfAbsent(
+                        eventId,
+                        stringField(data, "requesterProfileId"),
+                        eventType,
+                        "Nhắc nghiệm thu dịch vụ (Ngày thứ 3)",
+                        "Dịch vụ " + stringField(data, "serviceName") + " đang chờ bạn xác nhận nghiệm thu.",
+                        Map.of("bookingId", stringField(data, "bookingId")));
+                case DomainEventContracts.BOOKING_REVISION_REQUESTED -> inboxService.recordIfAbsent(
+                        eventId,
+                        stringField(data, "technicianProfileId"),
+                        eventType,
+                        "Khách hàng yêu cầu chỉnh sửa lại",
+                        "Lịch hẹn dịch vụ " + stringField(data, "serviceName") + " cần khắc phục lại trong 48 giờ.",
+                        Map.of("bookingId", stringField(data, "bookingId")));
+                case DomainEventContracts.BOOKING_WAITING_FOR_PARTS, DomainEventContracts.BOOKING_WAITING_FOR_PARTS_REMINDER -> inboxService.recordIfAbsent(
+                        eventId,
+                        stringField(data, "requesterProfileId"),
+                        eventType,
+                        "Lịch hẹn đang chờ linh kiện",
+                        "Dịch vụ " + stringField(data, "serviceName") + " đang tạm dừng chờ linh kiện thay thế.",
+                        Map.of("bookingId", stringField(data, "bookingId")));
+                case DomainEventContracts.BOOKING_CUSTOMER_NO_SHOW -> inboxService.recordIfAbsent(
+                        eventId,
+                        stringField(data, "requesterProfileId"),
+                        eventType,
+                        "Ghi nhận vắng mặt tại lịch hẹn",
+                        "Kỹ thuật viên đã đến và chờ đủ 30 phút nhưng không liên hệ được.",
+                        Map.of("bookingId", stringField(data, "bookingId")));
+                case DomainEventContracts.DISPUTE_OPENED -> inboxService.recordIfAbsent(
+                        eventId,
+                        stringField(data, "requesterProfileId"),
+                        eventType,
+                        "Đã tiếp nhận tranh chấp",
+                        "HomeCare đã ghi nhận tranh chấp và bảo toàn toàn bộ bằng chứng liên quan.",
+                        Map.of("disputeId", stringField(data, "disputeId"), "bookingId", stringField(data, "bookingId")));
+                case DomainEventContracts.DISPUTE_SLA_REMINDER -> inboxService.recordIfAbsent(
+                        eventId,
+                        stringField(data, "requesterProfileId"),
+                        eventType,
+                        "Cập nhật tiến độ xử lý tranh chấp",
+                        "Tranh chấp của bạn vừa có cập nhật thời hạn phản hồi.",
+                        Map.of("disputeId", stringField(data, "disputeId"), "bookingId", stringField(data, "bookingId")));
+                case DomainEventContracts.DISPUTE_RESOLVED -> inboxService.recordIfAbsent(
+                        eventId,
+                        stringField(data, "requesterProfileId"),
+                        eventType,
+                        "Tranh chấp đã có kết quả xử lý",
+                        "Admin HomeCare đã cập nhật kết quả xử lý tranh chấp cho lịch hẹn của bạn.",
+                        Map.of("disputeId", stringField(data, "disputeId"), "bookingId", stringField(data, "bookingId")));
                 case "WarrantyRequestRejected" -> recordLifecycle(
                         eventId, eventType, data, "requesterProfileId",
                         "Yêu cầu bảo hành chưa được chấp thuận",
@@ -249,6 +316,62 @@ public class DomainEventConsumer {
                         "Thiết bị của bạn đã đến hạn bảo dưỡng: " + stringField(data, "title"),
                         lifecycleData("scheduleId", stringField(data, "scheduleId"),
                                 "homecare://devices/" + stringField(data, "deviceId")));
+                case DomainEventContracts.PROVIDER_SCHEDULE_UPDATED -> {
+                    String technicianProfileId = stringField(data, "technicianProfileId");
+                    String summary = firstNonBlank(
+                            stringField(data, "summary"),
+                            "Tổ chức vừa cập nhật lịch làm việc của bạn. Mở mục Ca trực để xem lịch mới nhất.");
+                    inboxService.recordIfAbsent(
+                            eventId,
+                            technicianProfileId,
+                            eventType,
+                            "Lịch làm việc đã được cập nhật",
+                            summary,
+                            lifecycleData("technicianId", stringField(data, "technicianId"), "homecare://technician/schedule"));
+                }
+                case DomainEventContracts.PROVIDER_SCHEDULE_REQUEST_CREATED -> {
+                    String technicianName = firstNonBlank(stringField(data, "technicianName"), "Kỹ thuật viên");
+                    String requestTypeLabel = formatScheduleRequestType(stringField(data, "requestType"));
+                    String rangeLabel = formatDateRange(stringField(data, "fromDate"), stringField(data, "toDate"));
+                    String body = technicianName + " vừa gửi yêu cầu " + requestTypeLabel
+                            + (rangeLabel.isBlank() ? "" : " (" + rangeLabel + ")") + ".";
+                    Object recipientsObj = data.get("recipientProfileIds");
+                    if (recipientsObj instanceof List<?> recipients) {
+                        for (Object rec : recipients) {
+                            if (rec != null) {
+                                inboxService.recordIfAbsent(
+                                        eventId,
+                                        String.valueOf(rec),
+                                        eventType,
+                                        "Yêu cầu điều chỉnh lịch mới từ KTV",
+                                        body,
+                                        lifecycleData("requestId", stringField(data, "requestId"), "/org/schedules"));
+                            }
+                        }
+                    }
+                }
+                case DomainEventContracts.PROVIDER_SCHEDULE_REQUEST_REVIEWED -> {
+                    String technicianProfileId = stringField(data, "technicianProfileId");
+                    String decision = stringField(data, "status");
+                    boolean approved = "APPROVED".equalsIgnoreCase(decision);
+                    String requestTypeLabel = formatScheduleRequestType(stringField(data, "requestType"));
+                    String rangeLabel = formatDateRange(stringField(data, "fromDate"), stringField(data, "toDate"));
+                    String reviewNote = stringField(data, "reviewNote");
+                    String title = approved
+                            ? "Yêu cầu điều chỉnh lịch đã được duyệt"
+                            : "Yêu cầu điều chỉnh lịch bị từ chối";
+                    String body = "Yêu cầu " + requestTypeLabel
+                            + (rangeLabel.isBlank() ? "" : " (" + rangeLabel + ")")
+                            + (approved ? " đã được tổ chức phê duyệt và cập nhật vào lịch trực." : " đã bị từ chối.")
+                            + (reviewNote.isBlank() ? "" : " Ghi chú: " + reviewNote);
+                    inboxService.recordIfAbsent(
+                            eventId,
+                            technicianProfileId,
+                            eventType,
+                            title,
+                            body,
+                            lifecycleData("requestId", stringField(data, "requestId"), "homecare://technician/schedule"));
+                }
                 default -> log.debug("Ignored domain event type {}", eventType);
             }
         } catch (Exception e) {
@@ -290,13 +413,32 @@ public class DomainEventConsumer {
         }
 
     private Map<String, String> lifecycleData(String idField, String id, String deeplink) {
-            Map<String, String> data = new java.util.LinkedHashMap<>();
+            Map<String, String> data = new LinkedHashMap<>();
             data.put(idField, id);
             if (deeplink != null && !deeplink.isBlank()) {
                 data.put("deeplink", deeplink);
             }
             return data;
         }
+
+    private String formatScheduleRequestType(String requestType) {
+        return switch (requestType.toUpperCase()) {
+            case "LEAVE" -> "xin nghỉ phép";
+            case "SHIFT_CHANGE" -> "đổi giờ ca trực";
+            case "EXTRA_HOURS" -> "đăng ký thêm giờ";
+            default -> "điều chỉnh lịch";
+        };
+    }
+
+    private String formatDateRange(String fromDate, String toDate) {
+        if (fromDate == null || fromDate.isBlank()) {
+            return "";
+        }
+        if (toDate == null || toDate.isBlank() || fromDate.equals(toDate)) {
+            return fromDate;
+        }
+        return fromDate + " → " + toDate;
+    }
 
     private String firstNonBlank(String... values) {
             for (String value : values) {
@@ -321,6 +463,34 @@ public class DomainEventConsumer {
             return val != null ? Integer.parseInt(String.valueOf(val)) : 0;
         } catch (Exception e) {
             return 0;
+        }
+    }
+
+    private void publishCompletionDeliveryCallback(String bookingId) {
+        if (bookingId == null || bookingId.isBlank()) {
+            return;
+        }
+        RabbitTemplate template = rabbitTemplateProvider.getIfAvailable();
+        if (template == null) {
+            return;
+        }
+        try {
+            Instant now = Instant.now();
+            Map<String, Object> envelope = new LinkedHashMap<>();
+            envelope.put(DomainEventContracts.FIELD_EVENT_ID, UUID.randomUUID().toString());
+            envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, DomainEventContracts.NOTIFICATION_COMPLETION_DELIVERED);
+            envelope.put(DomainEventContracts.FIELD_OCCURRED_AT, now.toString());
+            envelope.put(DomainEventContracts.FIELD_PRODUCER, "notification-service");
+            envelope.put(DomainEventContracts.FIELD_DATA, Map.of(
+                    "bookingId", bookingId,
+                    "deliveredAt", now.toString()));
+            template.convertAndSend(
+                    EXCHANGE,
+                    DomainEventContracts.NOTIFICATION_COMPLETION_DELIVERED,
+                    objectMapper.writeValueAsString(envelope));
+        } catch (Exception ex) {
+            log.warn("Failed to publish completion delivery callback for booking {}: {}", bookingId, ex.getMessage());
+            throw new IllegalStateException("Failed to publish completion delivery callback for booking " + bookingId, ex);
         }
     }
 }

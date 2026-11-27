@@ -9,6 +9,11 @@ import static org.mockito.Mockito.verify;
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
+import com.homecare.common.event.DomainEventContracts;
+import com.homecare.common.security.AccessMode;
+import com.homecare.common.security.ActorContext;
+import com.homecare.common.security.RbacConstants;
+import com.homecare.provider.dto.ProviderDtos.TechnicianInput;
 import com.homecare.provider.entity.PlatformGovernanceSettingEntity;
 import com.homecare.provider.entity.ProviderEntity;
 import com.homecare.provider.exception.ProviderErrorCode;
@@ -30,8 +35,12 @@ import com.homecare.provider.organization.repository.OrganizationMemberRepositor
 import com.homecare.provider.organization.repository.ProviderOutboxEventRepository;
 import com.homecare.provider.organization.security.OrgContext;
 import com.homecare.provider.repository.ProviderRepository;
+import com.homecare.provider.repository.TechnicianRepository;
+import com.homecare.provider.service.PlatformGovernanceService;
+import com.homecare.provider.service.ProviderDomainService;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -56,10 +65,16 @@ class OrganizationDomainServiceTest {
     private OrganizationMemberRepository memberRepository;
 
     @Autowired
+    private TechnicianRepository technicianRepository;
+
+    @Autowired
+    private ProviderDomainService providerDomainService;
+
+    @Autowired
     private ObjectMapper objectMapper;
 
     @Autowired
-    private com.homecare.provider.service.PlatformGovernanceService governanceService;
+    private PlatformGovernanceService governanceService;
 
     @Autowired
     private OrganizationEnforcementRepository enforcementRepository;
@@ -147,7 +162,7 @@ class OrganizationDomainServiceTest {
 
         SupabaseRoleClient mockRoleClient = mock(SupabaseRoleClient.class);
         SupabaseRoleSyncConsumer syncConsumer = new SupabaseRoleSyncConsumer(
-                memberRepository, mockRoleClient, objectMapper);
+                memberRepository, technicianRepository, mockRoleClient, objectMapper);
 
         // User has 2 approved memberships -> GRANT
         syncConsumer.syncUserGlobalOrganizationRole(multiOrgUser, "test");
@@ -162,6 +177,65 @@ class OrganizationDomainServiceTest {
         organizationService.suspendOrganization(orgA.id());
         syncConsumer.syncUserGlobalOrganizationRole(multiOrgUser, "test");
         verify(mockRoleClient, times(1)).revokeOrganizationRole(multiOrgUser);
+    }
+
+    @Test
+    void technicianCreationAndOrgTechnicianMembershipSyncTechnicianRole() {
+        String ownerId = "supabase-owner-tech-" + UUID.randomUUID();
+        OrganizationResponse org = organizationService.registerOrganization(
+                ownerId,
+                new RegisterOrganizationRequest(
+                        "Tech Sync Org",
+                        OrganizationType.SERVICE,
+                        LegalEntityType.COMPANY,
+                        "0312345699",
+                        "0901234599",
+                        "HCM",
+                        null,
+                        null,
+                        "[\"dkkd-tech.pdf\"]"));
+        organizationService.approveOrganization(org.id(), "admin-1");
+        ProviderEntity provider = providerRepository.findByOrganizationId(org.id()).orElseThrow();
+
+        SupabaseRoleClient mockRoleClient = mock(SupabaseRoleClient.class);
+        SupabaseRoleSyncConsumer syncConsumer = new SupabaseRoleSyncConsumer(
+                memberRepository, technicianRepository, mockRoleClient, objectMapper);
+
+        // 1. Creating a Technician via ProviderDomainService grants TECHNICIAN role via outbox
+        String techUserId = "supabase-tech-" + UUID.randomUUID();
+        var adminActor = new ActorContext(
+                ownerId,
+                AccessMode.ORGANIZATION,
+                org.id(),
+                Set.of(RbacConstants.ROLE_ORGANIZATION),
+                Set.of(),
+                Set.of(OrgRole.ORG_OWNER.name()),
+                Set.of());
+        var createdTech = providerDomainService.saveTechnician(
+                null,
+                new TechnicianInput(
+                        provider.getId(), techUserId, "KTV Test", List.of("AC"), 2, "ACTIVE"),
+                adminActor);
+        assertThat(outboxRepository.findAll())
+                .anyMatch(e -> DomainEventContracts.ORG_MEMBER_CHANGED.equals(e.getEventType())
+                        && e.getPayloadJson().contains(techUserId));
+        syncConsumer.syncUserGlobalOrganizationRole(techUserId, "technician.created");
+        verify(mockRoleClient, times(1)).grantTechnicianRole(techUserId);
+
+        // Deactivating/deleting the Technician revokes TECHNICIAN role
+        providerDomainService.deleteTechnician(createdTech.id(), adminActor);
+        syncConsumer.syncUserGlobalOrganizationRole(techUserId, "technician.deleted");
+        verify(mockRoleClient, times(1)).revokeTechnicianRole(techUserId);
+
+        // 2. Adding ORG_TECHNICIAN member grants TECHNICIAN; demoting to ORG_STAFF revokes it
+        String memberTechId = "supabase-member-tech-" + UUID.randomUUID();
+        organizationService.addMember(org.id(), new AddMemberRequest(memberTechId, OrgRole.ORG_TECHNICIAN));
+        syncConsumer.syncUserGlobalOrganizationRole(memberTechId, "member.added");
+        verify(mockRoleClient, times(1)).grantTechnicianRole(memberTechId);
+
+        organizationService.updateMemberRole(org.id(), memberTechId, OrgRole.ORG_STAFF);
+        syncConsumer.syncUserGlobalOrganizationRole(memberTechId, "member.role_updated");
+        verify(mockRoleClient, times(1)).revokeTechnicianRole(memberTechId);
     }
 
     @Test

@@ -34,4 +34,14 @@ public interface OrganizationMemberRepository extends JpaRepository<Organization
               AND o.status = com.homecare.provider.organization.entity.OrganizationStatus.APPROVED
             """)
     long countApprovedMembershipsByUserId(@Param("userId") String userId);
+
+    @Query("""
+            SELECT COUNT(m) FROM OrganizationMemberEntity m
+            JOIN OrganizationEntity o ON m.organizationId = o.id
+            WHERE m.userId = :userId
+              AND m.role = com.homecare.provider.organization.entity.OrgRole.ORG_TECHNICIAN
+              AND m.status = 'ACTIVE'
+              AND o.status = com.homecare.provider.organization.entity.OrganizationStatus.APPROVED
+            """)
+    long countApprovedTechnicianMembershipsByUserId(@Param("userId") String userId);
 }

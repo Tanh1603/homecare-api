@@ -607,7 +607,11 @@ public class BookingLifecycleService {
         }
     }
 
-    private void releaseActiveAllocationIfPresent(BookingEntity booking, String reason) {
+    void releaseActiveAllocationIfPresent(BookingEntity booking, String reason) {
+        releaseActiveAllocationIfPresent(booking, reason, true);
+    }
+
+    void releaseActiveAllocationIfPresent(BookingEntity booking, String reason, boolean clearAssignedTechnician) {
         UUID bookingId = booking.getId();
         UUID opId = booking.getActiveAllocationOperationId();
         if (opId != null) {
@@ -625,7 +629,7 @@ public class BookingLifecycleService {
                         Instant now = Instant.now();
                         Map<String, Object> envelope = new LinkedHashMap<>();
                         envelope.put(DomainEventContracts.FIELD_EVENT_ID, eventId);
-                        envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, "booking.allocation.release.retry.v1");
+                        envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, DomainEventContracts.BOOKING_ALLOCATION_RELEASE_RETRY);
                         envelope.put(DomainEventContracts.FIELD_OCCURRED_AT, now.toString());
                         envelope.put(DomainEventContracts.FIELD_PRODUCER, "booking-service");
                         envelope.put(DomainEventContracts.FIELD_DATA, Map.of(
@@ -642,8 +646,8 @@ public class BookingLifecycleService {
                                 .id(eventId)
                                 .aggregateType("Booking")
                                 .aggregateId(bookingId)
-                                .eventType("booking.allocation.release.retry.v1")
-                                .routingKey("booking.allocation.release.retry.v1")
+                                .eventType(DomainEventContracts.BOOKING_ALLOCATION_RELEASE_RETRY)
+                                .routingKey(DomainEventContracts.BOOKING_ALLOCATION_RELEASE_RETRY)
                                 .payloadJson(payload)
                                 .status(EntityStatus.PENDING.name())
                                 .retryCount(0)
@@ -665,9 +669,11 @@ public class BookingLifecycleService {
                 releaseTask.run();
             }
         }
-        booking.setAssignedTechnicianId(null);
-        booking.setAssignedTechnicianProfileId(null);
-        booking.setAssignedTechnicianName(null);
+        if (clearAssignedTechnician) {
+            booking.setAssignedTechnicianId(null);
+            booking.setAssignedTechnicianProfileId(null);
+            booking.setAssignedTechnicianName(null);
+        }
         booking.setAllocationStatus("UNALLOCATED");
     }
 
@@ -693,6 +699,9 @@ public class BookingLifecycleService {
                             "Installation cannot start before product delivery.");
                 }
                 booking.setStatus("IN_PROGRESS");
+                if ("ARRIVED".equals(kind) && booking.getArrivedAt() == null) {
+                    booking.setArrivedAt(Instant.now());
+                }
                 recordHistory(bookingId, previous, "IN_PROGRESS", actor.userId(),
                         "[" + kind + "] " + (request.note() != null ? request.note() : ""));
             }
@@ -701,22 +710,9 @@ public class BookingLifecycleService {
                     throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
                 }
             }
-            case "COMPLETED" -> {
-                if (!"IN_PROGRESS".equals(previous)) {
-                    throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
-                }
-                if (BookingPurpose.INSTALLATION.name().equals(booking.getPurpose()) && !booking.isProductReady()) {
-                    throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE,
-                            "Installation cannot complete before product delivery.");
-                }
-                if (workUpdateRepository.existsByBookingIdAndExtraCostStatus(bookingId, "PENDING_APPROVAL")
-                        || quotationRepository.existsByBookingIdAndQuoteKindAndStatus(
-                                bookingId, QuotationService.QUOTE_KIND_REVISED, "SENT")) {
-                    throw new DomainException(CommonErrorCode.CONFLICT);
-                }
-                booking.setStatus("COMPLETED");
-                recordHistory(bookingId, previous, "COMPLETED", actor.userId(), request.note());
-            }
+            case "COMPLETED" -> throw new DomainException(
+                    CommonErrorCode.VALIDATION_FAILED,
+                    "Use POST /api/v1/bookings/{id}/complete to submit completion for acceptance.");
             default -> throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
         }
 
@@ -773,57 +769,44 @@ public class BookingLifecycleService {
 
         booking.setUpdatedAt(Instant.now());
         BookingEntity saved = bookingRepository.saveAndFlush(booking);
-
-        if ("COMPLETED".equals(saved.getStatus())) {
-            publishDomainEvent(
-                    BookingPurpose.INSTALLATION.name().equals(saved.getPurpose())
-                            ? "INSTALLATION_COMPLETED"
-                            : DomainEventContracts.BOOKING_COMPLETED,
-                    saved);
-        }
         return toBookingResponse(saved);
     }
 
-    private static final long MAX_EVIDENCE_BYTES = 5L * 1024L * 1024L;
-    private static final Set<String> ALLOWED_EVIDENCE_TYPES = Set.of(
-            "image/jpeg", "image/jpg", "image/png", "image/webp");
+    void publishBookingReassignedEvent(
+            BookingEntity saved,
+            String oldTechnicianProfileId,
+            String reason,
+            Instant now) {
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("bookingId", saved.getId().toString());
+            payload.put("requesterProfileId", saved.getRequesterProfileId());
+            payload.put("serviceName", saved.getServiceName() != null ? saved.getServiceName() : "");
+            payload.put("oldTechnicianProfileId", oldTechnicianProfileId != null ? oldTechnicianProfileId : "");
+            payload.put("newTechnicianProfileId", saved.getAssignedTechnicianProfileId() != null ? saved.getAssignedTechnicianProfileId() : "");
+            payload.put("newTechnicianName", saved.getAssignedTechnicianName() != null ? saved.getAssignedTechnicianName() : "");
+            payload.put("reason", reason != null ? reason : "");
 
-    @Transactional
-    public WorkEvidenceResponse uploadWorkEvidence(
-            ActorContext actor,
-            UUID bookingId,
-            String originalFilename,
-            String contentType,
-            byte[] bytes) {
-        if (bytes == null || bytes.length == 0 || bytes.length > MAX_EVIDENCE_BYTES) {
-            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
+            Map<String, Object> envelope = new LinkedHashMap<>();
+            envelope.put(DomainEventContracts.FIELD_EVENT_ID, UUID.randomUUID().toString());
+            envelope.put(DomainEventContracts.FIELD_EVENT_TYPE, DomainEventContracts.BOOKING_REASSIGNED);
+            envelope.put(DomainEventContracts.FIELD_OCCURRED_AT, now.toString());
+            envelope.put(DomainEventContracts.FIELD_PRODUCER, "booking-service");
+            envelope.put(DomainEventContracts.FIELD_DATA, payload);
+
+            outboxEventRepository.save(BookingOutboxEventEntity.builder()
+                    .id(UUID.randomUUID())
+                    .aggregateType("Booking")
+                    .aggregateId(saved.getId())
+                    .eventType(DomainEventContracts.BOOKING_REASSIGNED)
+                    .routingKey(DomainEventContracts.BOOKING_REASSIGNED)
+                    .payloadJson(objectMapper.writeValueAsString(envelope))
+                    .status(EntityStatus.PENDING.name())
+                    .createdAt(now)
+                    .build());
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to serialize booking.reassigned.v1 event", e);
         }
-        String normalizedType = contentType == null ? "" : contentType.trim().toLowerCase();
-        if (!ALLOWED_EVIDENCE_TYPES.contains(normalizedType)) {
-            throw new DomainException(CommonErrorCode.VALIDATION_FAILED);
-        }
-        BookingEntity booking = bookingRepository.lockById(bookingId)
-                .orElseThrow(() -> new DomainException(BookingErrorCode.BOOKING_NOT_FOUND));
-        accessPolicy.assertCanAppendWorkUpdate(actor, booking);
-        if (!"ASSIGNED".equals(booking.getStatus()) && !"IN_PROGRESS".equals(booking.getStatus())) {
-            throw new DomainException(BookingErrorCode.BOOKING_INVALID_STATE);
-        }
-        WorkEvidenceStoragePort.StoredObject stored = workEvidenceStorage.upload(
-                bookingId, originalFilename, normalizedType, bytes);
-        Instant now = Instant.now();
-        WorkEvidenceEntity saved = workEvidenceRepository.save(WorkEvidenceEntity.builder()
-                .id(UUID.randomUUID())
-                .bookingId(bookingId)
-                .uploaderProfileId(actor.userId())
-                .bucket(stored.bucket())
-                .objectKey(stored.objectKey())
-                .contentType(normalizedType)
-                .sizeBytes(bytes.length)
-                .status("UPLOADED")
-                .createdAt(now)
-                .build());
-        return new WorkEvidenceResponse(
-                saved.getId(), saved.getBookingId(), saved.getContentType(), saved.getSizeBytes(), saved.getCreatedAt(), null);
     }
 
     @Transactional
@@ -886,7 +869,7 @@ public class BookingLifecycleService {
             String requesterProfileId) {
         return bookingRepository.findById(bookingId)
                 .filter(b -> b.getRequesterProfileId().equals(requesterProfileId)
-                        && "COMPLETED".equals(b.getStatus()))
+                        && ("ACCEPTED".equals(b.getStatus()) || "COMPLETED".equals(b.getStatus())))
                 .map(b -> new VerifyBookingReviewEligibilityResponse(
                         true,
                         b.getId(),
@@ -901,7 +884,7 @@ public class BookingLifecycleService {
                         "NOT_ELIGIBLE"));
     }
 
-    private void recordHistory(UUID bookingId, String from, String to, String actorId, String reason) {
+    void recordHistory(UUID bookingId, String from, String to, String actorId, String reason) {
         historyRepository.save(BookingHistoryEntry.builder()
                 .id(UUID.randomUUID())
                 .bookingId(bookingId)
@@ -1385,7 +1368,7 @@ public class BookingLifecycleService {
         return toBookingResponse(saved);
     }
 
-    private void publishDomainEvent(String eventType, BookingEntity booking) {
+    void publishDomainEvent(String eventType, BookingEntity booking) {
         publishDomainEvent(eventType, booking, false);
     }
 
@@ -1467,7 +1450,7 @@ public class BookingLifecycleService {
         }
     }
 
-    private BookingResponse toBookingResponse(BookingEntity b) {
+    BookingResponse toBookingResponse(BookingEntity b) {
         return toBookingResponse(
                 b,
                 historyRepository.findByBookingIdOrderByOccurredAtAsc(b.getId()),

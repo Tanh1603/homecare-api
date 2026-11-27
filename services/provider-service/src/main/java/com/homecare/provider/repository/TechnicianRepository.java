@@ -41,4 +41,13 @@ public interface TechnicianRepository extends JpaRepository<Technician, UUID> {
     Optional<Technician> lockByIdNoWait(UUID id);
     List<Technician> findByProviderIdAndStatus(UUID providerId, String status);
     List<Technician> findByStatus(String status);
+
+    @Query("""
+        select case when count(t) > 0 then true else false end
+        from Technician t
+        where t.profileId = :profileId
+          and t.status = 'ACTIVE'
+          and exists (select 1 from ProviderEntity p where p.id = t.providerId and p.status = 'ACTIVE')
+        """)
+    boolean existsActiveTechnicianInActiveProvider(String profileId);
 }

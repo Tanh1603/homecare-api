@@ -28,6 +28,7 @@ spring:
   flyway:
     enabled: ${FLYWAY_ENABLED:false}
     baseline-on-migrate: true
+    out-of-order: true
   data:
     redis:
       host: ${REDIS_HOST:localhost}

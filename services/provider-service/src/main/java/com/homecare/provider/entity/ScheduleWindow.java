@@ -41,6 +41,13 @@ public class ScheduleWindow {
     @Column(name = "allocated_booking_id")
     private UUID allocatedBookingId;
 
+    @Builder.Default
+    @Column(nullable = false, length = 24)
+    private String source = "MANUAL";
+
+    @Column(name = "origin_rule_id")
+    private UUID originRuleId;
+
     @Version
     private Long version;
 

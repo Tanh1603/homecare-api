@@ -170,6 +170,48 @@ public class BookingEntity {
     @Column(name = "pending_reschedule_reason", length = 500)
     private String pendingRescheduleReason;
 
+    @Column(name = "arrived_at")
+    private Instant arrivedAt;
+
+    @Column(name = "waiting_for_parts_since")
+    private Instant waitingForPartsSince;
+
+    @Column(name = "waiting_for_parts_reminder_stage", nullable = false)
+    @Builder.Default
+    private int waitingForPartsReminderStage = 0;
+
+    @Column(name = "completion_submitted_at")
+    private Instant completionSubmittedAt;
+
+    @Column(name = "completion_summary", length = 2000)
+    private String completionSummary;
+
+    @Column(name = "completion_notified_at")
+    private Instant completionNotifiedAt;
+
+    @Column(name = "notification_failed", nullable = false)
+    @Builder.Default
+    private boolean notificationFailed = false;
+
+    @Column(name = "auto_accept_at")
+    private Instant autoAcceptAt;
+
+    @Column(name = "acceptance_reminder_sent_at")
+    private Instant acceptanceReminderSentAt;
+
+    @Column(name = "acceptance_source", length = 32)
+    private String acceptanceSource;
+
+    @Column(name = "revision_count", nullable = false)
+    @Builder.Default
+    private int revisionCount = 0;
+
+    @Column(name = "revision_requested_at")
+    private Instant revisionRequestedAt;
+
+    @Column(name = "customer_no_show_evidence_id")
+    private UUID customerNoShowEvidenceId;
+
     @Version
     private Long version;
 

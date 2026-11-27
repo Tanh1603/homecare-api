@@ -24,7 +24,7 @@ public class ProviderBookingConsumer {
         String type = event.path(DomainEventContracts.FIELD_EVENT_TYPE).asString();
         if (!DomainEventContracts.BOOKING_COMPLETED.equals(type)
                 && !DomainEventContracts.BOOKING_CANCELLED.equals(type)
-                && !"booking.allocation.release.retry.v1".equals(type)) {
+                && !DomainEventContracts.BOOKING_ALLOCATION_RELEASE_RETRY.equals(type)) {
             return;
         }
         String bookingIdText = event.path(DomainEventContracts.FIELD_DATA).path("bookingId").asString(null);

@@ -48,6 +48,7 @@ class ServiceBookingCoreFeature3Test {
     @Autowired ServiceRequestService serviceRequestService;
     @Autowired QuotationService quotationService;
     @Autowired BookingLifecycleService bookingLifecycleService;
+    @Autowired BookingExecutionService bookingExecutionService;
     @Autowired ServiceRequestTtlWorker ttlWorker;
     @Autowired ServiceRequestRepository serviceRequestRepository;
     @Autowired QuotationRepository quotationRepository;
@@ -193,9 +194,11 @@ class ServiceBookingCoreFeature3Test {
         assertThat(revisedList.getFirst().status()).isEqualTo("SENT");
 
         // Completion blocked while REVISED Quotation is SENT
-        assertThatThrownBy(() -> bookingLifecycleService.appendWorkUpdate(
+        var ev = bookingExecutionService.uploadWorkEvidence(
+                techActor, booking.getId(), "done.jpg", "image/jpeg", new byte[]{1, 2, 3});
+        assertThatThrownBy(() -> bookingExecutionService.submitCompletionForAcceptance(
                 techActor, booking.getId(), EtagSupport.format(updated.version()),
-                new CreateWorkUpdateRequest("COMPLETED", "Xong")))
+                new com.homecare.booking.dto.BookingExecutionDtos.SubmitCompletionRequest("Xong", List.of(ev.id()))))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode").isEqualTo("CONFLICT");
 
@@ -205,10 +208,10 @@ class ServiceBookingCoreFeature3Test {
         BookingEntity refreshed = bookingRepository.findById(booking.getId()).orElseThrow();
         assertThat(refreshed.getQuotedPrice()).isEqualTo(430_000L);
 
-        var completed = bookingLifecycleService.appendWorkUpdate(
+        var completed = bookingExecutionService.submitCompletionForAcceptance(
                 techActor, booking.getId(), EtagSupport.format(refreshed.getVersion()),
-                new CreateWorkUpdateRequest("COMPLETED", "Hoàn tất"));
-        assertThat(completed.status()).isEqualTo("COMPLETED");
+                new com.homecare.booking.dto.BookingExecutionDtos.SubmitCompletionRequest("Hoàn tất", List.of(ev.id())));
+        assertThat(completed.status()).isEqualTo("COMPLETED_PENDING_ACCEPTANCE");
     }
 
     @Test

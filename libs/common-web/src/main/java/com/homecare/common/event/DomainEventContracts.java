@@ -29,6 +29,9 @@ public final class DomainEventContracts {
     public static final String ORG_BANNED = "organization.banned.v1";
     public static final String ORG_MEMBER_CHANGED = "organization.member.changed.v1";
     public static final String OFFERING_DEACTIVATED = "provider.offering.deactivated.v1";
+    public static final String PROVIDER_SCHEDULE_UPDATED = "provider.schedule.updated.v1";
+    public static final String PROVIDER_SCHEDULE_REQUEST_CREATED = "provider.schedule.request.created.v1";
+    public static final String PROVIDER_SCHEDULE_REQUEST_REVIEWED = "provider.schedule.request.reviewed.v1";
     public static final String USER_SUSPENDED = "user.suspended.v1";
 
     // Booking lifecycle events
@@ -40,6 +43,18 @@ public final class DomainEventContracts {
     public static final String BOOKING_ACCEPTED = "booking.accepted.v1";
     public static final String BOOKING_RESCHEDULE_REQUESTED = "booking.reschedule.requested.v1";
     public static final String BOOKING_TECHNICIAN_NO_SHOW = "booking.technician.no_show.v1";
+    public static final String BOOKING_ALLOCATION_RELEASE_RETRY = "booking.allocation.release.retry.v1";
+    public static final String BOOKING_WAITING_FOR_PARTS = "booking.waiting_for_parts.v1";
+    public static final String BOOKING_WAITING_FOR_PARTS_REMINDER = "booking.waiting_for_parts.reminder.v1";
+    public static final String BOOKING_CUSTOMER_NO_SHOW = "booking.customer_no_show.v1";
+    public static final String BOOKING_COMPLETION_PENDING_ACCEPTANCE = "booking.completion.pending_acceptance.v1";
+    public static final String BOOKING_ACCEPTANCE_REMINDER = "booking.acceptance.reminder.v1";
+    public static final String BOOKING_REVISION_REQUESTED = "booking.revision_requested.v1";
+    public static final String NOTIFICATION_COMPLETION_DELIVERED = "notification.booking.completion.delivered.v1";
+    public static final String NOTIFICATION_COMPLETION_FAILED = "notification.booking.completion.failed.v1";
+    public static final String DISPUTE_OPENED = "dispute.opened.v1";
+    public static final String DISPUTE_SLA_REMINDER = "dispute.sla.reminder.v1";
+    public static final String DISPUTE_RESOLVED = "dispute.resolved.v1";
     public static final String INSTALLATION_COMPLETED = "INSTALLATION_COMPLETED";
 
     // ServiceRequest & Quotation lifecycle events

@@ -1,14 +1,23 @@
 package com.homecare.notification.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+
+import static org.mockito.Mockito.when;
 
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 
+import com.homecare.common.event.DomainEventContracts;
 import com.homecare.notification.dto.NotificationDtos.NotificationResponse;
 
 import tools.jackson.databind.ObjectMapper;
@@ -87,6 +96,32 @@ class LifecycleNotificationConsumerTest {
                 """.formatted(recipient)));
 
         assertThat(inboxService.inboxPage(recipient, 1, 20).items()).isEmpty();
+    }
+
+    @Test
+    void handlesBookingAcceptedAndRethrowsCompletionCallbackPublishFailure() {
+        String recipient = "accepted-" + UUID.randomUUID();
+        String bookingId = UUID.randomUUID().toString();
+        consumer.onDomainEvent(event("evt-accepted", DomainEventContracts.BOOKING_ACCEPTED, """
+                "requesterProfileId":"%s","bookingId":"%s","serviceName":"Sửa điều hòa"
+                """.formatted(recipient, bookingId)));
+        assertThat(inboxService.inboxPage(recipient, 1, 20).items()).hasSize(1);
+
+        RabbitTemplate failingRabbit = mock(RabbitTemplate.class);
+        doThrow(new RuntimeException("broker down"))
+                .when(failingRabbit).convertAndSend(anyString(), anyString(), anyString());
+        @SuppressWarnings("unchecked")
+        ObjectProvider<RabbitTemplate> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(failingRabbit);
+        DomainEventConsumer isolated = new DomainEventConsumer(inboxService, objectMapper, provider);
+
+        String pendingPayload = event("evt-pending-fail", DomainEventContracts.BOOKING_COMPLETION_PENDING_ACCEPTANCE, """
+                "requesterProfileId":"%s","bookingId":"%s","serviceName":"Sửa điều hòa"
+                """.formatted(recipient, bookingId));
+        assertThatThrownBy(() -> isolated.onDomainEvent(pendingPayload))
+                .isInstanceOf(IllegalStateException.class)
+                .hasStackTraceContaining("completion delivery callback")
+                .hasRootCauseMessage("broker down");
     }
 
     private String event(String id, String type, String data) {
