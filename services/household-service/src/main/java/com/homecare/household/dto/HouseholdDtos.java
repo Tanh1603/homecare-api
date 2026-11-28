@@ -164,6 +164,15 @@ public final class HouseholdDtos {
             String status) {
     }
 
+    public record AttachWarrantyEvidenceRequest(
+            @NotBlank String evidenceRef) {
+    }
+
+    public record AdminVerifyWarrantyRequest(
+            @NotBlank String verificationStatus,
+            String note) {
+    }
+
     public record WarrantyResponse(
             UUID id,
             UUID deviceId,
@@ -184,7 +193,27 @@ public final class HouseholdDtos {
             String status,
             String manufacturerRegistrationStatus,
             String triggerEvidenceRef,
-            Instant createdAt) {
+            Instant createdAt,
+            String warrantyCategory,
+            String warrantyIssuer,
+            String verificationStatus,
+            String validityStatus,
+            String authorizationEvidenceRef,
+            String verifiedBy,
+            Instant verifiedAt,
+            String verificationNote,
+            Long version) {
+        public WarrantyResponse(UUID id, UUID deviceId, UUID organizationId, UUID orderId, UUID orderLineId,
+                UUID productId, String source, String providerName, String ownerName, LocalDate startsOn,
+                LocalDate startDate, LocalDate endsOn, LocalDate endDate, String notes, String coverageSummary,
+                String documentUrl, String status, String manufacturerRegistrationStatus, String triggerEvidenceRef,
+                Instant createdAt) {
+            this(id, deviceId, organizationId, orderId, orderLineId, productId, source, providerName, ownerName,
+                    startsOn, startDate, endsOn, endDate, notes, coverageSummary, documentUrl, status,
+                    manufacturerRegistrationStatus, triggerEvidenceRef, createdAt,
+                    "PRODUCT_MANUFACTURER", "MANUFACTURER", "UNVERIFIED", "ACTIVE", null, null, null, null, 0L);
+        }
+
         public WarrantyResponse(UUID id, UUID deviceId, UUID organizationId, UUID orderId, UUID orderLineId,
                 UUID productId, String source, String providerName, LocalDate startsOn, LocalDate startDate,
                 LocalDate endsOn, LocalDate endDate, String notes, String coverageSummary, String documentUrl,
@@ -343,6 +372,23 @@ public final class HouseholdDtos {
             UUID organizationId,
             String providerName,
             LocalDate endsOn,
-            String status) {
+            String status,
+            String warrantyCategory,
+            String warrantyIssuer,
+            String verificationStatus,
+            String referenceSerial) {
+        public VerifyWarrantyResponse(
+                boolean valid,
+                boolean expired,
+                UUID warrantyId,
+                UUID deviceId,
+                String deviceType,
+                UUID organizationId,
+                String providerName,
+                LocalDate endsOn,
+                String status) {
+            this(valid, expired, warrantyId, deviceId, deviceType, organizationId, providerName, endsOn, status,
+                    "PRODUCT_MANUFACTURER", "MANUFACTURER", "UNVERIFIED", null);
+        }
     }
 }

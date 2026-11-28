@@ -76,4 +76,12 @@ public final class DomainEventContracts {
 
     // Household lifecycle events
     public static final String MAINTENANCE_REMINDER_DUE = "maintenance.reminder.due.v1";
+
+    // Parts tracking & Warranty claim lifecycle events (006-warranty-and-claims)
+    public static final String PARTS_REQUEST_CREATED = "parts.request.created.v1";
+    public static final String PARTS_REQUEST_REVIEWED = "parts.request.reviewed.v1";
+    public static final String WARRANTY_CLAIM_SUBMITTED = "warranty.claim.submitted.v1";
+    public static final String WARRANTY_CLAIM_VERIFIED = "warranty.claim.verified.v1";
+    public static final String WARRANTY_CLAIM_RESPONDED = "warranty.claim.responded.v1";
+    public static final String WARRANTY_CLAIM_SLA_ESCALATED = "warranty.claim.sla_escalated.v1";
 }

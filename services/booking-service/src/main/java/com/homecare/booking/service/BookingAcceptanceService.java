@@ -6,6 +6,7 @@ import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -45,6 +46,7 @@ public class BookingAcceptanceService {
     private final BookingAccessPolicy accessPolicy;
     private final BookingLifecycleService lifecycleService;
     private final DisputeService disputeService;
+    private final ObjectProvider<WarrantySnapshotService> warrantySnapshotServiceProvider;
 
     public static Instant computeAutoAcceptAt(Instant notifiedAt) {
         LocalDate day0 = notifiedAt.atZone(VN_ZONE).toLocalDate();
@@ -123,6 +125,12 @@ public class BookingAcceptanceService {
         booking.setAutoAcceptAt(null);
         booking.setUpdatedAt(now);
         BookingEntity saved = bookingRepository.saveAndFlush(booking);
+        WarrantySnapshotService snapshotService = warrantySnapshotServiceProvider != null
+                ? warrantySnapshotServiceProvider.getIfAvailable()
+                : null;
+        if (!saved.isWarrantyRework() && snapshotService != null) {
+            snapshotService.createActivationSnapshotOnAcceptance(saved);
+        }
         lifecycleService.recordHistory(saved.getId(), previous, saved.getStatus(), actorId, reason);
         lifecycleService.publishDomainEvent(DomainEventContracts.BOOKING_ACCEPTED, saved);
         return lifecycleService.toBookingResponse(saved);

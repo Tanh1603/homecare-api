@@ -87,6 +87,9 @@ public class QuotationEntity {
     @Column(name = "rejection_reason", length = 500)
     private String rejectionReason;
 
+    @Column(name = "workmanship_duration_days")
+    private Integer workmanshipDurationDays;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 

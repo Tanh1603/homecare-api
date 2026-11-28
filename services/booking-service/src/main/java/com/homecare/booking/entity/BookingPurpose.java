@@ -4,5 +4,6 @@ public enum BookingPurpose {
     DIAGNOSTIC,
     REPAIR,
     INSTALLATION,
-    REPLACEMENT
+    REPLACEMENT,
+    WARRANTY_REWORK
 }

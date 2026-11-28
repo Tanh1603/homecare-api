@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -62,6 +63,7 @@ public class QuotationService {
     private final WorkUpdateRepository workUpdateRepository;
     private final BookingOutboxEventRepository outboxRepository;
     private final ServiceRequestService serviceRequestService;
+    private final ObjectProvider<WarrantySnapshotService> warrantySnapshotServiceProvider;
     private final PlatformTransactionManager transactionManager;
     private final ObjectMapper objectMapper;
 
@@ -76,20 +78,37 @@ public class QuotationService {
             @NotEmpty List<QuotationItemInput> items,
             Instant validUntil,
             Boolean applyInspectionFeeCredit,
-            String supersedeReason) {
+            String supersedeReason,
+            Integer workmanshipDurationDays) {
 
         public CreateQuotationInput(
                 List<QuotationItemInput> items,
                 Instant validUntil,
                 Boolean applyInspectionFeeCredit) {
-            this(items, validUntil, applyInspectionFeeCredit, null);
+            this(items, validUntil, applyInspectionFeeCredit, null, null);
+        }
+
+        public CreateQuotationInput(
+                List<QuotationItemInput> items,
+                Instant validUntil,
+                Boolean applyInspectionFeeCredit,
+                String supersedeReason) {
+            this(items, validUntil, applyInspectionFeeCredit, supersedeReason, null);
         }
     }
 
     public record CreateRevisedQuotationInput(
             @NotEmpty List<QuotationItemInput> items,
             @NotBlank String revisionReason,
-            Instant validUntil) {
+            Instant validUntil,
+            Integer workmanshipDurationDays) {
+
+        public CreateRevisedQuotationInput(
+                List<QuotationItemInput> items,
+                String revisionReason,
+                Instant validUntil) {
+            this(items, revisionReason, validUntil, null);
+        }
     }
 
     public record AcceptQuotationInput(
@@ -200,6 +219,10 @@ public class QuotationService {
         long feeCredit = (feePolicy == InspectionFeePolicy.CREDIT_FULL) ? Math.min(feePaid, itemsTotal) : 0L;
         long totalDue = Math.max(0L, itemsTotal - feeCredit);
 
+        if (input.workmanshipDurationDays() != null) {
+            WarrantySnapshotService.validateWorkmanshipDuration(req.getServiceCategory(), input.workmanshipDurationDays());
+        }
+
         UUID quoteId = UUID.randomUUID();
         QuotationEntity quote = quotationRepository.saveAndFlush(QuotationEntity.builder()
                 .id(quoteId)
@@ -212,6 +235,7 @@ public class QuotationService {
                 .inspectionFeePaid(feePaid)
                 .inspectionFeeCredit(feeCredit)
                 .totalDueAfterCredit(totalDue)
+                .workmanshipDurationDays(input.workmanshipDurationDays())
                 .policyVersion(req.getPolicyVersion())
                 .validUntil(validUntil)
                 .status("SENT")
@@ -290,6 +314,14 @@ public class QuotationService {
         req.setUpdatedAt(now);
         requestRepository.saveAndFlush(req);
 
+        WarrantySnapshotService snapshotService = warrantySnapshotServiceProvider != null
+                ? warrantySnapshotServiceProvider.getIfAvailable()
+                : null;
+        if (snapshotService != null) {
+            snapshotService.recordQuotationCommitment(
+                    repairBooking.getId(), quote, repairBooking.getPurpose(), requesterProfileId);
+        }
+
         publishQuotationEvent("quotation.accepted.v1", quote, requesterProfileId, now);
         return toResponse(quote, itemRepository.findByQuotationIdOrderByRowIndexAsc(quote.getId()));
     }
@@ -355,7 +387,7 @@ public class QuotationService {
         Instant now = Instant.now();
         Instant validUntil = resolveAndValidateValidUntil(input.validUntil(), now);
         QuotationEntity quote = createRevisedQuotationInternal(
-                booking, input.items(), input.revisionReason().trim(), validUntil, now);
+                booking, input.items(), input.revisionReason().trim(), validUntil, now, input.workmanshipDurationDays());
         return toResponse(quote, itemRepository.findByQuotationIdOrderByRowIndexAsc(quote.getId()));
     }
 
@@ -367,7 +399,7 @@ public class QuotationService {
             Instant now) {
         String reason = (note != null && !note.isBlank()) ? note.trim() : "Phát sinh chi phí trong quá trình thi công";
         List<QuotationItemInput> items = List.of(new QuotationItemInput("OTHER", reason, 1, extraCost));
-        return createRevisedQuotationInternal(booking, items, reason, now.plus(DEFAULT_VALIDITY_HOURS, ChronoUnit.HOURS), now);
+        return createRevisedQuotationInternal(booking, items, reason, now.plus(DEFAULT_VALIDITY_HOURS, ChronoUnit.HOURS), now, null);
     }
 
     private QuotationEntity createRevisedQuotationInternal(
@@ -375,7 +407,11 @@ public class QuotationService {
             List<QuotationItemInput> items,
             String revisionReason,
             Instant validUntil,
-            Instant now) {
+            Instant now,
+            Integer workmanshipDurationDays) {
+        if (workmanshipDurationDays != null) {
+            WarrantySnapshotService.validateWorkmanshipDuration(booking.getDeviceType(), workmanshipDurationDays);
+        }
         if (quotationRepository.existsByBookingIdAndQuoteKindAndStatus(booking.getId(), QUOTE_KIND_REVISED, "SENT")) {
             throw new DomainException(CommonErrorCode.CONFLICT,
                     "Booking already has a pending SENT Revised Quotation awaiting Customer approval.");
@@ -401,6 +437,7 @@ public class QuotationService {
                 .inspectionFeePaid(0L)
                 .inspectionFeeCredit(0L)
                 .totalDueAfterCredit(itemsTotal)
+                .workmanshipDurationDays(workmanshipDurationDays)
                 .policyVersion("v1")
                 .validUntil(validUntil)
                 .status("SENT")
@@ -448,6 +485,14 @@ public class QuotationService {
         booking.setQuotedPrice(Math.addExact(booking.getQuotedPrice(), quote.getTotalDueAfterCredit()));
         booking.setUpdatedAt(now);
         bookingRepository.saveAndFlush(booking);
+
+        WarrantySnapshotService snapshotService = warrantySnapshotServiceProvider != null
+                ? warrantySnapshotServiceProvider.getIfAvailable()
+                : null;
+        if (snapshotService != null) {
+            snapshotService.recordQuotationCommitment(
+                    booking.getId(), quote, booking.getPurpose(), requesterProfileId);
+        }
 
         syncLinkedWorkUpdateStatus(bookingId, quoteId, true, requesterProfileId, now);
         publishQuotationEvent("quotation.accepted.v1", quote, requesterProfileId, now);

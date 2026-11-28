@@ -28,6 +28,7 @@ import com.homecare.household.dto.HouseholdDtos.UpdateDeviceRequest;
 import com.homecare.household.dto.HouseholdDtos.UpdateHouseholdRequest;
 import com.homecare.household.dto.HouseholdDtos.UpdateMaintenanceScheduleRequest;
 import com.homecare.household.dto.HouseholdDtos.UpdateWarrantyRequest;
+import com.homecare.household.dto.HouseholdDtos.AttachWarrantyEvidenceRequest;
 import com.homecare.household.dto.HouseholdDtos.WarrantyResponse;
 import com.homecare.household.service.HouseholdDomainService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -310,6 +311,19 @@ public class HouseholdController {
                 service.schedulesPage(resolvePersonal(jwt, rawOrgId).userId(), page, size),
                 request));
     }
+    @PostMapping("/warranties/{warrantyId}/evidence")
+    public ResponseEntity<ApiResponse<WarrantyResponse>> attachWarrantyEvidence(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID warrantyId,
+            @Valid @RequestBody AttachWarrantyEvidenceRequest request,
+            HttpServletRequest httpRequest) {
+        UUID orgIdHeader = ActorContextResolver.parseOrganizationId(rawOrgId);
+        ActorContext actor = ActorContextResolver.resolve(jwt, orgIdHeader, providerOrgClient);
+        return ResponseEntity.ok(responseFactory.ok(ApiMessages.UPDATED,
+                service.attachWarrantyEvidence(actor, warrantyId, request), httpRequest));
+    }
+
     @DeleteMapping("/warranties/{warrantyId}")
     public ResponseEntity<ApiResponse<Void>> deleteWarranty(
             @AuthenticationPrincipal Jwt jwt,
