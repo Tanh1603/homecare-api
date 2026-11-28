@@ -10,6 +10,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -91,6 +92,37 @@ public class Warranty {
 
     @Column(nullable = false)
     private String status;
+
+    @Column(name = "warranty_category", nullable = false, length = 32)
+    @Builder.Default
+    private String warrantyCategory = "PRODUCT_MANUFACTURER";
+
+    @Column(name = "warranty_issuer", nullable = false, length = 24)
+    @Builder.Default
+    private String warrantyIssuer = "MANUFACTURER";
+
+    @Column(name = "verification_status", nullable = false, length = 24)
+    @Builder.Default
+    private String verificationStatus = "UNVERIFIED";
+
+    @Column(name = "validity_status", nullable = false, length = 24)
+    @Builder.Default
+    private String validityStatus = "ACTIVE";
+
+    @Column(name = "authorization_evidence_ref", length = 1000)
+    private String authorizationEvidenceRef;
+
+    @Column(name = "verified_by", length = 255)
+    private String verifiedBy;
+
+    @Column(name = "verified_at")
+    private Instant verifiedAt;
+
+    @Column(name = "verification_note", length = 1000)
+    private String verificationNote;
+
+    @Version
+    private Long version;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;

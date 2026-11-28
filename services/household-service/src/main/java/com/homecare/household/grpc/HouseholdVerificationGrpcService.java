@@ -78,6 +78,10 @@ public class HouseholdVerificationGrpcService extends HouseholdVerificationServi
                             .setProviderName(res.providerName() != null ? res.providerName() : "")
                             .setEndsOnIso(res.endsOn() != null ? res.endsOn().toString() : "")
                             .setStatus(res.status() != null ? res.status() : "")
+                            .setWarrantyCategory(res.warrantyCategory() != null ? res.warrantyCategory() : "PRODUCT_MANUFACTURER")
+                            .setWarrantyIssuer(res.warrantyIssuer() != null ? res.warrantyIssuer() : "MANUFACTURER")
+                            .setVerificationStatus(res.verificationStatus() != null ? res.verificationStatus() : "UNVERIFIED")
+                            .setReferenceSerial(res.referenceSerial() != null ? res.referenceSerial() : "")
                             .build();
 
             responseObserver.onNext(response);

@@ -29,6 +29,7 @@ import com.homecare.booking.entity.WorkEvidenceEntity;
 import com.homecare.booking.entity.WorkUpdateEntity;
 import com.homecare.provider.v1.AllocateTechnicianResponse;
 import com.homecare.booking.exception.BookingErrorCode;
+import com.homecare.booking.repository.BookingPartsRequestRepository;
 import com.homecare.booking.repository.BookingRepository;
 import com.homecare.booking.repository.QuotationRepository;
 import com.homecare.booking.repository.WorkEvidenceRepository;
@@ -73,6 +74,7 @@ public class BookingExecutionService {
     private final BookingAccessPolicy accessPolicy;
     private final BookingLifecycleService lifecycleService;
     private final ObjectProvider<ProviderGrpcClientAdapter> providerGrpcClientProvider;
+    private final ObjectProvider<BookingPartsRequestRepository> partsRequestRepositoryProvider;
     private final PlatformTransactionManager transactionManager;
 
     // Never @Transactional: remote HTTP upload to Supabase Storage must NOT hold DB locks (Guardrail #14).
@@ -385,6 +387,16 @@ public class BookingExecutionService {
         if (hasPendingRevised) {
             throw new DomainException(CommonErrorCode.CONFLICT,
                     "Cannot submit completion while a REVISED quotation is awaiting customer approval.");
+        }
+
+        // BR-EVID-01: Block completion while approved/pending parts requests remain unrecorded
+        BookingPartsRequestRepository partsReqRepo = partsRequestRepositoryProvider != null
+                ? partsRequestRepositoryProvider.getIfAvailable()
+                : null;
+        if (partsReqRepo != null && partsReqRepo.existsByBookingIdAndStatusIn(
+                bookingId, List.of("PENDING_PROVIDER_APPROVAL", "PROVIDER_APPROVED"))) {
+            throw new DomainException(CommonErrorCode.CONFLICT,
+                    "Cannot submit completion while approved or pending parts requests lack a Parts Usage Record (BR-EVID-01).");
         }
 
         // D-11.2: Require >= 1 valid photo evidence belonging to this booking

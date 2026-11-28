@@ -43,6 +43,10 @@ message VerifyWarrantyResponse {
   string provider_name = 7;
   string ends_on_iso = 8;
   string status = 9;
+  string warranty_category = 10;
+  string warranty_issuer = 11;
+  string verification_status = 12;
+  string reference_serial = 13;
 }
 
 message ResolveUserAddressRequest {

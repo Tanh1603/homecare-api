@@ -11,6 +11,7 @@ import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -95,6 +96,7 @@ public class BookingLifecycleService {
     private final ProviderGrpcClientAdapter providerGrpcClient;
     private final HouseholdVerificationClient householdVerificationClient;
     private final BookingAccessPolicy accessPolicy;
+    private final ObjectProvider<WarrantySnapshotService> warrantySnapshotServiceProvider;
     private final PlatformTransactionManager transactionManager;
     private final ObjectMapper objectMapper;
 
@@ -277,6 +279,22 @@ public class BookingLifecycleService {
                     .build());
 
             recordHistory(bookingId, null, "REQUESTED", requesterProfileId, "Booking requested (" + bookingType + ")");
+            if (!isWarrantyClaim) {
+                WarrantySnapshotService snapshotService = warrantySnapshotServiceProvider != null
+                        ? warrantySnapshotServiceProvider.getIfAvailable()
+                        : null;
+                if (snapshotService != null) {
+                    snapshotService.recordCommitmentSnapshot(
+                            bookingId,
+                            null,
+                            1,
+                            finalDeviceType,
+                            WarrantySnapshotService.defaultWorkmanshipDays(finalDeviceType),
+                            List.of(),
+                            "Fixed-price booking commitment",
+                            requesterProfileId);
+                }
+            }
         });
 
         AllocateTechnicianResponse alloc = null;
@@ -869,6 +887,7 @@ public class BookingLifecycleService {
             String requesterProfileId) {
         return bookingRepository.findById(bookingId)
                 .filter(b -> b.getRequesterProfileId().equals(requesterProfileId)
+                        && !b.isWarrantyRework()
                         && ("ACCEPTED".equals(b.getStatus()) || "COMPLETED".equals(b.getStatus())))
                 .map(b -> new VerifyBookingReviewEligibilityResponse(
                         true,

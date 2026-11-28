@@ -5,6 +5,7 @@ import tools.jackson.databind.ObjectMapper;
 import com.homecare.common.domain.EntityStatus;
 import com.homecare.common.error.CommonErrorCode;
 import com.homecare.common.error.DomainException;
+import com.homecare.common.security.AccessMode;
 import com.homecare.common.security.ActorContext;
 import com.homecare.household.security.HouseholdAccessPolicy;
 import com.homecare.common.event.DomainEventContracts;
@@ -33,6 +34,8 @@ import com.homecare.household.dto.HouseholdDtos.UpdateMaintenanceScheduleRequest
 import com.homecare.household.dto.HouseholdDtos.UpdateWarrantyRequest;
 import com.homecare.household.dto.HouseholdDtos.RegisterSerialRequest;
 import com.homecare.household.dto.HouseholdDtos.VerifyDeviceReferenceResponse;
+import com.homecare.household.dto.HouseholdDtos.AdminVerifyWarrantyRequest;
+import com.homecare.household.dto.HouseholdDtos.AttachWarrantyEvidenceRequest;
 import com.homecare.household.dto.HouseholdDtos.VerifyWarrantyResponse;
 import com.homecare.household.dto.HouseholdDtos.WarrantyResponse;
 import com.homecare.household.entity.CareRecord;
@@ -1398,6 +1401,79 @@ public class HouseholdDomainService {
                 d.getUpdatedAt());
     }
 
+    @Transactional
+    public WarrantyResponse attachWarrantyEvidence(
+            ActorContext actor,
+            UUID warrantyId,
+            AttachWarrantyEvidenceRequest request) {
+        Warranty w = warrantyRepository.lockById(warrantyId)
+                .orElseThrow(() -> new DomainException(HouseholdErrorCode.WARRANTY_NOT_FOUND));
+        boolean isOwner = actor.userId().equals(w.getOwnerProfileId());
+        boolean isResponsibleOrg = actor.mode() == AccessMode.ORGANIZATION
+                && actor.organizationId() != null
+                && (actor.organizationId().equals(w.getOrganizationId())
+                        || actor.organizationId().equals(w.getWarrantyResponsibleOrgId()));
+        if (!actor.isGlobalAdmin() && !isOwner && !isResponsibleOrg) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN,
+                    "Not authorized to attach evidence to this warranty.");
+        }
+        // D-14: Submitting evidence NEVER transitions verificationStatus to VERIFIED
+        w.setAuthorizationEvidenceRef(request.evidenceRef().trim());
+        return toWarrantyResponse(warrantyRepository.saveAndFlush(w));
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<WarrantyResponse> adminListWarranties(
+            ActorContext actor,
+            String verificationStatus,
+            int page,
+            int size) {
+        if (actor == null || !actor.isGlobalAdmin()) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN,
+                    "Only Global Admin can access the warranty verification queue (D-14).");
+        }
+        PageResponse.validate(page, size);
+        String filter = (verificationStatus == null || verificationStatus.isBlank()
+                || "ALL".equalsIgnoreCase(verificationStatus.trim()))
+                ? null
+                : verificationStatus.trim().toUpperCase();
+        var result = warrantyRepository.findByVerificationStatusFilter(
+                filter, PageRequest.of(page - 1, size));
+        return PageResponse.of(result.map(this::toWarrantyResponse).getContent(), page, size, result.getTotalElements());
+    }
+
+    @Transactional
+    public WarrantyResponse adminVerifyWarranty(
+            ActorContext actor,
+            UUID warrantyId,
+            String ifMatch,
+            AdminVerifyWarrantyRequest request) {
+        if (actor == null || !actor.isGlobalAdmin()) {
+            throw new DomainException(CommonErrorCode.RESOURCE_FORBIDDEN,
+                    "Only Global Admin can verify manufacturer warranty status (D-14).");
+        }
+        Warranty w = warrantyRepository.lockById(warrantyId)
+                .orElseThrow(() -> new DomainException(HouseholdErrorCode.WARRANTY_NOT_FOUND));
+        EtagSupport.verifyIfMatch(ifMatch, w.getVersion());
+        String target = request.verificationStatus() == null ? "" : request.verificationStatus().trim().toUpperCase();
+        if (!"VERIFIED".equals(target) && !"REJECTED".equals(target)) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "verificationStatus must be VERIFIED or REJECTED.");
+        }
+        if ("REJECTED".equals(target) && (request.note() == null || request.note().isBlank())) {
+            throw new DomainException(CommonErrorCode.VALIDATION_FAILED,
+                    "note is mandatory when rejecting warranty verification.");
+        }
+        w.setVerificationStatus(target);
+        if ("VERIFIED".equals(target)) {
+            w.setManufacturerRegistrationStatus(ManufacturerRegistrationStatus.VERIFIED);
+        }
+        w.setVerifiedBy(actor.userId());
+        w.setVerifiedAt(Instant.now());
+        w.setVerificationNote(request.note() != null && !request.note().isBlank() ? request.note().trim() : null);
+        return toWarrantyResponse(warrantyRepository.saveAndFlush(w));
+    }
+
     private WarrantyResponse toWarrantyResponse(Warranty w) {
         return new WarrantyResponse(
                 w.getId(),
@@ -1419,7 +1495,16 @@ public class HouseholdDomainService {
                 w.getStatus(),
                 w.getManufacturerRegistrationStatus() == null ? null : w.getManufacturerRegistrationStatus().name(),
                 w.getTriggerEvidenceRef(),
-                w.getCreatedAt());
+                w.getCreatedAt(),
+                w.getWarrantyCategory(),
+                w.getWarrantyIssuer(),
+                w.getVerificationStatus(),
+                w.getValidityStatus(),
+                w.getAuthorizationEvidenceRef(),
+                w.getVerifiedBy(),
+                w.getVerifiedAt(),
+                w.getVerificationNote(),
+                w.getVersion());
     }
 
     private MaintenanceScheduleResponse toScheduleResponse(MaintenanceSchedule s) {

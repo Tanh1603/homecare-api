@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -73,6 +74,7 @@ public class DisputeService {
     private final BookingOutboxEventRepository outboxRepository;
     private final WorkEvidenceStoragePort storagePort;
     private final BookingLifecycleService lifecycleService;
+    private final ObjectProvider<WarrantySnapshotService> warrantySnapshotServiceProvider;
     private final PlatformTransactionManager transactionManager;
     private final ObjectMapper objectMapper;
 
@@ -109,14 +111,22 @@ public class DisputeService {
         } else if (BookingStatus.ACCEPTED.name().equals(status)) {
             openedStage = "POST_ACCEPTANCE";
             Instant acceptedAt = booking.getAcceptedAt() != null ? booking.getAcceptedAt() : booking.getUpdatedAt();
-            LocalDate day0 = acceptedAt.atZone(VN_ZONE).toLocalDate();
-            Instant deadline = day0.plusDays(POST_ACCEPT_DISPUTE_WINDOW_DAYS)
-                    .atTime(23, 59, 59, 999_000_000)
-                    .atZone(VN_ZONE)
-                    .toInstant();
+            WarrantySnapshotService snapshotService = warrantySnapshotServiceProvider != null
+                    ? warrantySnapshotServiceProvider.getIfAvailable()
+                    : null;
+            Instant deadline;
+            if (snapshotService != null) {
+                deadline = snapshotService.resolvePostAcceptanceDisputeDeadline(bookingId, acceptedAt);
+            } else {
+                LocalDate day0 = acceptedAt.atZone(VN_ZONE).toLocalDate();
+                deadline = day0.plusDays(POST_ACCEPT_DISPUTE_WINDOW_DAYS)
+                        .atTime(23, 59, 59, 999_000_000)
+                        .atZone(VN_ZONE)
+                        .toInstant();
+            }
             if (now.isAfter(deadline)) {
                 throw new DomainException(CommonErrorCode.CONFLICT,
-                        "Post-acceptance dispute window (30 calendar days) has expired (D-30).");
+                        "Post-acceptance dispute window (max 30 calendar days or Workmanship Warranty) has expired (D-30).");
             }
             // D-11.4: Booking remains ACCEPTED; never reverted
         } else {
@@ -407,6 +417,12 @@ public class DisputeService {
                 booking.setAcceptanceSource("CUSTOMER");
                 booking.setUpdatedAt(now);
                 BookingEntity accepted = bookingRepository.saveAndFlush(booking);
+                WarrantySnapshotService snapshotService = warrantySnapshotServiceProvider != null
+                        ? warrantySnapshotServiceProvider.getIfAvailable()
+                        : null;
+                if (!accepted.isWarrantyRework() && snapshotService != null) {
+                    snapshotService.createActivationSnapshotOnAcceptance(accepted);
+                }
                 lifecycleService.recordHistory(booking.getId(), BookingStatus.DISPUTED.name(),
                         BookingStatus.ACCEPTED.name(), actor.userId(),
                         "Resolved & accepted via dispute resolution: " + request.note().trim());

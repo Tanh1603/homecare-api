@@ -34,4 +34,11 @@ public interface WarrantyRepository extends JpaRepository<Warranty, UUID> {
     List<Warranty> findAllByOrderLineIdForUpdate(UUID orderLineId);
 
     Optional<Warranty> findByUnitKey(String unitKey);
+
+    @Lock(PESSIMISTIC_WRITE)
+    @Query("select w from Warranty w where w.id = :id")
+    Optional<Warranty> lockById(UUID id);
+
+    @Query("select w from Warranty w where (:status is null or w.verificationStatus = :status) order by w.createdAt desc")
+    Page<Warranty> findByVerificationStatusFilter(String status, Pageable pageable);
 }

@@ -212,6 +212,13 @@ public class BookingEntity {
     @Column(name = "customer_no_show_evidence_id")
     private UUID customerNoShowEvidenceId;
 
+    @Column(name = "rework_source_claim_id")
+    private UUID reworkSourceClaimId;
+
+    @Column(name = "warranty_rework", nullable = false)
+    @Builder.Default
+    private boolean warrantyRework = false;
+
     @Version
     private Long version;
 
