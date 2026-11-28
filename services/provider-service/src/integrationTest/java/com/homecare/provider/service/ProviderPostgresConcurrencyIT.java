@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.homecare.common.security.AccessMode;
 import com.homecare.common.security.ActorContext;
+import com.homecare.common.security.RbacConstants;
 import com.homecare.provider.dto.ProviderDtos.CreateScheduleWindowRequest;
 import com.homecare.provider.entity.TechnicianAllocation;
 import com.homecare.provider.organization.entity.OrgRole;
@@ -60,8 +61,9 @@ class ProviderPostgresConcurrencyIT {
     void enforcesPartialUniqueActiveBookingIndexAndTombstoneOnRealPostgres() {
         Instant start = Instant.now().truncatedTo(SECONDS).plus(70, DAYS);
         Instant end = start.plusSeconds(1800);
-        service.createScheduleWindow("me",
-                new ActorContext("demo-technician", AccessMode.PERSONAL, null, Set.of(), Set.of(), Set.of(), Set.of()),
+        service.createScheduleWindow(ProviderDataInitializer.DEMO_TECH_ID.toString(),
+                new ActorContext("org-admin-it", AccessMode.ORGANIZATION, ProviderDataInitializer.PROVIDER_1_ID,
+                        Set.of(), Set.of(), Set.of("ORG_ADMIN"), Set.of(RbacConstants.PERM_SCHEDULE_MANAGE)),
                 new CreateScheduleWindowRequest(start, start.plusSeconds(3600)));
 
         UUID bookingId = UUID.randomUUID();

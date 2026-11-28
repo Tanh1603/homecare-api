@@ -294,6 +294,36 @@ class ServiceRequestLifecycleTest {
         assertThat(consentedPaid.status()).isEqualTo("AWAITING_PROVIDER");
     }
 
+    @Test
+    void rejectsPersonalSelfBookingForOwnOrganization() {
+        UUID providerId = UUID.randomUUID();
+        String memberUserId = "org-member-user";
+        when(providerGrpcClient.isUserMemberOfProvider(providerId, memberUserId)).thenReturn(true);
+
+        assertThatThrownBy(() -> serviceRequestService.createRequest(
+                memberUserId,
+                "Member User",
+                new CreateServiceRequestInput(
+                        "PAID_REPAIR",
+                        "AC",
+                        null,
+                        "FIXED",
+                        false,
+                        0L,
+                        null,
+                        null,
+                        null,
+                        providerId,
+                        null,
+                        "12 Lê Lợi, TP. Hồ Chí Minh",
+                        "Tự đặt dịch vụ cho tổ chức của mình",
+                        null,
+                        null)))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("OPERATION_FORBIDDEN");
+    }
+
     private static ActorContext orgActor(String userId, UUID orgId) {
         return new ActorContext(userId, AccessMode.ORGANIZATION, orgId,
                 Set.of(), Set.of("ORG_ADMIN"), Set.of(), Set.of());
