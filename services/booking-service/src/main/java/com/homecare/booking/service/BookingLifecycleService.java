@@ -886,21 +886,23 @@ public class BookingLifecycleService {
             UUID bookingId,
             String requesterProfileId) {
         return bookingRepository.findById(bookingId)
-                .filter(b -> b.getRequesterProfileId().equals(requesterProfileId)
-                        && !b.isWarrantyRework()
-                        && ("ACCEPTED".equals(b.getStatus()) || "COMPLETED".equals(b.getStatus())))
+                .filter(b -> b.getRequesterProfileId().equals(requesterProfileId))
                 .map(b -> new VerifyBookingReviewEligibilityResponse(
-                        true,
+                        "ACCEPTED".equals(b.getStatus()) && !b.isWarrantyRework(),
                         b.getId(),
                         b.getProviderId(),
                         b.getServiceId(),
-                        b.getStatus()))
+                        b.getStatus(),
+                        b.getAcceptedAt(),
+                        b.isWarrantyRework()))
                 .orElseGet(() -> new VerifyBookingReviewEligibilityResponse(
                         false,
                         bookingId,
                         null,
                         null,
-                        "NOT_ELIGIBLE"));
+                        "NOT_ELIGIBLE",
+                        null,
+                        false));
     }
 
     void recordHistory(UUID bookingId, String from, String to, String actorId, String reason) {

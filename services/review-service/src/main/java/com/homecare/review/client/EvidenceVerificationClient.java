@@ -1,5 +1,6 @@
 package com.homecare.review.client;
 
+import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -56,10 +57,22 @@ public class EvidenceVerificationClient {
                 } catch (Exception ignored) {
                 }
             }
-            return new BookingEligibility(response.getEligible(), providerId);
+            Instant acceptedAt = null;
+            if (!response.getAcceptedAt().isBlank()) {
+                try {
+                    acceptedAt = Instant.parse(response.getAcceptedAt());
+                } catch (Exception ignored) {
+                }
+            }
+            return new BookingEligibility(
+                    response.getEligible(),
+                    providerId,
+                    response.getStatus(),
+                    acceptedAt,
+                    response.getWarrantyRework());
         } catch (Exception e) {
             log.warn("Booking gRPC verification failed ({}), defaulting to ineligible", e.getMessage());
-            return new BookingEligibility(false, null);
+            return new BookingEligibility(false, null, "NOT_ELIGIBLE", null, false);
         }
     }
 
@@ -96,7 +109,15 @@ public class EvidenceVerificationClient {
         return stub.withInterceptors(MetadataUtils.newAttachHeadersInterceptor(metadata));
     }
 
-    public record BookingEligibility(boolean eligible, UUID providerId) {
+    public record BookingEligibility(
+            boolean eligible,
+            UUID providerId,
+            String status,
+            Instant acceptedAt,
+            boolean warrantyRework) {
+        public BookingEligibility(boolean eligible, UUID providerId) {
+            this(eligible, providerId, eligible ? "ACCEPTED" : "NOT_ELIGIBLE", eligible ? Instant.now() : null, false);
+        }
     }
 
     public record OrderLineEligibility(boolean eligible, UUID productId) {

@@ -257,6 +257,16 @@ public final class BookingDtos {
             UUID bookingId,
             UUID providerId,
             UUID serviceId,
-            String status) {
+            String status,
+            Instant acceptedAt,
+            boolean warrantyRework) {
+        public VerifyBookingReviewEligibilityResponse(
+                boolean eligible,
+                UUID bookingId,
+                UUID providerId,
+                UUID serviceId,
+                String status) {
+            this(eligible, bookingId, providerId, serviceId, status, null, false);
+        }
     }
 }

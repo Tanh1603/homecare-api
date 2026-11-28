@@ -2,12 +2,15 @@ package com.homecare.provider.repository;
 
 import com.homecare.provider.entity.ProviderEntity;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface ProviderRepository extends JpaRepository<ProviderEntity, UUID> {
     @Query("""
@@ -20,4 +23,19 @@ public interface ProviderRepository extends JpaRepository<ProviderEntity, UUID> 
     Optional<ProviderEntity> findByOrganizationId(UUID organizationId);
 
     boolean existsByOrganizationId(UUID organizationId);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+        UPDATE providers
+        SET rating_avg = :ratingAvg,
+            review_count = :reviewCount,
+            rating_calculated_at = :calculatedAt
+        WHERE id = :providerId
+          AND (rating_calculated_at IS NULL OR rating_calculated_at < :calculatedAt)
+        """, nativeQuery = true)
+    int updateRatingIfNewer(
+            @Param("providerId") UUID providerId,
+            @Param("ratingAvg") double ratingAvg,
+            @Param("reviewCount") int reviewCount,
+            @Param("calculatedAt") Instant calculatedAt);
 }

@@ -91,6 +91,11 @@ public class NotificationSecurityAndRabbitConfig {
     }
 
     @Bean
+    public Binding partsEventsBinding(Queue notificationInboxQueue, TopicExchange domainEventsExchange) {
+        return BindingBuilder.bind(notificationInboxQueue).to(domainEventsExchange).with("parts.#");
+    }
+
+    @Bean
     public Binding disputeEventsBinding(Queue notificationInboxQueue, TopicExchange domainEventsExchange) {
         return BindingBuilder.bind(notificationInboxQueue).to(domainEventsExchange).with("dispute.#");
     }

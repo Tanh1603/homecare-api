@@ -31,4 +31,6 @@ message VerifyBookingEligibilityResponse {
   string provider_id = 3;
   string service_id = 4;
   string status = 5;
+  string accepted_at = 6;
+  bool warranty_rework = 7;
 }

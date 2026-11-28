@@ -48,6 +48,13 @@ public class ProviderEntity {
     @Column(name = "rating_avg", nullable = false)
     private double ratingAvg;
 
+    @Column(name = "review_count", nullable = false)
+    @Builder.Default
+    private int reviewCount = 0;
+
+    @Column(name = "rating_calculated_at")
+    private Instant ratingCalculatedAt;
+
     @Column(nullable = false)
     private String status;
 

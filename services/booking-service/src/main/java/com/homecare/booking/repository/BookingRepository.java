@@ -8,6 +8,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
@@ -102,4 +104,21 @@ public interface BookingRepository extends JpaRepository<BookingEntity, UUID>, J
             @Param("targetStage") int targetStage,
             @Param("cutoff") Instant cutoff,
             @Param("limit") int limit);
+
+    @Query(value = """
+        SELECT * FROM bookings
+        WHERE status = 'COMPLETED_PENDING_ACCEPTANCE'
+          AND completion_notified_at IS NULL
+          AND notification_failed = FALSE
+          AND COALESCE(last_notification_retry_at, completion_submitted_at) <= :cutoff24h
+        ORDER BY COALESCE(last_notification_retry_at, completion_submitted_at) ASC
+        LIMIT :limit
+        FOR UPDATE SKIP LOCKED
+        """, nativeQuery = true)
+    List<BookingEntity> lockOverdueCompletionNotifications(
+            @Param("cutoff24h") Instant cutoff24h,
+            @Param("limit") int limit);
+
+    Page<BookingEntity> findByStatusAndNotificationFailedTrueOrderByNotificationFailedAtDesc(
+            String status, Pageable pageable);
 }

@@ -1,5 +1,6 @@
 package com.homecare.review.service;
 
+import com.homecare.common.web.EtagSupport;
 import com.homecare.review.dto.ReviewDtos.UpdateReviewRequest;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -151,6 +152,7 @@ class ReviewDomainServiceTest {
         assertThatThrownBy(() -> service.updateServiceReview(
                 "user-2",
                 productReview.id(),
+                EtagSupport.format(0L),
                 new UpdateReviewRequest(4, "Updating product review via service endpoint")))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
@@ -174,7 +176,7 @@ class ReviewDomainServiceTest {
                         .contentType("application/json").content("{\"rating\":4}"))
                 .andExpect(MockMvcResultMatchers.status().isForbidden());
 
-        // Service review delete parity: soft-delete, by-booking lookup, cross-user 403, re-create reuse
+        // Service review edit limit (1 edit in 7 days) + permanent delete blocking re-submit (D-31)
         UUID svcBookingId = UUID.randomUUID();
         UUID providerId = UUID.randomUUID();
         when(verificationClient.verifyBookingEligible(svcBookingId, "user-1"))
@@ -183,27 +185,57 @@ class ReviewDomainServiceTest {
                 "user-1", new CreateServiceReviewRequest(svcBookingId, providerId, 5, "Tot"));
         assertThat(service.getServiceReviewByBooking("user-1", svcBookingId).id()).isEqualTo(createdSvc.id());
 
-        assertThatThrownBy(() -> service.deleteServiceReview("other-user", createdSvc.id()))
+        // Empty/no-op update must be rejected without consuming the single allowed edit
+        assertThatThrownBy(() -> service.updateServiceReview(
+                "user-1", createdSvc.id(), EtagSupport.format(createdSvc.version()),
+                new UpdateReviewRequest(null, "   ")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("VALIDATION_FAILED");
+
+        ReviewResponse editedOnce = service.updateServiceReview(
+                "user-1", createdSvc.id(), EtagSupport.format(createdSvc.version()),
+                new UpdateReviewRequest(4, "Sua lan 1"));
+        assertThat(editedOnce.editCount()).isEqualTo(1);
+        assertThatThrownBy(() -> service.updateServiceReview(
+                "user-1", createdSvc.id(), EtagSupport.format(editedOnce.version()),
+                new UpdateReviewRequest(3, "Sua lan 2")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("REVIEW_EDIT_LIMIT_EXCEEDED");
+
+        assertThatThrownBy(() -> service.deleteServiceReview(
+                "other-user", createdSvc.id(), EtagSupport.format(editedOnce.version())))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("RESOURCE_FORBIDDEN");
 
+        // Missing or stale If-Match on delete must be rejected
         mvc.perform(MockMvcRequestBuilders.delete("/api/v1/service-reviews/" + createdSvc.id())
-                        .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject("user-1"))))
+                        .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject("user-1")))
+                        .header("If-Match", "\"v999\""))
+                .andExpect(MockMvcResultMatchers.status().isPreconditionFailed());
+
+        mvc.perform(MockMvcRequestBuilders.delete("/api/v1/service-reviews/" + createdSvc.id())
+                        .with(SecurityMockMvcRequestPostProcessors.jwt().jwt(j -> j.subject("user-1")))
+                        .header("If-Match", EtagSupport.format(editedOnce.version())))
                 .andExpect(MockMvcResultMatchers.status().isNoContent());
 
         assertThatThrownBy(() -> service.getServiceReviewByBooking("user-1", svcBookingId))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("REVIEW_NOT_FOUND");
-        assertThatThrownBy(() -> service.updateServiceReview("user-1", createdSvc.id(), new UpdateReviewRequest(3, "Edit")))
+        assertThatThrownBy(() -> service.updateServiceReview(
+                "user-1", createdSvc.id(), EtagSupport.format(editedOnce.version()),
+                new UpdateReviewRequest(3, "Edit")))
                 .isInstanceOf(DomainException.class)
                 .extracting("errorCode")
                 .isEqualTo("REVIEW_NOT_FOUND");
 
-        ReviewResponse recreatedSvc = service.createServiceReview(
-                "user-1", new CreateServiceReviewRequest(svcBookingId, providerId, 4, "Danh gia lai"));
-        assertThat(recreatedSvc.id()).isEqualTo(createdSvc.id());
-        assertThat(recreatedSvc.status()).isEqualTo("PUBLISHED");
+        assertThatThrownBy(() -> service.createServiceReview(
+                "user-1", new CreateServiceReviewRequest(svcBookingId, providerId, 4, "Danh gia lai")))
+                .isInstanceOf(DomainException.class)
+                .extracting("errorCode")
+                .isEqualTo("REVIEW_PERMANENTLY_DELETED");
     }
 }

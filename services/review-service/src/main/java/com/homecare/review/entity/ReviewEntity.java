@@ -7,6 +7,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -48,6 +49,34 @@ public class ReviewEntity {
 
     @Column(nullable = false)
     private String status;
+
+    @Column(name = "edit_count", nullable = false)
+    @Builder.Default
+    private int editCount = 0;
+
+    @Column(name = "edited_at")
+    private Instant editedAt;
+
+    @Column(name = "hidden_reason", length = 1000)
+    private String hiddenReason;
+
+    @Column(name = "hidden_by", length = 255)
+    private String hiddenBy;
+
+    @Column(name = "hidden_at")
+    private Instant hiddenAt;
+
+    @Column(name = "restored_by", length = 255)
+    private String restoredBy;
+
+    @Column(name = "restored_at")
+    private Instant restoredAt;
+
+    @Column(name = "restore_note", length = 1000)
+    private String restoreNote;
+
+    @Version
+    private Long version;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;

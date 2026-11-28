@@ -16,11 +16,12 @@ import com.homecare.common.event.DomainEventContracts;
 import lombok.RequiredArgsConstructor;
 
 /**
- * FOR UPDATE SKIP LOCKED timer worker for Feature 4 (D-11, D-26, D-27):
- * 1) Day 3 reminder for COMPLETED_PENDING_ACCEPTANCE
- * 2) Day 7 SYSTEM_TIMEOUT auto-accept (strictly when completionNotifiedAt != null && !notificationFailed)
- * 3) 48h REVISION_REQUESTED timeout -> DISPUTED + auto-open Dispute
- * 4) 14d WAITING_FOR_PARTS reminders at Day 7, Day 12, Day 14 Admin flag
+ * FOR UPDATE SKIP LOCKED timer worker for Feature 4 & 7 (D-11, D-26, D-27):
+ * 1) Independent 24h NOTIFICATION_FAILED detector for unnotified COMPLETED_PENDING_ACCEPTANCE bookings
+ * 2) Day 3 reminder for COMPLETED_PENDING_ACCEPTANCE
+ * 3) Day 7 SYSTEM_TIMEOUT auto-accept (strictly when completionNotifiedAt != null && !notificationFailed)
+ * 4) 48h REVISION_REQUESTED timeout -> DISPUTED + auto-open Dispute
+ * 5) 14d WAITING_FOR_PARTS reminders at Day 7, Day 12, Day 14 Admin flag
  */
 @Component
 @RequiredArgsConstructor
@@ -37,7 +38,15 @@ public class BookingAcceptanceTimerWorker {
             int acceptanceReminders,
             int autoAccepted,
             int revisionTimeouts,
-            int waitingForPartsUpdates) {
+            int waitingForPartsUpdates,
+            int overdueNotificationFailures) {
+        public TimerRunSummary(
+                int acceptanceReminders,
+                int autoAccepted,
+                int revisionTimeouts,
+                int waitingForPartsUpdates) {
+            this(acceptanceReminders, autoAccepted, revisionTimeouts, waitingForPartsUpdates, 0);
+        }
     }
 
     @Scheduled(fixedDelayString = "${homecare.booking.acceptance-timer-poll-ms:60000}")
@@ -47,11 +56,21 @@ public class BookingAcceptanceTimerWorker {
 
     @Transactional
     public TimerRunSummary processTimers(Instant now) {
+        int notificationFailures = flagOverdueCompletionNotifications(now);
         int reminders = sendDay3Reminders(now);
         int autoAccepted = processAutoAccepts(now);
         int revisionTimeouts = processRevisionTimeouts(now);
         int waitingUpdates = processWaitingForParts(now);
-        return new TimerRunSummary(reminders, autoAccepted, revisionTimeouts, waitingUpdates);
+        return new TimerRunSummary(reminders, autoAccepted, revisionTimeouts, waitingUpdates, notificationFailures);
+    }
+
+    private int flagOverdueCompletionNotifications(Instant now) {
+        Instant cutoff24h = now.minus(24, ChronoUnit.HOURS);
+        List<BookingEntity> overdue = bookingRepository.lockOverdueCompletionNotifications(cutoff24h, BATCH_SIZE);
+        for (BookingEntity booking : overdue) {
+            acceptanceService.flagOverdueCompletionNotification(booking, now);
+        }
+        return overdue.size();
     }
 
     private int sendDay3Reminders(Instant now) {

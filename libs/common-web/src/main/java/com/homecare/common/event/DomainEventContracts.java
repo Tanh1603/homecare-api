@@ -84,4 +84,7 @@ public final class DomainEventContracts {
     public static final String WARRANTY_CLAIM_VERIFIED = "warranty.claim.verified.v1";
     public static final String WARRANTY_CLAIM_RESPONDED = "warranty.claim.responded.v1";
     public static final String WARRANTY_CLAIM_SLA_ESCALATED = "warranty.claim.sla_escalated.v1";
+
+    // Review rating sync events (007-reviews-and-notifications)
+    public static final String REVIEW_RATING_UPDATED = "review.rating.updated.v1";
 }

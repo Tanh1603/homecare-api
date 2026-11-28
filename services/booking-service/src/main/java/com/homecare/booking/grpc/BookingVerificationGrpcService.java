@@ -38,6 +38,8 @@ public class BookingVerificationGrpcService extends BookingVerificationServiceGr
                             .setProviderId(res.providerId() != null ? res.providerId().toString() : "")
                             .setServiceId(res.serviceId() != null ? res.serviceId().toString() : "")
                             .setStatus(res.status() != null ? res.status() : "")
+                            .setAcceptedAt(res.acceptedAt() != null ? res.acceptedAt().toString() : "")
+                            .setWarrantyRework(res.warrantyRework())
                             .build();
 
             responseObserver.onNext(response);

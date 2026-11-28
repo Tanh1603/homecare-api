@@ -193,6 +193,16 @@ public class BookingEntity {
     @Builder.Default
     private boolean notificationFailed = false;
 
+    @Column(name = "notification_failed_at")
+    private Instant notificationFailedAt;
+
+    @Column(name = "notification_retry_count", nullable = false)
+    @Builder.Default
+    private int notificationRetryCount = 0;
+
+    @Column(name = "last_notification_retry_at")
+    private Instant lastNotificationRetryAt;
+
     @Column(name = "auto_accept_at")
     private Instant autoAcceptAt;
 

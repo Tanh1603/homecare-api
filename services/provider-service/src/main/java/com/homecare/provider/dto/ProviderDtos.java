@@ -138,7 +138,18 @@ public final class ProviderDtos {
             String city,
             String phone,
             double ratingAvg,
+            int reviewCount,
             String status) {
+        public ProviderResponse(
+                UUID id,
+                String name,
+                String description,
+                String city,
+                String phone,
+                double ratingAvg,
+                String status) {
+            this(id, name, description, city, phone, ratingAvg, 0, status);
+        }
     }
 
     public record UpdateTechnicianOnlineStatusRequest(

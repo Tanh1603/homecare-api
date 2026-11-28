@@ -1,24 +1,8 @@
 package com.homecare.review.controller;
 
-import lombok.RequiredArgsConstructor;
-
-import com.homecare.common.security.ActorContext;
-import com.homecare.common.security.ActorContextResolver;
-import com.homecare.common.security.RbacConstants;
-import com.homecare.common.security.SupabaseJwtConverterSupport;
-import com.homecare.common.web.ApiMessages;
-import com.homecare.common.web.ApiResponse;
-import com.homecare.common.web.PageResponse;
-import com.homecare.common.web.servlet.ServletApiResponseFactory;
-import com.homecare.review.dto.ReviewDtos.CreateProductReviewRequest;
-import com.homecare.review.dto.ReviewDtos.CreateServiceReviewRequest;
-import com.homecare.review.dto.ReviewDtos.ReviewResponse;
-import com.homecare.review.dto.ReviewDtos.UpdateReviewRequest;
-import com.homecare.review.security.ReviewAccessPolicy;
-import com.homecare.review.service.ReviewDomainService;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.validation.Valid;
 import java.util.UUID;
+
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -34,6 +18,27 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import com.homecare.common.security.ActorContext;
+import com.homecare.common.security.ActorContextResolver;
+import com.homecare.common.security.RbacConstants;
+import com.homecare.common.security.SupabaseJwtConverterSupport;
+import com.homecare.common.web.ApiMessages;
+import com.homecare.common.web.ApiResponse;
+import com.homecare.common.web.EtagSupport;
+import com.homecare.common.web.PageResponse;
+import com.homecare.common.web.servlet.ServletApiResponseFactory;
+import com.homecare.review.dto.ReviewDtos.CreateProductReviewRequest;
+import com.homecare.review.dto.ReviewDtos.CreateServiceReviewRequest;
+import com.homecare.review.dto.ReviewDtos.ReviewResponse;
+import com.homecare.review.dto.ReviewDtos.ServiceReviewEligibilityResponse;
+import com.homecare.review.dto.ReviewDtos.UpdateReviewRequest;
+import com.homecare.review.security.ReviewAccessPolicy;
+import com.homecare.review.service.ReviewDomainService;
+
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -54,7 +59,8 @@ public class ReviewController {
             @Valid @RequestBody UpdateReviewRequest input,
             HttpServletRequest request) {
         ActorContext actor = resolvePersonal(jwt, rawOrgId);
-        return ResponseEntity.ok(responseFactory.ok(ApiMessages.UPDATED, service.updateProductReview(actor.userId(), productId, reviewId, input), request));
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.UPDATED, service.updateProductReview(actor.userId(), productId, reviewId, input), request));
     }
 
     @DeleteMapping("/products/{productId}/reviews/{reviewId}")
@@ -68,6 +74,19 @@ public class ReviewController {
         return ResponseEntity.noContent().build();
     }
 
+    @GetMapping("/service-reviews/eligibility/{bookingId}")
+    public ResponseEntity<ApiResponse<ServiceReviewEligibilityResponse>> checkServiceReviewEligibility(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @PathVariable UUID bookingId,
+            HttpServletRequest httpRequest) {
+        ActorContext actor = resolvePersonal(jwt, rawOrgId);
+        return ResponseEntity.ok(responseFactory.ok(
+                ApiMessages.RETRIEVED,
+                service.checkServiceReviewEligibility(actor.userId(), bookingId),
+                httpRequest));
+    }
+
     @PostMapping("/service-reviews")
     public ResponseEntity<ApiResponse<ReviewResponse>> createServiceReview(
             @AuthenticationPrincipal Jwt jwt,
@@ -76,34 +95,35 @@ public class ReviewController {
             HttpServletRequest httpRequest) {
         ActorContext actor = resolvePersonal(jwt, rawOrgId);
         String authorName = SupabaseJwtConverterSupport.extractDisplayName(jwt);
+        ReviewResponse created = service.createServiceReview(actor.userId(), authorName, request);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(responseFactory.created(
-                        ApiMessages.CREATED,
-                        service.createServiceReview(actor.userId(), authorName, request),
-                        httpRequest));
+                .header(HttpHeaders.ETAG, EtagSupport.format(created.version()))
+                .body(responseFactory.created(ApiMessages.CREATED, created, httpRequest));
     }
 
     @PatchMapping("/service-reviews/{reviewId}")
     public ResponseEntity<ApiResponse<ReviewResponse>> updateServiceReview(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @PathVariable UUID reviewId,
             @Valid @RequestBody UpdateReviewRequest request,
             HttpServletRequest httpRequest) {
         ActorContext actor = resolvePersonal(jwt, rawOrgId);
-        return ResponseEntity.ok(responseFactory.ok(
-                ApiMessages.UPDATED,
-                service.updateServiceReview(actor.userId(), reviewId, request),
-                httpRequest));
+        ReviewResponse updated = service.updateServiceReview(actor.userId(), reviewId, ifMatch, request);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.ETAG, EtagSupport.format(updated.version()))
+                .body(responseFactory.ok(ApiMessages.UPDATED, updated, httpRequest));
     }
 
     @DeleteMapping("/service-reviews/{reviewId}")
     public ResponseEntity<Void> deleteServiceReview(
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(value = RbacConstants.HEADER_ORGANIZATION_ID, required = false) String rawOrgId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @PathVariable UUID reviewId) {
         ActorContext actor = resolvePersonal(jwt, rawOrgId);
-        service.deleteServiceReview(actor.userId(), reviewId);
+        service.deleteServiceReview(actor.userId(), reviewId, ifMatch);
         return ResponseEntity.noContent().build();
     }
 
@@ -114,10 +134,10 @@ public class ReviewController {
             @PathVariable UUID bookingId,
             HttpServletRequest httpRequest) {
         ActorContext actor = resolvePersonal(jwt, rawOrgId);
-        return ResponseEntity.ok(responseFactory.ok(
-                ApiMessages.RETRIEVED,
-                service.getServiceReviewByBooking(actor.userId(), bookingId),
-                httpRequest));
+        ReviewResponse found = service.getServiceReviewByBooking(actor.userId(), bookingId);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.ETAG, EtagSupport.format(found.version()))
+                .body(responseFactory.ok(ApiMessages.RETRIEVED, found, httpRequest));
     }
 
     @GetMapping("/providers/{providerId}/service-reviews")

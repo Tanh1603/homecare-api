@@ -1649,6 +1649,7 @@ public class ProviderDomainService {
                 p.getCity(),
                 p.getPhone(),
                 p.getRatingAvg(),
+                p.getReviewCount(),
                 p.getStatus());
     }
 

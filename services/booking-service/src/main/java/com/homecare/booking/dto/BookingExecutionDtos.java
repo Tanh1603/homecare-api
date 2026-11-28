@@ -1,10 +1,12 @@
 package com.homecare.booking.dto;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 
 public final class BookingExecutionDtos {
 
@@ -46,5 +48,38 @@ public final class BookingExecutionDtos {
 
     public record RefuseRevisionRequest(
             @NotBlank String reason) {
+    }
+
+    public record RetryCompletionNotificationRequest(
+            @Size(max = 500) String note) {
+    }
+
+    public record AdminNotificationFailedBookingResponse(
+            UUID bookingId,
+            UUID providerId,
+            String requesterProfileId,
+            String serviceName,
+            Instant completionSubmittedAt,
+            Instant notificationFailedAt,
+            int notificationRetryCount,
+            Instant lastNotificationRetryAt,
+            String adminReviewReason,
+            Long version) {
+    }
+
+    public record AdminNotificationFailedBookingDetailResponse(
+            UUID bookingId,
+            UUID providerId,
+            String requesterProfileId,
+            String serviceName,
+            String status,
+            String completionSummary,
+            int workEvidenceCount,
+            Instant completionSubmittedAt,
+            Instant notificationFailedAt,
+            int notificationRetryCount,
+            Instant lastNotificationRetryAt,
+            String adminReviewReason,
+            Long version) {
     }
 }

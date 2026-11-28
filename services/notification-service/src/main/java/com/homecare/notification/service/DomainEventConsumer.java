@@ -66,7 +66,7 @@ public class DomainEventConsumer {
                             eventId,
                             stringField(data, "requesterProfileId"),
                             eventType,
-                            "Đã phân công Kỹ thuật viên AI",
+                            "Đã phân công kỹ thuật viên",
                             "Lịch hẹn dịch vụ " + stringField(data, "serviceName") + " đã được gán kỹ thuật viên.",
                             Map.of("bookingId", bookingId));
                     inboxService.recordIfAbsent(
@@ -372,6 +372,130 @@ public class DomainEventConsumer {
                             body,
                             lifecycleData("requestId", stringField(data, "requestId"), "homecare://technician/schedule"));
                 }
+                case DomainEventContracts.PARTS_REQUEST_CREATED -> {
+                    String bookingId = stringField(data, "bookingId");
+                    String partName = firstNonBlank(stringField(data, "partName"), "linh kiện");
+                    recordForRecipients(
+                            eventId,
+                            eventType,
+                            data,
+                            "providerRecipientProfileIds",
+                            firstNonBlank(stringField(data, "providerOwnerProfileId"),
+                                    stringField(data, "providerId").isBlank() ? "" : "org:" + stringField(data, "providerId")),
+                            "Yêu cầu duyệt linh kiện ngoài",
+                            "Kỹ thuật viên đề xuất dùng " + partName + " từ nhà cung cấp ngoài, cần đối tác phê duyệt.",
+                            lifecycleData("bookingId", bookingId, "/org/bookings"));
+                }
+                case DomainEventContracts.PARTS_REQUEST_REVIEWED -> {
+                    String bookingId = stringField(data, "bookingId");
+                    String partName = firstNonBlank(stringField(data, "partName"), "linh kiện");
+                    boolean approved = "PROVIDER_APPROVED".equalsIgnoreCase(stringField(data, "status"))
+                            || "APPROVED".equalsIgnoreCase(stringField(data, "status"));
+                    inboxService.recordIfAbsent(
+                            eventId,
+                            firstNonBlank(stringField(data, "requestedByProfileId"), stringField(data, "technicianProfileId")),
+                            eventType,
+                            approved ? "Yêu cầu linh kiện đã được duyệt" : "Yêu cầu linh kiện bị từ chối",
+                            "Đề xuất linh kiện " + partName + (approved ? " đã được đối tác phê duyệt." : " đã bị từ chối."),
+                            lifecycleData("bookingId", bookingId, "homecare://technician/jobs/" + bookingId));
+                }
+                case DomainEventContracts.WARRANTY_CLAIM_SUBMITTED -> {
+                    String bookingId = stringField(data, "bookingId");
+                    String claimId = stringField(data, "claimId");
+                    String claimStatus = stringField(data, "claimStatus");
+                    String category = firstNonBlank(stringField(data, "warrantyCategory"), "WARRANTY");
+                    if ("PENDING_VERIFICATION".equalsIgnoreCase(claimStatus)) {
+                        Map<String, String> adminData = lifecycleData("claimId", claimId, "/admin/warranties");
+                        adminData.put("bookingId", bookingId);
+                        recordForRecipients(
+                                eventId,
+                                eventType,
+                                data,
+                                "adminProfileIds",
+                                "admin",
+                                "Yêu cầu bảo hành chờ Admin xác minh",
+                                "Yêu cầu bảo hành (" + category + ") cần Admin xác minh tính hợp lệ.",
+                                adminData);
+                    }
+                    Map<String, String> orgData = lifecycleData("claimId", claimId, "/org/warranties");
+                    orgData.put("bookingId", bookingId);
+                    recordForRecipients(
+                            eventId,
+                            eventType,
+                            data,
+                            "providerRecipientProfileIds",
+                            firstNonBlank(stringField(data, "providerOwnerProfileId"),
+                                    stringField(data, "providerId").isBlank() ? "" : "org:" + stringField(data, "providerId")),
+                            "Có yêu cầu bảo hành mới",
+                            "Khách hàng vừa gửi yêu cầu bảo hành (" + category + ") cho lịch hẹn.",
+                            orgData);
+                }
+                case DomainEventContracts.WARRANTY_CLAIM_VERIFIED -> {
+                    String bookingId = stringField(data, "bookingId");
+                    String claimId = stringField(data, "claimId");
+                    boolean verified = "VERIFIED".equalsIgnoreCase(stringField(data, "claimStatus"))
+                            || "PENDING_PROVIDER_RESPONSE".equalsIgnoreCase(stringField(data, "claimStatus"));
+                    Map<String, String> meta = lifecycleData("claimId", claimId, "homecare://requests/" + bookingId);
+                    meta.put("bookingId", bookingId);
+                    inboxService.recordIfAbsent(
+                            eventId,
+                            stringField(data, "requesterProfileId"),
+                            eventType,
+                            verified ? "Yêu cầu bảo hành đã được xác minh" : "Yêu cầu bảo hành bị từ chối xác minh",
+                            verified
+                                    ? "Admin đã xác minh hợp lệ yêu cầu bảo hành của bạn."
+                                    : "Yêu cầu bảo hành không đủ điều kiện sau bước xác minh.",
+                            meta);
+                    Map<String, String> orgMeta = lifecycleData("claimId", claimId, "/org/warranties");
+                    orgMeta.put("bookingId", bookingId);
+                    recordForRecipients(
+                            eventId,
+                            eventType,
+                            data,
+                            "providerRecipientProfileIds",
+                            firstNonBlank(stringField(data, "providerOwnerProfileId"),
+                                    stringField(data, "providerId").isBlank() ? "" : "org:" + stringField(data, "providerId")),
+                            "Cập nhật xác minh yêu cầu bảo hành",
+                            verified
+                                    ? "Yêu cầu bảo hành đã được Admin xác minh; vui lòng phản hồi xử lý."
+                                    : "Admin đã đóng yêu cầu bảo hành do không đủ điều kiện.",
+                            orgMeta);
+                }
+                case DomainEventContracts.WARRANTY_CLAIM_RESPONDED -> {
+                    String bookingId = stringField(data, "bookingId");
+                    String claimId = stringField(data, "claimId");
+                    String reworkBookingId = stringField(data, "reworkBookingId");
+                    boolean accepted = !reworkBookingId.isBlank()
+                            || "REWORK_CREATED".equalsIgnoreCase(stringField(data, "claimStatus"))
+                            || "PROVIDER_ACCEPTED".equalsIgnoreCase(stringField(data, "claimStatus"));
+                    Map<String, String> meta = lifecycleData("claimId", claimId, "homecare://requests/" + bookingId);
+                    meta.put("bookingId", bookingId);
+                    if (!reworkBookingId.isBlank()) {
+                        meta.put("reworkBookingId", reworkBookingId);
+                    }
+                    inboxService.recordIfAbsent(
+                            eventId,
+                            stringField(data, "requesterProfileId"),
+                            eventType,
+                            accepted ? "Đơn vị đã tiếp nhận bảo hành 0đ" : "Đơn vị từ chối yêu cầu bảo hành",
+                            accepted
+                                    ? "Đối tác đã tạo lịch bảo hành 0đ để khắc phục cho bạn."
+                                    : "Đối tác chưa chấp thuận yêu cầu bảo hành; bạn có thể theo dõi chi tiết hoặc khiếu nại.",
+                            meta);
+                }
+                case DomainEventContracts.WARRANTY_CLAIM_SLA_ESCALATED -> {
+                    String bookingId = stringField(data, "bookingId");
+                    String claimId = stringField(data, "claimId");
+                    Map<String, String> meta = lifecycleData("claimId", claimId, "homecare://requests/" + bookingId);
+                    meta.put("bookingId", bookingId);
+                    inboxService.recordIfAbsent(
+                            eventId,
+                            stringField(data, "requesterProfileId"),
+                            eventType,
+                            "Yêu cầu bảo hành quá hạn phản hồi 48 giờ",
+                            "Đơn vị chưa phản hồi trong 48 giờ; hệ thống đã đánh dấu quá hạn để hỗ trợ xử lý.",
+                            meta);
+                }
                 default -> log.debug("Ignored domain event type {}", eventType);
             }
         } catch (Exception e) {
@@ -420,6 +544,30 @@ public class DomainEventConsumer {
             }
             return data;
         }
+
+    private void recordForRecipients(
+            String eventId,
+            String eventType,
+            Map<String, Object> data,
+            String listField,
+            String fallbackRecipientId,
+            String title,
+            String body,
+            Map<String, String> extraData) {
+        Object recipientsObj = data.get(listField);
+        boolean sent = false;
+        if (recipientsObj instanceof List<?> recipients) {
+            for (Object rec : recipients) {
+                if (rec != null && !String.valueOf(rec).isBlank()) {
+                    inboxService.recordIfAbsent(eventId, String.valueOf(rec), eventType, title, body, extraData);
+                    sent = true;
+                }
+            }
+        }
+        if (!sent && fallbackRecipientId != null && !fallbackRecipientId.isBlank()) {
+            inboxService.recordIfAbsent(eventId, fallbackRecipientId, eventType, title, body, extraData);
+        }
+    }
 
     private String formatScheduleRequestType(String requestType) {
         return switch (requestType.toUpperCase()) {
